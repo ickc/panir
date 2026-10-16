@@ -52,15 +52,18 @@ pub fn from_str(json: &str) -> Result<Pandoc, Error> {
     // only if that fails, read again to find the error's path.
     let doc: Pandoc = match serde_json::from_str(json) {
         Ok(doc) => doc,
-        Err(_) => {
+        Err(first) => {
             let de = &mut serde_json::Deserializer::from_str(json);
-            let e = match serde_path_to_error::deserialize::<_, Pandoc>(de) {
-                Err(e) => e,
-                Ok(_) => unreachable!("the same JSON read twice"),
-            };
-            return Err(Error {
-                path: e.path().to_string(),
-                message: e.inner().to_string(),
+            return Err(match serde_path_to_error::deserialize::<_, Pandoc>(de) {
+                Err(e) => Error {
+                    path: e.path().to_string(),
+                    message: e.inner().to_string(),
+                },
+                // the document reads, but more follows it
+                Ok(_) => Error {
+                    path: String::new(),
+                    message: first.to_string(),
+                },
             });
         }
     };

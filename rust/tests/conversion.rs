@@ -48,3 +48,11 @@ fn from_the_environment() {
     assert_eq!(c.output_format, None);
     assert_eq!(c.reader_options.unwrap()["columns"], 72);
 }
+
+/// JSON after the document is an error, not a panic (found by fuzzing).
+#[test]
+fn trailing_characters() {
+    let e = panir::from_str(r#"{"pandoc-api-version":[1,23,1,2],"meta":{},"blocks":[]} x"#)
+        .unwrap_err();
+    assert!(e.to_string().contains("trailing"), "{e}");
+}
