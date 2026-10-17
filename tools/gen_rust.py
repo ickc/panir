@@ -20,7 +20,8 @@ is more than declarations: it is what a derive would write. Types:
   to 22 bytes in place, in the 24 bytes a ``String`` takes.
 
 And ``VisitMut``: a method per type, whose default visits the children, to
-override for a filter (as syn's ``visit_mut``).
+override for a filter (as syn's ``visit_mut``); and ``Visit``, the same
+reading only (``&``, no copy to walk a part of a document; ``walk_*_ref``).
 
     python3 tools/gen_rust.py
 """
@@ -130,7 +131,8 @@ class Gen:
         )
         for t in self.schema["types"]:
             getattr(self, t["kind"])(t)
-        self.visitor()
+        self.visitor(True)
+        self.visitor(False)
         return "".join(o)
 
     def alias(self, t: dict) -> None:
@@ -305,69 +307,78 @@ class Gen:
                     scan(f["type"])
         return seen
 
-    def visit_expr(self, ty: dict, x: str, depth: int = 0) -> str | None:
-        """A statement visiting ``x`` (a ``&mut`` place) of type ``ty``."""
+    def visit_expr(self, ty: dict, x: str, depth: int = 0, mut: bool = True) -> str | None:
+        """A statement visiting ``x`` (a ``&mut`` place, or ``&``) of type ``ty``."""
         if not self.holds_nodes(ty):
             return None
         ty = self.resolve(ty)
         v = f"x{depth}"
+        r, m = ("&mut ", "_mut") if mut else ("&", "")
         if "ref" in ty:
             return f"v.visit_{snake(ty['ref'])}({x});"
         if "list" in ty:
             inner = self.resolve(ty["list"])
             if "ref" in inner and inner["ref"] in self.lists:
                 return f"v.visit_{snake(inner['ref'])}s({x});"
-            body = self.visit_expr(ty["list"], v, depth + 1)
-            return f"for {v} in ({x}).iter_mut() {{ {body} }}"
+            body = self.visit_expr(ty["list"], v, depth + 1, mut)
+            return f"for {v} in ({x}).iter{m}() {{ {body} }}"
         if "maybe" in ty:
-            body = self.visit_expr(ty["maybe"], v, depth + 1)
-            return f"if let Some({v}) = ({x}).as_mut() {{ {body} }}"
+            body = self.visit_expr(ty["maybe"], v, depth + 1, mut)
+            return f"if let Some({v}) = ({x}).as{'_mut' if mut else '_ref'}() {{ {body} }}"
         if "map" in ty:
-            body = self.visit_expr(ty["map"][1], v, depth + 1)
-            return f"for {v} in ({x}).values_mut() {{ {body} }}"
+            body = self.visit_expr(ty["map"][1], v, depth + 1, mut)
+            return f"for {v} in ({x}).values{m}() {{ {body} }}"
         if "tuple" in ty:
             parts = [
-                self.visit_expr(t, f"&mut ({x}).{i}", depth + 1) for i, t in enumerate(ty["tuple"])
+                self.visit_expr(t, f"{r}({x}).{i}", depth + 1, mut)
+                for i, t in enumerate(ty["tuple"])
             ]
             return " ".join(p for p in parts if p)
         return None
 
-    def visitor(self) -> None:
+    def visitor(self, mut: bool) -> None:
+        """``VisitMut`` and its ``walk_*`` (``mut``), or ``Visit`` and its
+        ``walk_*_ref``."""
         o = self.out
         self.lists = self.list_types()
-        o.append(VISITOR_DOC)
-        o.append("pub trait VisitMut {\n")
+        trait, r, suffix = ("VisitMut", "&mut ", "") if mut else ("Visit", "&", "_ref")
+        o.append(VISITOR_DOC if mut else VISIT_DOC)
+        o.append(f"pub trait {trait} {{\n")
         for t in self.node_types():
             n = snake(t["name"])
             o.append(
-                f"    fn visit_{n}(&mut self, x: &mut {t['name']}) {{\n"
-                f"        walk_{n}(self, x)\n    }}\n"
+                f"    fn visit_{n}(&mut self, x: {r}{t['name']}) {{\n"
+                f"        walk_{n}{suffix}(self, x)\n    }}\n"
             )
         for name in self.lists:
             n = snake(name)
+            xs = f"&mut Vec<{name}>" if mut else f"&[{name}]"
+            doc = "e.g. to splice or remove some" if mut else "e.g. to look at neighbours"
             o.append(
-                f"    /// The {name}s of one list, e.g. to splice or remove some.\n"
-                f"    fn visit_{n}s(&mut self, xs: &mut Vec<{name}>) {{\n"
-                f"        walk_{n}s(self, xs)\n    }}\n"
+                f"    /// The {name}s of one list, {doc}.\n"
+                f"    fn visit_{n}s(&mut self, xs: {xs}) {{\n"
+                f"        walk_{n}s{suffix}(self, xs)\n    }}\n"
             )
         o.append("}\n\n")
         for name in self.lists:
             n = snake(name)
+            xs = f"&mut Vec<{name}>" if mut else f"&[{name}]"
+            it = "iter_mut" if mut else "iter"
             o.append(
                 f"/// Visits each {name} of a list.\n"
-                f"pub fn walk_{n}s<V: VisitMut + ?Sized>(v: &mut V, xs: &mut Vec<{name}>) {{\n"
-                f"    for x in xs.iter_mut() {{\n        v.visit_{n}(x);\n    }}\n}}\n\n"
+                f"pub fn walk_{n}s{suffix}<V: {trait} + ?Sized>(v: &mut V, xs: {xs}) {{\n"
+                f"    for x in xs.{it}() {{\n        v.visit_{n}(x);\n    }}\n}}\n\n"
             )
         for t in self.node_types():
             n = snake(t["name"])
             o.append(
                 f"/// Visits the children of a {t['name']}.\n"
                 f"#[allow(unused_variables)]\n"
-                f"pub fn walk_{n}<V: VisitMut + ?Sized>(v: &mut V, x: &mut {t['name']}) {{\n"
+                f"pub fn walk_{n}{suffix}<V: {trait} + ?Sized>(v: &mut V, x: {r}{t['name']}) {{\n"
             )
             if t["kind"] == "product":
                 for f in t["fields"]:
-                    s = self.visit_expr(f["type"], f"&mut x.{ident(f['name'])}")
+                    s = self.visit_expr(f["type"], f"{r}x.{ident(f['name'])}", mut=mut)
                     if s:
                         o.append(f"    {s}\n")
             else:
@@ -375,12 +386,13 @@ class Gen:
                 for c in t["constructors"]:
                     fs = c["fields"]
                     if len(fs) == 1:
-                        s = self.visit_expr(fs[0]["type"], "y")
+                        s = self.visit_expr(fs[0]["type"], "y", mut=mut)
                         if s:
                             arms.append(f"        {t['name']}::{c['name']}(y) => {{ {s} }}\n")
                     elif len(fs) > 1:
                         stmts = [
-                            self.visit_expr(f["type"], f"&mut y.{ident(f['name'])}") for f in fs
+                            self.visit_expr(f["type"], f"{r}y.{ident(f['name'])}", mut=mut)
+                            for f in fs
                         ]
                         stmts = [s for s in stmts if s]
                         if stmts:
@@ -397,7 +409,7 @@ HEADER = """\
 // GENERATED by tools/gen_rust.py from schema/pandoc-ast.json
 // (pandoc-api-version {api}). Do not edit; regenerate instead.
 
-//! pandoc's AST types, their JSON encoding, and `VisitMut`.
+//! pandoc's AST types, their JSON encoding, `VisitMut` and `Visit`.
 
 #![allow(clippy::all)]
 
@@ -511,6 +523,31 @@ VISITOR_DOC = """\
 ///         }
 ///     }
 /// }
+/// ```
+"""
+
+
+VISIT_DOC = """\
+/// A visitor over a document, reading it: `VisitMut`'s twin, for `&`
+/// (nothing to copy to look through a part of a document).
+///
+/// Each method's default visits the node's children (`walk_*_ref`).
+///
+/// ```
+/// use panir::{Inline, Visit, walk_inline_ref};
+///
+/// struct Words(usize);
+/// impl Visit for Words {
+///     fn visit_inline(&mut self, x: &Inline) {
+///         if let Inline::Str(_) = x {
+///             self.0 += 1;
+///         }
+///         walk_inline_ref(self, x);
+///     }
+/// }
+/// let mut n = Words(0);
+/// n.visit_inline(&Inline::Emph(vec![Inline::Str("a".into())]));
+/// assert_eq!(n.0, 1);
 /// ```
 """
 
