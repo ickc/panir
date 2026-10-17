@@ -1,8 +1,8 @@
 # panir (Rust)
 
 pandoc's document AST, generated from pandoc-types: types that serde
-encodes as pandoc's JSON, filters run as pandoc runs Lua filters, and a
-`VisitMut` trait for any other walk.
+encodes as pandoc's JSON, filters run as pandoc runs Lua filters, and
+`VisitMut` and `Visit` traits for any other walk (changing, or reading).
 
 ```rust
 use panir::{Ctx, Filter, Inline, Typewise};
@@ -74,7 +74,9 @@ They are checked against pandoc's Lua filters, with the scenarios in
   `Default` where pandoc's Lua constructors have defaults.
 - `VisitMut` has a method per type, and `visit_blocks`/`visit_inlines` for
   whole lists (to splice or remove). Each default visits the children
-  through the `walk_*` function of the same name.
+  through the `walk_*` function of the same name. `Visit` is the same,
+  reading only (`&`, through `walk_*_ref`): nothing to copy to look
+  through part of a document.
 - Strings convert as in pandoc's Lua: `inlines("hello world")` is its words
   and spaces, `blocks("...")` `Plain` text, and `"x".into()` is a `Str`
   where one inline goes, `Plain` text where one block goes.
