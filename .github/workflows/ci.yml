@@ -30,8 +30,17 @@ jobs:
           components: rustfmt
       - name: Regenerate
         run: pixi run bash scripts/generate.sh
-      - name: Regenerate the filter corpus (pandoc's Lua filters)
-        run: pixi run bash scripts/filters-corpus.sh
+      # pandoc's corpora come from the pinned pandoc (pins.env), the release
+      # binary, not pixi's (conda-forge may lag, or resolve another 3.x)
+      - name: Install pandoc ${{ env.PANDOC_VERSION }}
+        run: |
+          curl -fsSL "https://github.com/jgm/pandoc/releases/download/$PANDOC_VERSION/pandoc-$PANDOC_VERSION-linux-amd64.tar.gz" | tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/pandoc-$PANDOC_VERSION/bin" >> "$GITHUB_PATH"
+      - name: Regenerate pandoc's corpora (its markdown reader, its Lua filters)
+        run: |
+          pandoc --version | head -1
+          bash scripts/pandoc-corpus.sh
+          bash scripts/filters-corpus.sh
       - name: Generated files are current
         run: git diff --exit-code
 
