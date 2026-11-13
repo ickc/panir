@@ -12,3 +12,4 @@ target/
 wheelhouse/
 ts/dist/
 julia/Manifest.toml
+fuzz/failures/
