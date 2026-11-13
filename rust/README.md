@@ -68,8 +68,12 @@ They are checked against pandoc's Lua filters, with the scenarios in
   with `.into()` from `&str` or `String` (`*s = s.to_uppercase().into()`);
   `push_str` and `make_mut` change one in place. Against `String`, reading
   and writing JSON is 15–24% faster and a whole document's AST 16% smaller.
-- `from_str` reads without tracking where it is, and reads again with
-  tracking only to report an error (another 25% faster).
+- `from_str` reads without tracking where it is (another 25% faster); the
+  path of an error is found from its position in the text, which is gone
+  through up to there, not by reading the document again.
+- `to_string` writes each type's JSON straight into a string (generated,
+  the same text as serde's `Serialize` gives, twice as fast), and
+  `to_writer` hands it over block by block.
 - Products are structs (`Attr { identifier, classes, attributes }`), with
   `Default` where pandoc's Lua constructors have defaults.
 - `VisitMut` has a method per type, and `visit_blocks`/`visit_inlines` for

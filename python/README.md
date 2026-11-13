@@ -59,6 +59,10 @@ ASTTypeError: Para.content[1]: expected Inline, got Para (a Block)
 ASTTypeError: Para.content[0]: expected Inline, got float 1.5
 ```
 
+A field's list is its own: assigning a list to a field copies it, even
+another node's (`q.content = p.content`), so that a change to one isn't a
+change to the other.
+
 Strings convert as in pandoc's Lua: where a list of inlines goes, a string
 is its words and spaces (`Para("hello world")`, `h.content = "Intro"`);
 where one inline goes, a `Str` (`p.content.append("x")`); where blocks go,
@@ -81,7 +85,12 @@ place or not), a node to replace it, or a list to splice in its place (`[]`
 deletes it). A second parameter, if the function has one (without a
 default), is the node's `Context`: its `parent`, the `container` it is in
 and its `index` there, its `next`/`prev` siblings, `path`, the `doc`, and
-the output `format`.
+the output `format`. They are right after earlier nodes of the list were
+deleted or spliced, and a list reached through a context is as it is now.
+(A list being walked holds its node and every one after it, however it is
+reached; reached otherwise, as through the document a function closed
+over, the nodes deleted or spliced in it so far may show only once its
+walk is done, but a change made to it that way is made to it as it is.)
 
 As in Lua, what a function returns are values: `return [el, el]` puts two
 nodes in the document, the second a copy. Elsewhere a node belongs in one
@@ -103,8 +112,10 @@ signatures are generated from the schema.
 Each node gets the function for its class, or else for its closest base
 class (`Inline`, `Block`, ...). As in pandoc's Lua filters, `@f.on_inlines`
 and `@f.on_blocks` register a function for every list of them, and
-`@f.on_meta` one for the metadata; each returns a replacement, or `None`. An
-exception in a function is annotated with the function and the node's path.
+`@f.on_meta` one for the metadata; each returns a replacement, or `None`.
+What a list function returns, unless the list itself, becomes a new list
+in the old one's place. An exception in a function is annotated with the
+function and the node's path.
 
 `Filter(traverse=...)` sets the order, one of the three filter frameworks
 use:
@@ -163,4 +174,7 @@ and that depends on who runs it:
   unless given one: `libpandoc.read_many(texts, "rst")`.
 
 Also: `loads`/`dumps`/`load`/`dump` for pandoc's JSON, `stringify`,
-`to_python`/`from_python` for metadata.
+`to_python`/`from_python` for metadata. Python's cyclic garbage collector
+is paused while a document is read or written, and for the whole of
+`f.main()`: it went through the new nodes again and again, half of the
+time.

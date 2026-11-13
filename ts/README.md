@@ -44,11 +44,15 @@ string unions (`"InlineMath"`).
 Constructors take the required fields, then the content, then options:
 `Header(1, [Str("Hi")], { identifier: "hi" })`, `Link([Str("x")], { url })`,
 `Cell([Para([Str("a")])], { colSpan: 2 })`. They fill in defaults, and check
-their arguments:
+their arguments as far as the nodes in them (each node's `t`: what is in a
+node was checked when it was made, and `serialize` checks everything):
 
 ```
 ASTTypeError: Para.content[0]: expected Inline, got Para (a Block)
 ```
+
+A constructor copies the arrays it is given: a node has its own, which the
+caller may go on changing or give to another node.
 
 Constructors take strings as pandoc's Lua does: where a list of inlines
 goes, a string is its words and spaces (`Para("hello world")`); in such a
@@ -86,8 +90,13 @@ values: `[el, el]` puts two nodes in the document, the second a copy;
 elsewhere, to put a node in a second place, copy it (`structuredClone`).
 A function is called as a method of its filter (`this`). `Inlines` and `Blocks` get every
 list of them, and `Meta` the metadata; each returns a replacement, or
-nothing. The second argument is the `Context`: `parent`, `index`,
-`next`/`prev`, `path`, `doc`, `format`, and `conversion`: the pandoc run
+nothing. What a list function returns, unless the array itself, becomes a
+new array (its nodes may hold the old one: `[{ t: "Emph", content: xs }]`).
+A function under a capitalised name no node has (`Strr`) is an error. The
+second argument is the `Context`, made only for a function declared with
+more than one parameter: `parent`, the `container` and `index` there,
+`next`/`prev` (right after earlier nodes of the list were deleted or
+spliced), `path`, `doc`, `format`, and `conversion`: the pandoc run
 the filter is part of (`format`, and when known `inputFormat`,
 `outputFormat`, `readerOptions`, `options`), as panir's Python
 `Conversion`. `runFilter` reads it from pandoc's arguments and environment
@@ -115,7 +124,11 @@ Bottom-up and typewise, a function sees what is below it already filtered,
 and what it returns isn't walked again. Only top-down functions get
 `skipChildren`; elsewhere it is a type error, as the children came first.
 Filters whose functions don't depend on each other's calls make the same
-document typewise and bottom-up.
+document typewise and bottom-up. A list reached through a context is as it
+is now. A list being walked holds its node and every one after it, however
+it is reached; reached otherwise, as through the document a function
+closed over, the nodes deleted or spliced in it so far may show only once
+its walk is done, but a change made to it that way is made to it as it is.
 
 An array of filters runs them one after the other, as a Lua filter file
 returning a list: `applyFilter(doc, [first, second])`.
