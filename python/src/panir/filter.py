@@ -176,6 +176,7 @@ class Filter:
         conv = conversion if conversion is not None else Conversion(format)
         top_down = self.traverse == "topdown"
         fields = _walk_fields(Pandoc)
+        splicing: list = []  # (every pass's: see _Walker.splicing)
 
         def walker(only: Callable[[type], bool], lists: Callable[[type], bool] | None) -> _Walker:
             """A walk calling the functions of the nodes ``only`` accepts,
@@ -187,6 +188,7 @@ class Filter:
                 doc,
                 conv,
                 {} if lists is None else {c: h for c, h in self._lists.items() if lists(c)},
+                splicing,
             )
 
         def root(d: Pandoc) -> tuple[Pandoc, bool]:

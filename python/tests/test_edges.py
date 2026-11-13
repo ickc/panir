@@ -26,6 +26,7 @@ from panir import (
     MetaValue,
     Pandoc,
     Para,
+    RawBlock,
     Space,
     Str,
     Table,
@@ -336,6 +337,301 @@ def test_a_function_may_change_the_list_its_node_is_in():
 
     with pytest.raises(RuntimeError, match=r"return \[\]"):
         g(Pandoc(Para("a b")))
+
+
+# A long list whose nodes are deleted, kept, replaced by one and by several
+# (once quadratic: each replacement by none or several moved the rest).
+LONG = 30_000
+
+
+def splice_rule(s):
+    """What each Str becomes, by its number: deleted, kept, replaced by one,
+    by several (an Emph among them), returned twice. Top-down, the Emph's
+    Str is walked too ("x" -> "X")."""
+    if s.text.startswith("x"):
+        return Str(s.text.upper())
+    if not s.text.isdigit():
+        return None
+    k = int(s.text)
+    return [
+        [],
+        None,
+        Str(f"{k}r"),
+        [Str(f"{k}a"), Space(), Emph(Str(f"x{k}"))],
+        [s, s],
+    ][k % 5]
+
+
+def spliced(k, top_down):
+    """What the walk should make of the k-th Str, written plainly."""
+    x = "X" if top_down else "x"
+    return [
+        [],
+        [Str(f"{k}")],
+        [Str(f"{k}r")],
+        [Str(f"{k}a"), Space(), Emph(Str(f"{x}{k}"))],
+        [Str(f"{k}"), Str(f"{k}")],
+    ][k % 5]
+
+
+@pytest.mark.parametrize("traverse", ["bottomup", "topdown", "typewise"])
+def test_a_long_list_spliced(traverse):
+    top_down = traverse == "topdown"
+    original = [Str(str(k)) for k in range(LONG)]
+    para = Para(*original)
+    content = para.content
+    f = Filter(traverse=traverse)
+    f.on(Str)(splice_rule)
+    doc = f(Pandoc(para))
+    expected = [x for k in range(LONG) for x in spliced(k, top_down)]
+    assert doc.blocks[0].content == expected
+    assert doc.blocks[0].content is content  # the same list
+    out = doc.blocks[0].content
+    assert out[0] is original[1]  # kept: the node itself
+    assert out[5] == out[6] == original[4] and out[5] is not out[6]  # twice: two nodes
+
+
+@pytest.mark.parametrize("traverse", ["bottomup", "topdown"])
+def test_a_long_list_spliced_with_contexts(traverse):
+    # the context is right after earlier nodes were deleted and multiplied:
+    # looked at first halfway (until then the list is spliced the fast way)
+    top_down = traverse == "topdown"
+    original = [Str(str(k)) for k in range(LONG)]
+    looked = [0, LONG // 2, LONG // 2 + 1, LONG // 2 + 3, LONG // 2 + 4, LONG - 1]
+    seen = {}
+    f = Filter(traverse=traverse)
+
+    @f.on(Str)
+    def _(s, ctx):
+        if s.text.isdigit() and int(s.text) in looked:
+            seen[int(s.text)] = (ctx.index, ctx.prev, ctx.next, ctx.container)
+        return splice_rule(s)
+
+    doc = f(Pandoc(Para(*original)))
+    out = doc.blocks[0].content
+    assert out == [x for k in range(LONG) for x in spliced(k, top_down)]
+    for k in looked:
+        index, prev, next, container = seen[k]
+        assert index == sum(len(spliced(j, top_down)) for j in range(k))
+        assert container is out
+        assert prev is (out[index - 1] if index else None)
+        assert next is (original[k + 1] if k + 1 < LONG else None)
+
+
+@pytest.mark.parametrize("traverse", ["bottomup", "topdown"])
+def test_a_long_list_seen_from_below_and_after_an_error(traverse):
+    # a function below the list sees it whole, through its context
+    n = 2_000
+    lengths = []
+    f = Filter(traverse=traverse)
+
+    @f.on(Str)
+    def _(s, ctx):
+        if s.text.startswith("in"):
+            lengths.append((s.text, len(ctx.ancestors[-2].content), len(ctx.doc.blocks[0].content)))
+            return None
+        return [] if int(s.text) % 2 == 0 else [s, Str(s.text)]
+
+    items = [Emph(Str(f"in{k}")) if k % 100 == 50 else Str(str(k)) for k in range(n)]
+    doc = f(Pandoc(Para(*items)))
+
+    # before the k-th: half of those deleted, half doubled (Emph: one)
+    def made(k):
+        return sum(1 if j % 100 == 50 else 0 if j % 2 == 0 else 2 for j in range(k))
+
+    assert lengths == [(f"in{k}", made(k) + n - k, made(k) + n - k) for k in range(50, n, 100)]
+    assert len(doc.blocks[0].content) == made(n)
+
+    # an error halfway: the list as far as it went, then the rest as it was
+    g = Filter(traverse=traverse)
+
+    @g.on(Str)
+    def _(s):
+        if s.text == "1001":
+            raise ValueError("stop")
+        return [] if int(s.text) % 2 == 0 else [s, Str(s.text)]
+
+    original = [Str(str(k)) for k in range(n)]
+    doc = Pandoc(Para(*original))
+    with pytest.raises(ValueError, match="stop"):
+        g(doc)
+    expected = [Str(str(k)) for k in range(1001) if k % 2 for _ in range(2)] + original[1001:]
+    assert doc.blocks[0].content == expected
+
+
+def same(xs, ys):
+    """Whether two lists hold the same nodes (not equal ones), in order."""
+    return len(xs) == len(ys) and all(x is y for x, y in zip(xs, ys))
+
+
+def from_node(xs, node):
+    """The nodes of ``xs`` from ``node`` (itself, not an equal one) on."""
+    k = next((k for k, x in enumerate(xs) if x is node), None)
+    assert k is not None, f"{node!r} is not in the list"
+    return xs[k:]
+
+
+@pytest.mark.parametrize("traverse", ["bottomup", "topdown", "typewise"])
+def test_a_list_being_walked_seen_from_a_closure(traverse):
+    # A function deletes or doubles blocks; a later one looks at the document
+    # it closed over (not ctx): its block and every one after it are there,
+    # in order. (Earlier deletions and doublings may show only at the end.)
+    original = [
+        RawBlock("html", "del"),
+        Para("p1"),
+        RawBlock("html", "dbl"),
+        Para("p3"),
+        RawBlock("html", "del"),
+        Para("p5"),
+        Header(1, "h"),
+    ]
+    doc = Pandoc(*original)
+    seen = []
+    f = Filter(traverse=traverse)
+
+    @f.on(RawBlock)
+    def _(b):
+        return [] if b.text == "del" else [b, RawBlock("html", "dbl2")]
+
+    @f.on(Para)
+    def _(p):
+        seen.append(A.stringify(p))
+        assert same(from_node(doc.blocks, p), from_node(original, p))
+
+    f(doc)
+    assert seen == ["p1", "p3", "p5"]
+    dbl = [RawBlock("html", "dbl"), RawBlock("html", "dbl2")]
+    assert doc.blocks == [Para("p1"), *dbl, Para("p3"), Para("p5"), Header(1, "h")]
+
+    # one level down: a Para's inlines, seen from a function on them
+    para = Para("a b c d e")
+    original = list(para.content)
+    doc = Pandoc(para)
+    seen = []
+    g = Filter(traverse=traverse)
+
+    @g.on(Space)
+    def _(s):
+        return []
+
+    @g.on(Str)
+    def _(s):
+        seen.append(s.text)
+        assert same(from_node(para.content, s), from_node(original, s))
+        assert doc.blocks[0].content is para.content
+        return [s, Str(s.text.upper())] if s.text == "c" else None
+
+    g(doc)
+    assert seen == ["a", "b", "c", "d", "e"]
+    assert doc.blocks == [Para(*map(Str, ["a", "b", "c", "C", "d", "e"]))]
+
+
+@pytest.mark.parametrize("traverse", ["bottomup", "topdown"])
+def test_neighbours_while_a_long_list_is_spliced(traverse):
+    # ctx.prev and ctx.next, of the node's context and of contexts kept from
+    # earlier nodes, while nodes are deleted and doubled: as the list is now
+    # (the nodes made so far, then the rest), which ctx.container then shows
+    n = 3_000
+    original = [Str(str(k)) for k in range(n)]
+    made = []  # what the walk made of the nodes so far
+    kept = []
+    f = Filter(traverse=traverse)
+
+    def check(ctxs, now):
+        for c in ctxs:
+            i = c.index
+            assert c.prev is (now[i - 1] if i else None)
+            assert c.next is (now[i + 1] if i + 1 < len(now) else None)
+
+    @f.on(Str)
+    def _(s, ctx):
+        k = int(s.text)
+        now = made + original[k:]
+        assert ctx.index == len(made)
+        check([ctx], now)
+        if k % 100 == 0:
+            check(kept, now)
+        if k == n // 2:
+            assert same(ctx.container, now)  # (made what it is now; in place from then on)
+        kept.append(ctx)
+        result = [] if k % 3 == 0 else [s, Str(s.text)] if k % 3 == 1 else None
+        made.extend([s] if result is None else result)
+        return result
+
+    doc = f(Pandoc(Para(*original)))
+    assert same(doc.blocks[0].content, made)
+    check(kept, made)
+
+
+@pytest.mark.parametrize("traverse", ["bottomup", "topdown", "typewise"])
+def test_a_list_being_walked_changed_from_a_closure(traverse):
+    # after an earlier block was deleted and one doubled, a function changes
+    # the document it closed over (not ctx.container): what it changed, it
+    # changed in the list as it is
+    def run(change):
+        doc = Pandoc(
+            RawBlock("html", "del"),
+            Para("a"),
+            RawBlock("html", "dbl"),
+            Header(1, "One"),
+            Para("x"),
+            Header(1, "Two"),
+        )
+        calls = []
+        f = Filter(traverse=traverse)
+
+        @f.on(RawBlock)
+        def _(b):
+            return [] if b.text == "del" else [b, RawBlock("html", "dbl2")]
+
+        @f.on(Header)
+        def _(h):
+            calls.append(A.stringify(h))
+            change(doc.blocks, A.stringify(h))
+
+        f(doc)
+        assert calls == ["One", "Two"]
+        return [A.stringify(b) or b.text for b in doc.blocks]
+
+    def find(blocks, text):
+        return next(k for k, b in enumerate(blocks) if A.stringify(b) == text)
+
+    def lengths(blocks, at):
+        if at == "One":  # before it, after it, at the end
+            blocks.insert(0, Para("TOC"))
+            del blocks[find(blocks, "a")]
+            del blocks[find(blocks, "x")]
+            blocks.append(Para("end"))
+
+    assert run(lengths) == ["TOC", "dbl", "dbl2", "One", "Two", "end"]
+
+    def assign(blocks, at):
+        if at == "One":  # the same length: seen at the end of the walk
+            blocks[find(blocks, "a")] = Para("A")
+
+    assert run(assign) == ["A", "dbl", "dbl2", "One", "x", "Two"]
+
+
+def test_a_context_kept_from_an_earlier_pass_shows_the_list_as_it_is():
+    kept = []
+    seen = []
+    f = Filter()  # typewise: the inlines, then the blocks
+
+    @f.on(Str)
+    def _(s, ctx):
+        kept.append(ctx)
+
+    @f.on(RawBlock)
+    def _(b):
+        return []
+
+    @f.on(Para)
+    def _(p):
+        seen.append([type(b).__name__ for b in kept[0].doc.blocks])
+
+    doc = Pandoc(RawBlock("html", "x"), Para("a"), RawBlock("html", "y"), Para("b"))
+    f(doc)
+    assert seen == [["Para", "RawBlock", "Para"], ["Para", "Para"]]
 
 
 def test_registering():
