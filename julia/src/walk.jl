@@ -207,27 +207,31 @@ function _one(w::_Walker, x::Node)
     r
 end
 
-# The list function on `list`, replacing what is in it; whether to skip its elements.
+# The list function on `list`: the list, or a new one of what it returned
+# (its nodes may hold the old one: Emph(xs) has xs itself); whether to skip
+# the elements.
 function _whole(w::_Walker, list::Vector, parent, field, path)
-    w.lists(list) || return false
+    w.lists(list) || return list, false
     push!(w.stack, (parent, field, nothing, nothing, path))
     try
         r, skip = _call_whole(w, list)
-        if r !== nothing && r !== list
-            # (a string, as in pandoc's Lua: its words, or Plain text)
-            r isa Union{AbstractVector, AbstractString} || throw(ArgumentError(
-                "a filter returned $(typeof(r)) for a list of $(eltype(list))s"))
-            items = _distinct(convert(typeof(list), r isa AbstractString ? r : collect(r)))
-            items === list || (empty!(list); append!(list, items))
-        end
-        skip
+        (r === nothing || r === list) && return list, skip
+        # (a string, as in pandoc's Lua: its words, or Plain text)
+        r isa Union{AbstractVector, AbstractString} || throw(ArgumentError(
+            "a filter returned $(typeof(r)) for a list of $(eltype(list))s"))
+        items = _distinct(convert(typeof(list), r isa AbstractString ? r : collect(r)))
+        (items === list ? copy(items) : items), skip
     finally
         pop!(w.stack)
     end
 end
 
+# Walk a list's nodes; returns the list, or the one a list method made.
 function _many(w::_Walker, list::Vector{T}, parent, field, path) where {T <: Node}
-    w.topdown && _whole(w, list, parent, field, path) && return
+    if w.topdown
+        list, skip = _whole(w, list, parent, field, path)
+        skip && return list
+    end
     i = 1
     while i <= length(list)
         push!(w.stack, (parent, field, list, i, Any[path..., i - 1]))
@@ -255,8 +259,7 @@ function _many(w::_Walker, list::Vector{T}, parent, field, path) where {T <: Nod
             pop!(w.stack)
         end
     end
-    w.topdown || _whole(w, list, parent, field, path)
-    nothing
+    w.topdown ? list : first(_whole(w, list, parent, field, path))
 end
 
 function _value(w::_Walker, @nospecialize(x), parent, field, path)
@@ -268,7 +271,7 @@ function _value(w::_Walker, @nospecialize(x), parent, field, path)
             pop!(w.stack)
         end
     elseif x isa Vector{<:Node}
-        _many(w, x, parent, field, path)
+        return _many(w, x, parent, field, path)
     elseif x isa Vector
         for (i, y) in enumerate(x)
             z = _value(w, y, parent, field, Any[path..., i - 1])

@@ -127,6 +127,9 @@ end
     # a list method may return its own list, changed
     more(xs::Vector{Inline}) = push!(xs, Str("e"))
     @test walk!(more, Pandoc(Para(Str("d")))).blocks == [Para(Str("d"), Str("e"))]
+    # its nodes may hold the list (Emph(xs) has xs itself)
+    wrap(xs::Vector{Inline}) = Inline[Emph(xs)]
+    @test walk!(exclaim, walk!(wrap, Pandoc(Para("a b")))).blocks == [Para(Emph("a! b!"))]
     # or a string, as in pandoc's Lua
     words(xs::Vector{Inline}) = "two words"
     @test walk!(words, Pandoc(Para(Str("d")))).blocks == [Para("two words")]

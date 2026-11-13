@@ -210,6 +210,21 @@ def test_a_node_returned_twice_is_two_nodes():
     assert doc.blocks == [Para(Str("c!"), Str("c!"))]
 
 
+def test_a_list_functions_nodes_may_hold_its_list():
+    # (the list's contents were replaced in place: the list could end up in itself)
+    wrap = Filter()
+
+    @wrap.on_inlines
+    def _(xs):
+        e = Emph()
+        object.__setattr__(e, "content", xs)  # the list itself, as a careless function might
+        return [e]
+
+    doc = A.run(Pandoc(Para("a b")), [wrap, exclaim()])
+    assert doc.blocks == [Para(Emph("a! b!"))]
+    assert A.dumps(doc).count("Emph") == 1
+
+
 def test_metadata_is_walked_in_the_order_of_its_keys():
     # as pandoc's Map; a function that counts its calls depends on it
     seen = []

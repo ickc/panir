@@ -508,15 +508,89 @@ function fromStrings(ty: TypeExpr, v: unknown): unknown {
   return v;
 }
 
-/** xs mapped, or xs itself if nothing changed. */
+/**
+ * xs mapped, into a new list: a node has its own lists, not the caller's
+ * (which the caller may change, or put in another node).
+ */
 function mapChanged(xs: unknown[], f: (x: unknown, i: number) => unknown): unknown[] {
-  let out: unknown[] | undefined;
-  xs.forEach((x, i) => {
-    const y = f(x, i);
-    if (y !== x && out === undefined) out = xs.slice(0, i);
-    if (out !== undefined) out.push(y);
-  });
-  return out ?? xs;
+  const out = new Array<unknown>(xs.length);
+  for (let i = 0; i < xs.length; i++) out[i] = f(xs[i], i);
+  return out;
+}
+
+/**
+ * Check a constructor's argument: its own shape, and of the nodes in it
+ * only that each is one of the right type (its tag). What is in those was
+ * checked when they were made, and all of it is when the document is
+ * written. (Checking it all here checked a document's every node once for
+ * each node above it.)
+ */
+function checkArgument(ty: TypeExpr, v: unknown): void {
+  const r = resolve(ty);
+  if ("prim" in r) {
+    encodePrim(r.prim, v);
+    return;
+  }
+  if ("maybe" in r) {
+    if (v !== null && v !== undefined) checkArgument(r.maybe, v);
+    return;
+  }
+  // the value itself, then what is in it, each at its place
+  let inside: () => void;
+  let at: string | number = 0;
+  if ("list" in r) {
+    if (!Array.isArray(v)) throw new Bad("a list", describe(v));
+    inside = () => {
+      for (let i = 0; i < v.length; i++) {
+        at = i;
+        checkArgument(r.list, v[i]);
+      }
+    };
+  } else if ("map" in r) {
+    if (!isObject(v)) throw new Bad("an object", describe(v));
+    inside = () => {
+      for (const key of Object.keys(v)) {
+        at = key;
+        if (!isWellFormed(key)) throw new Bad("a key of well-formed text", describe(key) + SURROGATE);
+        checkArgument(r.map[1], v[key]);
+      }
+    };
+  } else if ("tuple" in r) {
+    if (!Array.isArray(v) || v.length !== r.tuple.length) throw new Bad(typeName(r), describe(v));
+    inside = () => {
+      for (let i = 0; i < v.length; i++) {
+        at = i;
+        checkArgument(r.tuple[i], v[i]);
+      }
+    };
+  } else {
+    const t = declaration(r.ref);
+    if (t.kind === "enum") {
+      if (typeof v !== "string" || !t.values.includes(v)) throw new Bad(`${article(t.name)} ${t.name}`, describe(v));
+      return;
+    }
+    if (t.kind === "sum") {
+      // a node: its tag says whether it is one of these
+      if (!isObject(v) || typeof v.t !== "string" || !tables().constructors.get(t.name)!.has(v.t)) {
+        throw new Bad(t.name, describe(v));
+      }
+      return;
+    }
+    if (t.kind !== "product") return;
+    if (!isObject(v)) throw new Bad(`${article(t.name)} ${t.name}`, describe(v));
+    inside = () => {
+      for (const f of t.fields) {
+        at = f.name;
+        checkArgument(f.type, v[f.name]);
+      }
+    };
+  }
+  try {
+    inside();
+  } catch (e) {
+    if (e instanceof Bad) e.path.push(at);
+    throw e;
+  }
 }
 
 function coerce(ty: TypeExpr, v: unknown, where: [string, string]): unknown {
@@ -526,38 +600,66 @@ function coerce(ty: TypeExpr, v: unknown, where: [string, string]): unknown {
   v = fromStrings(ty, v);
   // a map given as an object with a prototype: its keys, into one without
   if ("map" in r && isObject(v) && Object.getPrototypeOf(v) !== null) v = Object.assign(emptyMap(), v);
-  guarded(() => encode(ty, v), (e) => {
+  try {
+    checkArgument(ty, v);
+  } catch (e) {
+    if (!(e instanceof Bad)) throw e;
     let hint = "";
     if (typeof v === "string" && "list" in r && "ref" in r.list) hint = " (a string; give a list of nodes)";
-    return new ASTTypeError(formatPath([...where, ...e.path.reverse()]), e.expected, e.got + hint);
-  });
+    throw new ASTTypeError(formatPath([...where, ...e.path.reverse()]), e.expected, e.got + hint);
+  }
   return v;
+}
+
+/** A node's fields as its constructor fills them: `flat`, a product whose fields may be given as options. */
+interface Maker {
+  tag: boolean;
+  fields: { f: Field; flat: { name: string; fields: Field[] } | undefined }[];
+  /** The names of its options. */
+  known: Set<string>;
+}
+
+const makers = new Map<string, Maker>();
+
+function maker(name: string): Maker {
+  let m = makers.get(name);
+  if (m) return m;
+  const node = tables().nodes.get(name)!;
+  const known = new Set<string>();
+  const fields = node.fields.map((f) => {
+    known.add(f.name);
+    if (!f.flatten) return { f, flat: undefined };
+    const product = (f.type as { ref: string }).ref;
+    const parts = tables().nodes.get(product)!.fields;
+    for (const g of parts) known.add(g.name);
+    return { f, flat: { name: product, fields: parts } };
+  });
+  m = { tag: node.tag, fields, known };
+  makers.set(name, m);
+  return m;
 }
 
 /** Build a node from a generated constructor's arguments. */
 export function make<T>(name: string, given: Record<string, unknown>,
                         opts: Record<string, unknown>): T {
-  const node = tables().nodes.get(name)!;
-  const out: Record<string, unknown> = node.tag ? { t: name } : {};
-  const known = new Set<string>();
-  for (const f of node.fields) {
-    known.add(f.name);
-    let v = f.name in given ? given[f.name] : opts[f.name];
-    if (f.flatten) {
-      const product = tables().nodes.get((f.type as { ref: string }).ref)!;
-      const parts = product.fields.filter((g) => opts[g.name] !== undefined).map((g) => g.name);
-      product.fields.forEach((g) => known.add(g.name));
+  const m = maker(name);
+  const out: Record<string, unknown> = m.tag ? { t: name } : {};
+  for (const { f, flat } of m.fields) {
+    let v = given[f.name];
+    if (v === undefined) v = opts[f.name];
+    if (flat) {
+      const parts = flat.fields.filter((g) => opts[g.name] !== undefined);
       if (v !== undefined && parts.length) {
-        throw new TypeError(`${name}(): give either ${f.name} or ${parts.join(", ")}, not both`);
+        throw new TypeError(`${name}(): give either ${f.name} or ${parts.map((g) => g.name).join(", ")}, not both`);
       }
       if (v === undefined) {
-        const missing = product.fields.filter((g) => !("default" in g) && opts[g.name] === undefined);
+        const missing = flat.fields.filter((g) => !("default" in g) && opts[g.name] === undefined);
         if (missing.length) {
           throw new TypeError(`${name}() needs ${missing.map((g) => g.name).join(", ")} (or ${f.name})`);
         }
-        const own = Object.fromEntries(product.fields.filter((g) => opts[g.name] !== undefined)
-                                                     .map((g) => [g.name, opts[g.name]]));
-        v = make<unknown>((f.type as { ref: string }).ref, {}, own);
+        const own: Record<string, unknown> = {};
+        for (const g of parts) own[g.name] = opts[g.name];
+        v = make<unknown>(flat.name, {}, own);
       }
     }
     if (v === undefined) {
@@ -566,9 +668,10 @@ export function make<T>(name: string, given: Record<string, unknown>,
     }
     out[f.name] = coerce(f.type, v, [name, f.name]);
   }
-  const unknown = Object.keys(opts).filter((k) => !known.has(k));
-  if (unknown.length) {
-    throw new TypeError(`${name}() has no option ${unknown.join(", ")}`);
+  for (const k of Object.keys(opts)) {
+    if (!m.known.has(k)) {
+      throw new TypeError(`${name}() has no option ${Object.keys(opts).filter((o) => !m.known.has(o)).join(", ")}`);
+    }
   }
   return out as T;
 }

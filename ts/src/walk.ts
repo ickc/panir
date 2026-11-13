@@ -16,8 +16,8 @@ import { Conversion } from "./conversion.ts";
 import { SCHEMA } from "./generated.ts";
 import type { Block, Inline, Meta, Nodes, Pandoc, Sums } from "./generated.ts";
 
-/** Contexts whose function asked to skip the node's children. */
-const skipping = new WeakSet<Context>();
+/** Whether a context's function asked to skip the node's children. */
+let skipped: (ctx: Context) => boolean;
 
 /** Where a node is: its parent, its place in it, the document, the conversion. */
 export class Context {
@@ -25,7 +25,7 @@ export class Context {
   parent: unknown;
   /** That field's name. */
   field: string | undefined;
-  /** The list holding this node, if in one, and its index there (or key, in a map). */
+  /** The list holding this node, if in one, and its index there (or the map, and its key). */
   container: unknown[] | Record<string, unknown> | undefined;
   index: number | string | undefined;
   doc: unknown;
@@ -33,13 +33,29 @@ export class Context {
   conversion: Conversion;
   /** Its output format's name (what pandoc passes a JSON filter), e.g. "html5". */
   format: string | undefined;
-  #path: Path;
-  #ancestors: unknown[];
+  // the walk's frames down to this node, and where each was then: the
+  // walk goes on and changes them, and a context may be kept
+  #frames: Frame[];
+  #indexes: (number | string | undefined)[];
   #topDown: boolean;
+  #skip = false;
+
+  static {
+    skipped = (ctx) => ctx.#skip;
+  }
 
   constructor(frames: Frame[], doc: unknown, conversion: Conversion, topDown = false) {
+    const n = frames.length;
+    const copy = new Array<Frame>(n);
+    const indexes = new Array<number | string | undefined>(n);
+    for (let i = 0; i < n; i++) {
+      copy[i] = frames[i];
+      indexes[i] = frames[i].index;
+    }
+    this.#frames = copy;
+    this.#indexes = indexes;
     this.#topDown = topDown;
-    const last = frames[frames.length - 1];
+    const last = n ? frames[n - 1] : undefined;
     this.parent = last?.parent;
     this.field = last?.field;
     this.container = last?.container;
@@ -47,30 +63,32 @@ export class Context {
     this.doc = doc;
     this.conversion = conversion;
     this.format = conversion.format;
-    this.#path = frames.flatMap((f) => [
-      ...(f.field === undefined ? [] : [f.field]),
-      ...f.outer,
-      ...(f.index === undefined ? [] : [f.index]),
-    ]);
-    this.#ancestors = [];
-    for (const f of frames) {
-      if (this.#ancestors[this.#ancestors.length - 1] !== f.parent) this.#ancestors.push(f.parent);
-    }
   }
 
   /** From the document, e.g. `["blocks", 3, "content", 1]`. */
   get path(): Path {
-    return [...this.#path];
+    const out: Path = [];
+    this.#frames.forEach((f, i) => {
+      if (f.field !== undefined) out.push(f.field);
+      for (const k of f.outer) out.push(k);
+      const index = this.#indexes[i];
+      if (index !== undefined) out.push(index);
+    });
+    return out;
   }
 
   /** The path as text, e.g. `blocks[3].content[1]`. */
   get where(): string {
-    return formatPath(this.#path) || "the document";
+    return formatPath(this.path) || "the document";
   }
 
   /** The nodes above this one, the document first. */
   get ancestors(): unknown[] {
-    return [...this.#ancestors];
+    const out: unknown[] = [];
+    for (const f of this.#frames) {
+      if (out[out.length - 1] !== f.parent) out.push(f.parent);
+    }
+    return out;
   }
 
   #sibling(step: number): unknown {
@@ -93,7 +111,7 @@ export class Context {
    */
   skipChildren(): void {
     if (!this.#topDown) throw new Error("skipChildren() needs traverse: \"topdown\" (otherwise the children were walked first)");
-    skipping.add(this);
+    this.#skip = true;
   }
 }
 
@@ -223,118 +241,249 @@ function byCodePoint(a: string, b: string): number {
   return a.length - b.length;
 }
 
-/** What a function returned for a position that holds one value: not a list, not a promise. */
-function oneValue(r: unknown, what: string, where: string): void {
-  if (Array.isArray(r)) throw new ASTTypeError(where, `one ${what} (this position holds one)`, "a list");
-  if (typeof (r as { then?: unknown } | null)?.then === "function") {
-    throw new ASTTypeError(where, `a ${what}`, "a promise (filter functions can't be async)");
-  }
+type Action = (node: unknown, ctx: Context, type: string) => unknown;
+type Call = (x: unknown, ctx: Context) => unknown;
+
+/** A field of a node that can hold nodes; `many`: the type of its items, if a list of nodes. */
+interface Kid {
+  name: string;
+  type: TypeExpr;
+  many: string | undefined;
 }
 
-type Action = (node: unknown, ctx: Context, type: string) => unknown;
-/** As `Action`, making the context only if it needs it (`ctx()`). */
-type LazyAction = (node: unknown, ctx: () => Context, type: string) => unknown;
-/** Called on a list of nodes of type `type`; returns its replacement, or nothing. */
-type ListAction = (list: unknown[], ctx: () => Context, type: string) => unknown;
+let kidsCache: Map<string, Kid[]> | undefined;
+const NONE: Kid[] = [];
+const TOP: (string | number)[] = [];
+
+/** By constructor or product name: where a walk goes in such a node. */
+function kidsTable(): Map<string, Kid[]> {
+  if (kidsCache) return kidsCache;
+  const isNode = (name: string) => {
+    const kind = tables().types.get(name)!.kind;
+    return kind === "sum" || kind === "product";
+  };
+  const holds = (ty: TypeExpr): boolean => {
+    const r = resolve(ty);
+    if ("prim" in r) return false;
+    if ("ref" in r) return isNode(r.ref);
+    if ("list" in r) return holds(r.list);
+    if ("maybe" in r) return holds(r.maybe);
+    if ("map" in r) return holds(r.map[1]);
+    return r.tuple.some(holds);
+  };
+  kidsCache = new Map();
+  for (const [name, node] of tables().nodes) {
+    const kids: Kid[] = [];
+    for (const f of node.fields) {
+      if (!holds(f.type)) continue;
+      const r = resolve(f.type);
+      const item = "list" in r ? resolve(r.list) : undefined;
+      kids.push({ name: f.name, type: f.type, many: item && "ref" in item && isNode(item.ref) ? item.ref : undefined });
+    }
+    kidsCache.set(name, kids.length ? kids : NONE);
+  }
+  return kidsCache;
+}
+
+/** A filter's functions by name, and which types' nodes and lists this walk calls them for. */
+interface Calls {
+  /** By constructor, type or product name; and `Inlines`, `Blocks`, `Meta`. */
+  fns: Map<string, Call>;
+  /** The filter itself: `this`, in its functions. */
+  self: unknown;
+  nodes: (type: string) => boolean;
+  lists: (type: string) => boolean;
+  /** For `walk`: one function for every node, given the node's type too. */
+  every?: Action;
+}
 
 class Walker {
   frames: Frame[] = [];
-  action: LazyAction;
-  listAction: ListAction | undefined;
+  calls: Calls;
   topDown: boolean;
   doc: unknown;
   conversion: Conversion;
+  /** Whether the last function called asked to skip what is below. */
+  skipped = false;
+  #kids = kidsTable();
 
-  constructor(action: LazyAction, topDown: boolean, doc: unknown, conversion: Conversion,
-              listAction?: ListAction) {
-    this.action = action;
-    this.listAction = listAction;
+  constructor(calls: Calls, topDown: boolean, doc: unknown, conversion: Conversion) {
+    this.calls = calls;
     this.topDown = topDown;
     this.doc = doc;
     this.conversion = conversion;
   }
 
   /** Where the walk is, from the document. */
-  #path(): Path {
-    return this.frames.flatMap((f) => [
-      ...(f.field === undefined ? [] : [f.field]),
-      ...f.outer,
-      ...(f.index === undefined ? [] : [f.index]),
-    ]);
+  #where(): string {
+    return new Context(this.frames, this.doc, this.conversion).where;
   }
 
-  /** Call `fn` with a context made on demand; returns its result, and whether it skips the children. */
-  #call(fn: (ctx: () => Context) => unknown): [unknown, boolean] {
+  /**
+   * `fn` on `x`; sets `skipped`. A context is made only for a function that
+   * takes one: one declared with a single parameter is spared it.
+   */
+  call(fn: Call, what: string, x: unknown): unknown {
     let ctx: Context | undefined;
-    const r = fn(() => (ctx ??= new Context(this.frames, this.doc, this.conversion, this.topDown)));
-    return [r, ctx !== undefined && skipping.has(ctx)];
+    try {
+      if (fn.length === 1) {
+        this.skipped = false;
+        return (fn as (this: unknown, x: unknown) => unknown).call(this.calls.self, x);
+      }
+      ctx = new Context(this.frames, this.doc, this.conversion, this.topDown);
+      const r = fn.call(this.calls.self, x, ctx);
+      this.skipped = skipped(ctx);
+      return r;
+    } catch (e) {
+      // an error from it says which function it was, and where
+      if (e instanceof Error && !noted.has(e)) {
+        noted.add(e);
+        try {
+          e.message += `\n  in filter function ${fn.name || "(anonymous)"}, on the ${what} at ${this.#where()}`;
+        } catch {
+          // an error whose message can't be changed (a DOMException, a frozen one)
+        }
+      }
+      throw e;
+    }
+  }
+
+  /** The function for nodes of a type, by constructor (`tag`) or else by type, if this walk calls any. */
+  #find(type: string): (tag: string | undefined) => Call | undefined {
+    const { fns, every, nodes } = this.calls;
+    if (every) {
+      const fn: Call = (x, ctx) => every(x, ctx, type);
+      return () => fn;
+    }
+    if (!nodes(type)) return () => undefined;
+    const ofType = fns.get(type);
+    return (tag) => (tag === undefined ? ofType : fns.get(tag) ?? ofType);
+  }
+
+  /** What a function returned for a position that holds one node: the node there now. */
+  #single(r: unknown, node: unknown, what: string): unknown {
+    if (r === undefined || r === null) return node;
+    if (Array.isArray(r)) throw new ASTTypeError(this.#where(), `one ${what} (this position holds one)`, "a list");
+    this.#notPromise(r, what);
+    return r;
+  }
+
+  #notPromise(r: unknown, what: string): void {
+    if (typeof (r as { then?: unknown }).then === "function") {
+      throw new ASTTypeError(this.#where(), `a ${what}`, "a promise (filter functions can't be async)");
+    }
   }
 
   /** A node in a position holding one node; returns it or its replacement. */
-  one(node: unknown, type: string, where: string): unknown {
+  one(node: unknown, type: string): unknown {
+    const sum = tables().types.get(type)!.kind === "sum";
+    const tag = sum ? (node as { t?: string }).t : undefined;
+    const fn = this.#find(type)(tag);
+    const kidsOf = (x: unknown) => this.#kids.get(sum ? (x as { t: string }).t : type) ?? NONE;
     if (this.topDown) {
-      const [r, skip] = this.#call((ctx) => this.action(node, ctx, type));
-      node = single(r, node, where);
-      if (!skip) this.children(node, type);
+      let skip = false;
+      if (fn) {
+        node = this.#single(this.call(fn, tag ?? type, node), node, "node");
+        skip = this.skipped;
+      }
+      if (!skip) this.children(node, kidsOf(node));
       return node;
     }
-    this.children(node, type);
-    return single(this.#call((ctx) => this.action(node, ctx, type))[0], node, where);
+    this.children(node, kidsOf(node));
+    return fn ? this.#single(this.call(fn, tag ?? type, node), node, "node") : node;
   }
 
-  /** The nodes of a list: each may be replaced, deleted or spliced; then (or first, top-down) the list. */
-  many(list: unknown[], type: string, parent: unknown, field: string, outer: (string | number)[]): void {
+  /**
+   * The nodes of a list: each may be replaced, deleted or spliced; then (or
+   * first, top-down) the list. Returns the list, or the one that replaces
+   * it: what a list function returned (a new list, since the function's
+   * nodes may hold the old one, as `Para(xs)` did before constructors
+   * copied).
+   */
+  many(list: unknown[], type: string, parent: unknown, field: string, outer: (string | number)[]): unknown[] {
+    const { topDown, frames } = this;
     const frame: Frame = { parent, field, outer, container: undefined, index: undefined };
-    if (this.topDown && this.#wholeList(list, type, frame)) return;
+    const whole = this.calls.lists(type) ? this.calls.fns.get(`${type}s`) : undefined;
+    if (whole && topDown) {
+      list = this.#wholeList(list, type, frame, whole);
+      if (this.skipped) return list;
+    }
+    const sum = tables().types.get(type)!.kind === "sum";
+    const find = this.#find(type);
+    const kids = this.#kids;
+    const ofProduct = sum ? NONE : kids.get(type) ?? NONE;
     frame.container = list;
-    frame.index = 0;
-    this.frames.push(frame);
+    frames.push(frame);
     try {
       let i = 0;
       while (i < list.length) {
-        frame.index = i;
-        if (!this.topDown) this.children(list[i], type);
-        const [r, skip] = this.#call((ctx) => this.action(list[i], ctx, type));
-        let items: readonly unknown[];
-        if (r === undefined || r === null) {
-          items = [list[i]];
-        } else if (Array.isArray(r)) {
-          items = distinct(r);
-        } else {
-          oneValue(r, type, formatPath(this.#path()));
-          items = [r];
-        }
-        if (items.length !== 1 || items[0] !== list[i]) replace(list, i, 1, items);
-        if (this.topDown && !skip) {
-          for (let k = 0; k < items.length; k++) {
-            frame.index = i + k;
-            this.children(list[i + k], type);
+        const node = list[i];
+        const tag = sum ? (node as { t?: string } | null | undefined)?.t : undefined;
+        const below = sum ? kids.get(tag as string) ?? NONE : ofProduct;
+        const fn = find(tag);
+        if (!fn) {
+          if (below !== NONE) {
+            frame.index = i;
+            this.children(node, below);
           }
+          i++;
+          continue;
         }
-        i += items.length;
+        frame.index = i;
+        if (!topDown && below !== NONE) this.children(node, below);
+        const r = this.call(fn, tag ?? type, node);
+        const skip = this.skipped;
+        if (list[i] !== node) {
+          // the function changed the list itself (ctx.container)
+          i = list.indexOf(node);
+          if (i < 0) {
+            throw new Error(`${this.#where()}: a filter function took its own node out of the list it is in ` +
+                            "(ctx.container); to delete the node, return []");
+          }
+          frame.index = i;
+        }
+        if (r === undefined || r === null || r === node) {
+          if (topDown && !skip && below !== NONE) this.children(node, below);
+          i++;
+          continue;
+        }
+        let n = 1;
+        if (Array.isArray(r)) {
+          const items = distinct(r);
+          replace(list, i, 1, items);
+          n = items.length;
+        } else {
+          this.#notPromise(r, type);
+          list[i] = r;
+        }
+        if (topDown && !skip) {
+          for (const end = i + n; i < end; i++) {
+            frame.index = i;
+            const x = list[i];
+            const xs = sum ? kids.get((x as { t: string }).t) ?? NONE : ofProduct;
+            if (xs !== NONE) this.children(x, xs);
+          }
+        } else {
+          i += n;
+        }
       }
     } finally {
-      this.frames.pop();
+      frames.pop();
     }
-    if (!this.topDown) this.#wholeList(list, type, { ...frame, container: undefined, index: undefined });
+    if (whole && !topDown) {
+      return this.#wholeList(list, type, { ...frame, container: undefined, index: undefined }, whole);
+    }
+    return list;
   }
 
-  /** The list function on `list`, replacing its contents in place; whether it skips the elements. */
-  #wholeList(list: unknown[], type: string, frame: Frame): boolean {
-    const listAction = this.listAction;
-    if (!listAction) return false;
+  /** The list function on `list`: the list, or a new one of what it returned. Sets `skipped`. */
+  #wholeList(list: unknown[], type: string, frame: Frame, fn: Call): unknown[] {
     this.frames.push(frame);
     try {
-      const [r, skip] = this.#call((ctx) => listAction(list, ctx, type));
-      if (r !== undefined && r !== null && r !== list) {
-        if (!Array.isArray(r)) {
-          throw new ASTTypeError(formatPath(this.#path()), `a list of ${type}s`, typeof r);
-        }
-        const items = [...distinct(r)]; // (a copy: `r` may hold `list` itself)
-        list.length = 0;
-        for (const x of items) list.push(x);
-      }
-      return skip;
+      const r = this.call(fn, `${type}s`, list);
+      if (r === undefined || r === null || r === list) return list;
+      if (!Array.isArray(r)) throw new ASTTypeError(this.#where(), `a list of ${type}s`, typeof r);
+      return [...distinct(r)];
     } finally {
       this.frames.pop();
     }
@@ -345,11 +494,10 @@ class Walker {
     const r = resolve(ty);
     if ("prim" in r || v === null || v === undefined) return v;
     if ("ref" in r) {
-      const t = tables().types.get(r.ref)!;
-      if (t.kind === "enum") return v;
+      if (tables().types.get(r.ref)!.kind === "enum") return v;
       this.frames.push({ parent, field, outer, container: undefined, index: undefined });
       try {
-        return this.one(v, r.ref, formatPath(this.#path()));
+        return this.one(v, r.ref);
       } finally {
         this.frames.pop();
       }
@@ -359,12 +507,12 @@ class Walker {
       const item = resolve(r.list);
       const list = v as unknown[];
       if ("ref" in item && tables().types.get(item.ref)!.kind !== "enum") {
-        this.many(list, item.ref, parent, field, outer);
+        return this.many(list, item.ref, parent, field, outer);
       } else if (!("prim" in item)) {
-        list.forEach((x, i) => {
-          const y = this.value(x, r.list, parent, field, [...outer, i]);
-          if (y !== x) list[i] = y;
-        });
+        for (let i = 0; i < list.length; i++) {
+          const y = this.value(list[i], r.list, parent, field, [...outer, i]);
+          if (y !== list[i]) list[i] = y;
+        }
       }
       return v;
     }
@@ -379,7 +527,7 @@ class Walker {
           // a node in a map: the map is its container, the key its index
           this.frames.push({ parent, field, outer, container: obj, index: k });
           try {
-            y = this.one(obj[k], (item as { ref: string }).ref, formatPath(this.#path()));
+            y = this.one(obj[k], (item as { ref: string }).ref);
           } finally {
             this.frames.pop();
           }
@@ -398,29 +546,25 @@ class Walker {
     return v;
   }
 
-  children(node: unknown, type: string): void {
-    const decl = tables().types.get(type)!;
-    let fields;
-    if (decl.kind === "sum") {
-      const tag = (node as { t: string }).t;
-      fields = tables().nodes.get(tag)?.fields ?? [];
-    } else if (decl.kind === "product") {
-      fields = decl.fields;
-    } else {
-      return;
-    }
+  /** Walk what is in `node`: `kids`, its fields that can hold nodes. */
+  children(node: unknown, kids: Kid[]): void {
     const obj = node as Record<string, unknown>;
-    for (const f of fields) {
-      const y = this.value(obj[f.name], f.type, node, f.name, []);
-      if (y !== obj[f.name]) obj[f.name] = y;
+    for (const kid of kids) {
+      const v = obj[kid.name];
+      const y = kid.many !== undefined && Array.isArray(v)
+        ? this.many(v, kid.many, node, kid.name, TOP)
+        : this.value(v, kid.type, node, kid.name, TOP);
+      if (y !== v) obj[kid.name] = y;
     }
   }
-}
 
-function single(r: unknown, node: unknown, where: string): unknown {
-  if (r === undefined || r === null) return node;
-  oneValue(r, "node", where);
-  return r;
+  /** Walk what is in a document (or any product) of type `type`, field by field. */
+  fields(node: unknown, type: string, each?: (field: string) => boolean | void): void {
+    for (const kid of this.#kids.get(type) ?? NONE) {
+      if (each?.(kid.name) === false) continue;
+      this.children(node, [kid]);
+    }
+  }
 }
 
 /**
@@ -432,133 +576,116 @@ function single(r: unknown, node: unknown, where: string): unknown {
  */
 export function walk(node: unknown, action: Action,
                      opts: { type?: string; topDown?: boolean; format?: string | Conversion } = {}): unknown {
-  const w = new Walker((n, ctx, t) => action(n, ctx(), t), opts.topDown ?? false, node, toConversion(opts.format));
-  const type = opts.type ?? SCHEMA.root;
-  return w.one(node, type, type);
+  const calls: Calls = { fns: new Map(), self: undefined, nodes: () => true, lists: () => false, every: action };
+  const w = new Walker(calls, opts.topDown ?? false, node, toConversion(opts.format));
+  return w.one(node, opts.type ?? SCHEMA.root);
 }
-
-type Fns = Record<string, ((x: unknown, ctx: Context) => unknown) | undefined>;
 
 /** Errors already noted with their function and place. */
 const noted = new WeakSet<Error>();
 
-/**
- * `fn(x, ctx)`, as a method of its filter (`this`); an error from it says
- * which function it was, and where.
- */
-function callNoting(fns: Fns, fn: (x: unknown, ctx: Context) => unknown, what: string, x: unknown, ctx: Context): unknown {
-  try {
-    return fn.call(fns, x, ctx);
-  } catch (e) {
-    if (e instanceof Error && !noted.has(e)) {
-      noted.add(e);
-      try {
-        e.message += `\n  in filter function ${fn.name || "(anonymous)"}, on the ${what} at ${ctx.where}`;
-      } catch {
-        // an error whose message can't be changed (a DOMException, a frozen one)
-      }
-    }
-    throw e;
+let namesCache: Set<string> | undefined;
+
+/** Every name a filter's function can have. */
+function names(): Set<string> {
+  namesCache ??= new Set([...tables().nodes.keys(), ...tables().constructors.keys(), "Inlines", "Blocks", "Meta"]);
+  return namesCache;
+}
+
+/** A filter's functions, by name. */
+function functionsOf(filter: Filter): Map<string, Call> {
+  const known = names();
+  const fns = new Map<string, Call>();
+  const obj = filter as unknown as Record<string, unknown>;
+  for (const name of known) {
+    const f = obj[name];
+    if (typeof f === "function") fns.set(name, f as Call);
   }
-}
-
-/** The function for a node: its constructor's, else its type's; only for types `only` accepts. */
-function nodeAction(fns: Fns, only: (type: string) => boolean): LazyAction {
-  return (node, ctx, type) => {
-    if (!only(type)) return undefined;
-    const tag = (node as { t?: unknown }).t;
-    const what = typeof tag === "string" ? tag : type;
-    const fn = fns[what] ?? fns[type];
-    return fn ? callNoting(fns, fn, what, node, ctx()) : undefined;
-  };
-}
-
-/** The `Inlines` or `Blocks` function, for lists of the types `only` accepts. */
-function listAction(fns: Fns, only: (type: string) => boolean): ListAction {
-  return (list, ctx, type) => {
-    const fn = only(type) ? fns[`${type}s`] : undefined;
-    return fn ? callNoting(fns, fn, `${type}s`, list, ctx()) : undefined;
-  };
-}
-
-/** A function called on one value (`Meta`, `Pandoc`): its result or `value`, and whether it skips. */
-function straight(fns: Fns, name: string, value: unknown, frames: Frame[], doc: unknown,
-                  conversion: Conversion, topDown: boolean): [unknown, boolean] {
-  const fn = fns[name];
-  if (!fn) return [value, false];
-  const ctx = new Context(frames, doc, conversion, topDown);
-  const r = callNoting(fns, fn, name, value, ctx);
-  if (r === undefined || r === null) return [value, skipping.has(ctx)];
-  oneValue(r, name, ctx.where);
-  return [r, skipping.has(ctx)];
+  // a function under another name would never be called: say so
+  for (const key of Object.keys(obj)) {
+    if (typeof obj[key] === "function" && /^[A-Z]/.test(key) && !known.has(key)) {
+      throw new TypeError(`a filter has a function ${key}, which no node of pandoc's is called`);
+    }
+  }
+  return fns;
 }
 
 const INLINE = (t: string) => t === "Inline";
 const BLOCK = (t: string) => t === "Block";
 const LISTS = (t: string) => t === "Inline" || t === "Block";
 const OTHER = (t: string) => t !== "Inline" && t !== "Block";
-const NONE = () => false;
+const ALL = () => true;
+const NO = () => false;
 
 function applyOne(doc: Pandoc, filter: Filter, conversion: Conversion): Pandoc {
-  const fns = filter as unknown as Fns;
   const root = SCHEMA.root;
   const traverse = filter.traverse ?? "typewise";
   if (traverse !== "typewise" && traverse !== "topdown" && traverse !== "bottomup") {
     throw new Error(`traverse: expected "typewise", "topdown" or "bottomup", got ${JSON.stringify(traverse)}`);
   }
+  const fns = functionsOf(filter);
   const topDown = traverse === "topdown";
+  const walker = (d: Pandoc, nodes: (t: string) => boolean, lists: (t: string) => boolean) =>
+    new Walker({ fns, self: filter, nodes, lists }, topDown, d, conversion);
+  /** A function on one value (`Meta`, `Pandoc`): its result or the value, and whether it skips. */
+  const straight = (name: string, value: unknown, d: Pandoc, frames: Frame[]): [unknown, boolean] => {
+    const fn = fns.get(name);
+    if (!fn) return [value, false];
+    const w = walker(d, NO, NO);
+    w.frames = frames;
+    const r = w.call(fn, name, value);
+    if (r === undefined || r === null) return [value, w.skipped];
+    if (Array.isArray(r)) {
+      throw new ASTTypeError(formatPath(frames.map((f) => f.field!)) || "the document",
+                             `one ${name} (this position holds one)`, "a list");
+    }
+    return [r, w.skipped];
+  };
   const meta = (d: Pandoc): [unknown, boolean] => straight(
-    fns, "Meta", d.meta, [{ parent: d, field: "meta", outer: [], container: undefined, index: undefined }],
-    d, conversion, topDown);
-  const fields = (tables().types.get(root) as { fields: { name: string; type: TypeExpr }[] }).fields;
-  const all = (d: Pandoc) => new Walker(nodeAction(fns, () => true), topDown, d, conversion, listAction(fns, LISTS));
+    "Meta", d.meta, d, [{ parent: d, field: "meta", outer: [], container: undefined, index: undefined }]);
   if (topDown) {
-    const [d, skip] = straight(fns, root, doc, [], doc, conversion, true);
+    const [d, skip] = straight(root, doc, doc, []);
     doc = d as Pandoc; // the function's document, if it returned one, is the one walked
     if (skip) return doc;
     const [m, skipMeta] = meta(doc);
     doc.meta = m as Meta;
-    const w = all(doc);
-    const obj = doc as unknown as Record<string, unknown>;
-    for (const f of fields) {
-      if (!(skipMeta && f.name === "meta")) obj[f.name] = w.value(obj[f.name], f.type, doc, f.name, []);
-    }
+    walker(doc, ALL, LISTS).fields(doc, root, (field) => !(skipMeta && field === "meta"));
     return doc;
   }
-  const obj = doc as unknown as Record<string, unknown>;
   if (traverse === "bottomup") {
-    const w = all(doc);
-    for (const f of fields) {
-      obj[f.name] = w.value(obj[f.name], f.type, doc, f.name, []);
-      if (f.name === "meta") doc.meta = meta(doc)[0] as Meta;
+    const w = walker(doc, ALL, LISTS);
+    for (const kid of kidsTable().get(root) ?? NONE) {
+      w.children(doc, [kid]);
+      if (kid.name === "meta") doc.meta = meta(doc)[0] as Meta;
     }
-    return straight(fns, root, doc, [], doc, conversion, false)[0] as Pandoc;
+    return straight(root, doc, doc, [])[0] as Pandoc;
   }
-  const passes: [LazyAction, ListAction | undefined, boolean][] = [
-    [nodeAction(fns, INLINE), undefined, has(fns, "Inline")],
-    [nodeAction(fns, NONE), listAction(fns, INLINE), fns.Inlines !== undefined],
-    [nodeAction(fns, BLOCK), undefined, has(fns, "Block")],
-    [nodeAction(fns, NONE), listAction(fns, BLOCK), fns.Blocks !== undefined],
-    [nodeAction(fns, OTHER), undefined, hasOther(fns)],
+  const passes: [(t: string) => boolean, (t: string) => boolean, boolean][] = [
+    [INLINE, NO, has(fns, "Inline")],
+    [NO, INLINE, fns.has("Inlines")],
+    [BLOCK, NO, has(fns, "Block")],
+    [NO, BLOCK, fns.has("Blocks")],
+    [OTHER, NO, hasOther(fns)],
   ];
-  for (const [action, lists, needed] of passes) {
-    if (needed) new Walker(action, false, doc, conversion, lists).children(doc, root);
+  for (const [nodes, lists, needed] of passes) {
+    if (needed) walker(doc, nodes, lists).fields(doc, root);
   }
   doc.meta = meta(doc)[0] as Meta;
-  return straight(fns, root, doc, [], doc, conversion, false)[0] as Pandoc;
+  return straight(root, doc, doc, [])[0] as Pandoc;
 }
 
 /** Whether `fns` has a function for the sum `sum` or one of its constructors. */
-function has(fns: Fns, sum: string): boolean {
-  const decl = tables().types.get(sum) as { constructors?: { name: string }[] };
-  return fns[sum] !== undefined || (decl.constructors ?? []).some((c) => fns[c.name] !== undefined);
+function has(fns: Map<string, Call>, sum: string): boolean {
+  if (fns.has(sum)) return true;
+  for (const name of tables().constructors.get(sum)?.keys() ?? []) if (fns.has(name)) return true;
+  return false;
 }
 
 /** Whether `fns` has a function for a node that isn't an Inline, a Block or the document. */
-function hasOther(fns: Fns): boolean {
+function hasOther(fns: Map<string, Call>): boolean {
   for (const [name, decl] of tables().types) {
     if (name === "Inline" || name === "Block" || name === SCHEMA.root) continue;
-    if (decl.kind === "sum" ? has(fns, name) : decl.kind === "product" && fns[name] !== undefined) return true;
+    if (decl.kind === "sum" ? has(fns, name) : decl.kind === "product" && fns.has(name)) return true;
   }
   return false;
 }

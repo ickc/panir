@@ -170,6 +170,27 @@ test("metadata is walked in the order of its keys, by code point", () => {
   assert.deepEqual(seen, ["ten", "two", "a", "z", "bmp", "astral"]);
 });
 
+test("a list function's nodes may hold its list", () => {
+  // (the list's contents were replaced in place: the list ended up in itself)
+  const doc = applyFilter(Pandoc([Para("a b")]), [
+    { Inlines: (xs) => [{ t: "Emph", content: xs }] },
+    { Blocks: (bs) => [{ t: "Div", attr: { identifier: "", classes: [], attributes: [] }, content: bs }] },
+    exclaim,
+  ]);
+  assert.equal(serialize(doc), serialize(Pandoc([Div([Para([Emph("a! b!")])])])));
+  let wrapped = false; // (top-down, the list in the Emph is walked next: once is enough)
+  const top = applyFilter(Pandoc([Para("a b")]), {
+    traverse: "topdown",
+    Inlines: (xs) => {
+      if (wrapped) return undefined;
+      wrapped = true;
+      return [{ t: "Emph", content: xs }];
+    },
+    Str: exclaim.Str,
+  });
+  assert.equal(serialize(top), serialize(Pandoc([Para([Emph("a! b!")])])));
+});
+
 test("a function may remove a later key of the map", () => {
   const doc = Pandoc([], { meta: { a: MetaInlines("a"), b: MetaInlines("b") } });
   applyFilter(doc, { MetaValue: (_, ctx) => { delete (ctx.container as Record<string, unknown>)["b"]; } });

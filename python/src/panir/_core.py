@@ -288,8 +288,8 @@ class Enum(str, enum.Enum):
 class NodeList(list):
     """A list in the AST: checks what is put into it.
 
-    Assigning a list to a field copies it into a new ``NodeList``; assigning
-    a ``NodeList`` of the right type shares it.
+    Assigning a list to a field copies it into a new ``NodeList``: a field
+    has its own list, which is in no other node.
     """
 
     __slots__ = ("_spec",)
@@ -521,7 +521,7 @@ class _ListSpec(_Spec):
 
     def coerce(self, value: Any, label: str | None = None, key: Any = None) -> Any:
         if type(value) is NodeList and value._spec is self:
-            return value
+            return _list(self, value)  # checked already; a copy: one list, one field
         if isinstance(value, Mapping) and isinstance(self.item, _TupleSpec):
             value = list(value.items())  # e.g. attributes given as a dict
         if isinstance(value, str) and isinstance(self.item, _ClassSpec):
@@ -592,7 +592,7 @@ class _MapSpec(_Spec):
 
     def coerce(self, value: Any, label: str | None = None, key: Any = None) -> Any:
         if type(value) is NodeDict and value._spec is self:
-            return value
+            return _dict(self, value)  # checked already; a copy: one map, one field
         if not isinstance(value, Mapping):
             self.fail(label, key, value)
         return NodeDict(self, value)

@@ -98,15 +98,18 @@ def test_unknown_field():
         Para().level = 1
 
 
-def test_lists_are_copied_unless_already_checked():
+def test_a_field_has_its_own_list():
     items = [Str("a")]
     p = Para(*items)
     items.append(Str("b"))
     assert len(p.content) == 1
     q = Para()
-    q.content = p.content
-    assert q.content is p.content
-    assert isinstance(p.content, NodeList)
+    q.content = p.content  # copied: a list is in one node
+    assert q.content == p.content and q.content is not p.content
+    assert isinstance(p.content, NodeList) and isinstance(q.content, NodeList)
+    doc, other = Pandoc(meta={"a": True}), Pandoc()
+    other.meta = doc.meta
+    assert other.meta == doc.meta and other.meta is not doc.meta
 
 
 def test_metadata_from_python():
