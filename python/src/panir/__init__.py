@@ -12,10 +12,9 @@
 
 from __future__ import annotations
 
-import json
 from typing import IO, Any
 
-from . import _types
+from . import _fast, _types
 from ._core import ASTDecodeError, ASTError, ASTTypeError, Node, NodeDict, NodeList
 from ._types import *  # noqa: F403  the AST classes
 from ._types import Pandoc
@@ -29,17 +28,19 @@ __version__ = "0.1.0"
 
 def loads(text: str | bytes) -> Pandoc:
     """A document from pandoc's JSON text."""
-    return Pandoc.from_json(json.loads(text))
+    return _fast.loads(text, Pandoc)
 
 
 def load(fp: IO[Any]) -> Pandoc:
     """A document from a file of pandoc's JSON."""
-    return Pandoc.from_json(json.load(fp))
+    return _fast.loads(fp.read(), Pandoc)
 
 
 def dumps(doc: Pandoc) -> str:
     """A document as pandoc's JSON text."""
-    return json.dumps(doc.to_json(), ensure_ascii=False, separators=(",", ":"))
+    if not isinstance(doc, Pandoc):
+        raise TypeError(f"dumps() takes a document (Pandoc), got {type(doc).__name__}")
+    return _fast.dumps(doc)
 
 
 def dump(doc: Pandoc, fp: IO[str]) -> None:

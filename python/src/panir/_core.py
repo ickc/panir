@@ -225,6 +225,11 @@ class Node:
     def __copy__(self) -> Node:
         return _make(type(self), [getattr(self, f) for f in self._fields])
 
+    def __deepcopy__(self, memo: dict) -> Node:
+        from ._fast import clone  # (it reads this module's declarations)
+
+        return clone(self)
+
     def to_json(self) -> Any:
         """This value as pandoc's JSON (lists, dicts, str, ...; for json.dumps)."""
         try:
@@ -324,13 +329,13 @@ class NodeList(list):
     def __reduce__(self) -> tuple:
         return (list, (list(self),))
 
-    def __copy__(self) -> list:
-        return list(self)
+    def __copy__(self) -> NodeList:
+        return _list(self._spec, self)
 
-    def __deepcopy__(self, memo: dict) -> list:
+    def __deepcopy__(self, memo: dict) -> NodeList:
         import copy
 
-        return [copy.deepcopy(x, memo) for x in self]
+        return _list(self._spec, [copy.deepcopy(x, memo) for x in self])
 
     def __repr__(self) -> str:
         return list.__repr__(self)
@@ -384,13 +389,13 @@ class NodeDict(dict):
     def __reduce__(self) -> tuple:
         return (dict, (dict(self),))
 
-    def __copy__(self) -> dict:
-        return dict(self)
+    def __copy__(self) -> NodeDict:
+        return _dict(self._spec, self)
 
-    def __deepcopy__(self, memo: dict) -> dict:
+    def __deepcopy__(self, memo: dict) -> NodeDict:
         import copy
 
-        return {k: copy.deepcopy(v, memo) for k, v in self.items()}
+        return _dict(self._spec, {k: copy.deepcopy(v, memo) for k, v in self.items()})
 
     def __repr__(self) -> str:
         return dict.__repr__(self)

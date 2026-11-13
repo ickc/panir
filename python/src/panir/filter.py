@@ -20,12 +20,12 @@ a ``Context`` knows the conversion (``ctx.conversion``; see
 from __future__ import annotations
 
 import inspect
-import json
 import sys
 from collections.abc import Callable, Iterable, Sequence
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
+from . import _fast
 from ._core import Node, add_note
 from ._types import Block, Inline, Meta, Pandoc
 from ._walk import Context, _walk_fields, _Walker
@@ -163,27 +163,6 @@ class Filter:
             self._lookup[ty] = found
             return found
 
-    def _action(self, node: Node, ctx: Context) -> Any:
-        fn, wants_ctx = self._handler(type(node))  # type: ignore[misc]
-        return _call(fn, wants_ctx, node, ctx, type(node).__name__)
-
-    def _list_action(self, lst: list, cls: type, ctx: Context) -> Any:
-        fn, wants_ctx = self._lists[cls]
-        return _call(fn, wants_ctx, lst, ctx, f"list of {cls.__name__}s")
-
-    def _wants(self, only: Callable[[type], bool]) -> Callable[[type], bool]:
-        """Whether a node of a class ``only`` accepts has a function."""
-        cache: dict[type, bool] = {}
-
-        def wants(ty: type) -> bool:
-            try:
-                return cache[ty]
-            except KeyError:
-                cache[ty] = r = only(ty) and self._handler(ty) is not None
-                return r
-
-        return wants
-
     def __call__(
         self, doc: Pandoc, format: str | None = None, *, conversion: Conversion | None = None
     ) -> Pandoc:
@@ -199,8 +178,15 @@ class Filter:
         fields = _walk_fields(Pandoc)
 
         def walker(only: Callable[[type], bool], lists: Callable[[type], bool] | None) -> _Walker:
+            """A walk calling the functions of the nodes ``only`` accepts,
+            and of the lists (by their items' class) ``lists`` accepts."""
+            handler = self._handler
             return _Walker(
-                self._action, top_down, doc, conv, self._wants(only), self._list_action, lists
+                lambda cls: handler(cls) if only(cls) else None,
+                top_down,
+                doc,
+                conv,
+                {} if lists is None else {c: h for c, h in self._lists.items() if lists(c)},
             )
 
         def root(d: Pandoc) -> tuple[Pandoc, bool]:
@@ -274,9 +260,9 @@ class Filter:
         conversion: Conversion | None = None,
     ) -> str:
         """Apply the filter to a document in pandoc's JSON."""
-        doc = Pandoc.from_json(json.loads(text))
+        doc = _fast.loads(text, Pandoc)
         out = self(doc, format, conversion=conversion)
-        return json.dumps(out.to_json(), ensure_ascii=False, separators=(",", ":"))
+        return _fast.dumps(out)
 
     def main(self, argv: list[str] | None = None) -> None:
         """Run as a pandoc JSON filter: a document on stdin, to stdout.
@@ -294,7 +280,9 @@ class Filter:
         text = stdin.read()
         sys.stdout = sys.stderr
         try:
-            out = self.run_json(text, conversion=conversion)
+            # (a process that ends with the document: nothing to collect)
+            with _fast.paused_gc():
+                out = self.run_json(text, conversion=conversion)
         finally:
             sys.stdout = sys.__stdout__
         stdout.write(out.encode("utf-8"))
