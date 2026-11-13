@@ -57,7 +57,18 @@ list, a `Str` (`Para(["a", Emph("b")])`); where blocks go, `Plain` text.
 
 `parse`/`fromJSON` report where JSON is wrong
 (`blocks[0].content[1].text: expected a string, got 42`), and
-`serialize`/`toJSON` check a document on the way out.
+`serialize`/`toJSON` check a document on the way out: a hole in an array,
+half of a surrogate pair (`"😀".slice(0, 1)`) and anything else pandoc could
+not read are errors there, with the path.
+
+Two things are JavaScript's:
+
+- An integer beyond 2^53 (a list that starts at 9007199254740993) is refused
+  when read: `JSON.parse` has rounded it already.
+- The metadata, and a `MetaMap`'s content, are objects without a prototype,
+  so that any key is only a key: `doc.meta.constructor` is `undefined`
+  unless the document has that key, and `__proto__` is one like another.
+  (`structuredClone` gives them a prototype back; they still serialize.)
 
 ## Filters
 
@@ -70,7 +81,10 @@ A filter is an object of functions by constructor (`Str`, `Header`), type
 (`Inline`, `Block`, `MetaValue`) or product (`Cell`, `Pandoc`); a node gets
 its constructor's, or else its type's. A function returns nothing to keep
 the node (changed in place or not), a node to replace it, or an array to
-splice in its place (`[]` deletes it). `Inlines` and `Blocks` get every
+splice in its place (`[]` deletes it). As in Lua, what it returns are
+values: `[el, el]` puts two nodes in the document, the second a copy;
+elsewhere, to put a node in a second place, copy it (`structuredClone`).
+A function is called as a method of its filter (`this`). `Inlines` and `Blocks` get every
 list of them, and `Meta` the metadata; each returns a replacement, or
 nothing. The second argument is the `Context`: `parent`, `index`,
 `next`/`prev`, `path`, `doc`, `format`, and `conversion`: the pandoc run

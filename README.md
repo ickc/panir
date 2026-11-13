@@ -61,6 +61,18 @@ schema/pandoc-ast.json ──(tools/gen_<language>.py)──> each language's de
   own filter, which must make exactly the same document. Scenarios marked
   stateless must also make it bottom-up, an order pandoc's Lua lacks. So
   far: TypeScript, Python, Julia and Rust.
+- **Fuzzing against pandoc** ([`fuzz/`](fuzz/)): random documents, with the
+  strings and numbers a binding is likely to get wrong, and random filters,
+  through every language. pandoc must read each language's output as the
+  document pandoc itself made, of the document alone or with the same
+  filter run by its Lua. CI runs a few thousand; `fuzz/run.py --time` runs
+  for as long as asked.
+
+The contract, for every language: it reads everything pandoc writes, and
+pandoc reads what it writes back to the same AST. The bytes may differ (a
+number's format, the order of keys), and JSON pandoc would not write may be
+refused or accepted. What a language can't hold it refuses, with the path:
+in JavaScript, an integer beyond 2^53.
 - **Each language** generates declarations only (classes, fields, encodings)
   and has a small hand-written, generic runtime that reads them. Nothing in a
   runtime names a pandoc type, except helpers like `stringify`.
@@ -74,6 +86,7 @@ read the diff.
   (depends on pandoc-types only; builds in about a minute)
 - `schema/`, `corpus/`: generated, committed; CI checks they are current
 - `tools/`: `derive.py`, and a generator per language
+- `fuzz/`: the fuzzer, its oracle (a Lua filter) and a driver per language
 - `python/`, `rust/`, `ts/`, `julia/`: the packages
 
 ## License

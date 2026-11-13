@@ -78,9 +78,15 @@ and `Para(Header(1))`.
 
 A function per node type, which returns `None` to keep the node (changed in
 place or not), a node to replace it, or a list to splice in its place (`[]`
-deletes it). A second parameter, if the function has one, is the
-node's `Context`: its `parent`, `index`, `next`/`prev` siblings, `path`, the
-`doc`, and the output `format`.
+deletes it). A second parameter, if the function has one (without a
+default), is the node's `Context`: its `parent`, the `container` it is in
+and its `index` there, its `next`/`prev` siblings, `path`, the `doc`, and
+the output `format`.
+
+As in Lua, what a function returns are values: `return [el, el]` puts two
+nodes in the document, the second a copy. Elsewhere a node belongs in one
+place: to put it in a second, copy it (`copy.deepcopy(el)`), or whatever
+changes one later changes both.
 
 ```python
 @f.on(Str)
@@ -124,6 +130,7 @@ version must make exactly the same document.
 
 `f.main()` runs a filter under pandoc; `f(doc)` on a document; `run(doc,
 [f, g])` several in turn. `walk(node, action)` is the walk underneath.
+Under pandoc, a function's `print` goes to stderr: stdout is the document.
 
 ### Calling pandoc from a filter
 

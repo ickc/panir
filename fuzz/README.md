@@ -21,8 +21,8 @@ Bytes may differ (a number's format, the order of keys); the AST may not.
 - **Data.** A document is generated from `schema/pandoc-ast.json`, so every
   constructor and field is reached without the generator naming one, with
   the strings, numbers and keys a binding is likely to get wrong (control
-  characters, astral characters, 64-bit integers, doubles of 17 digits,
-  `__proto__` as a metadata key). pandoc reads and writes it: that is a
+  characters, astral characters, 64-bit integers, doubles of 17 digits and
+  ones that aren't finite, `__proto__` as a metadata key). pandoc reads and writes it: that is a
   document pandoc wrote. Each language reads and writes that; pandoc reads
   the result and writes it again, which must give the same bytes as pandoc's
   first writing.
@@ -40,6 +40,9 @@ Bytes may differ (a number's format, the order of keys); the AST may not.
 A failure is shrunk (rules dropped, list elements removed) and written to
 `fuzz/failures/`, as `{lang, why, spec, doc}`; `--replay` runs one again in
 every language.
+
+What a language can't hold, and says so, is counted (`refused`), not
+failed: in JavaScript, an integer beyond 2^53 (`LIMITS` in `run.py`).
 
 ## Not checked here
 

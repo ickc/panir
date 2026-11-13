@@ -163,6 +163,44 @@ jobs:
           echo "$out"
           [ "$out" = "SOME TEXT" ]
 
+  # Random documents and filters through every language, with pandoc
+  # deciding what is right (fuzz/README.md).
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Read pins
+        run: grep -v "^#" pins.env >> "$GITHUB_ENV"
+      - name: Install pandoc ${{ env.PANDOC_VERSION }}
+        run: |
+          curl -fsSL "https://github.com/jgm/pandoc/releases/download/$PANDOC_VERSION/pandoc-$PANDOC_VERSION-linux-amd64.tar.gz" | tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/pandoc-$PANDOC_VERSION/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz/rust
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1"
+      - uses: julia-actions/cache@v2
+      - name: Build the drivers
+        run: |
+          cargo build --release --manifest-path fuzz/rust/Cargo.toml
+          julia --project=julia -e 'using Pkg; Pkg.instantiate(); using Panir'
+      - name: Fuzz
+        run: PYTHONPATH=python/src python fuzz/run.py --count 3000
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-failures
+          path: fuzz/failures
+
   # What the registries would get, on every push: one version everywhere,
   # and each package as it would be published (nothing is published here;
   # see release.yml and RELEASING.md)
