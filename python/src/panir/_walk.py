@@ -6,7 +6,8 @@ values of its fields whose type can hold nodes.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import copy
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from ._core import (
@@ -30,10 +31,14 @@ __all__ = ["Context", "walk"]
 class Context:
     """Where a node is, for a filter function that asks for it.
 
-    ``parent`` is the node whose field holds this one (``field``), ``index``
-    its position in that field's list (or key in its map, or ``None``).
-    ``next`` and ``prev`` are its neighbours in that list. ``path`` is its
-    position from the document, as in errors: ``blocks[3].content[1]``.
+    ``parent`` is the node whose field holds this one (``field``),
+    ``container`` the list it is in (or the map, or ``None``), and ``index``
+    its position there (or key). ``next`` and ``prev`` are its neighbours in
+    that list. ``path`` is its position from the document, as in errors:
+    ``blocks[3].content[1]``. A context stays right when kept after the call.
+
+    A function may change ``container`` itself (remove the node before this
+    one, say); it may not take its own node out of it (return ``[]``).
 
     ``conversion`` is the pandoc run the filter is part of (``format`` is its
     output format's name); ``libpandoc.read(text, ctx.conversion)`` parses a
@@ -42,6 +47,7 @@ class Context:
 
     __slots__ = (
         "_frames",
+        "_keys",
         "_skip",
         "_top_down",
         "container",
@@ -57,16 +63,21 @@ class Context:
         self, frames: tuple, doc: Any, conversion: Conversion, top_down: bool = False
     ) -> None:
         self._frames, self._top_down, self._skip = frames, top_down, False
+        # each frame's key now: the walker changes them as it goes on
+        self._keys = tuple([f[3] for f in frames])
         self.doc, self.conversion, self.format = doc, conversion, conversion.format
         if frames:
-            self.parent, self.field, self.container, self.index = frames[-1]
+            self.parent, self.field, self.container, key = frames[-1]
+            # in a list of lists (a BulletList's items), the place in the
+            # innermost list; the rest of the key is only in the path
+            self.index = key[-1] if type(key) is tuple else key
         else:
             self.parent = self.field = self.container = self.index = None
 
     @property
     def path(self) -> tuple:
         out: list = []
-        for _, field, _, key in self._frames:
+        for (_, field, _, _), key in zip(self._frames, self._keys):
             if field is not None:
                 out.append(field)
             if key is not None:
@@ -122,6 +133,40 @@ def _walk_fields(cls: type[Node]) -> list[tuple[str, _Spec]]:
         fields = [(f, s) for f, s in cls._specs.items() if s.has_nodes]
         type.__setattr__(cls, "_walk_fields_cache", fields)
     return fields
+
+
+def _distinct(items: Sequence) -> Sequence:
+    """``items``, each node once: one that is there twice is copied where
+    it comes again.
+
+    As in pandoc's Lua filters, whose results are values: the nodes of
+    ``return [el, el]`` are two, changed separately from then on. (One node
+    in two places of a document would be changed in both by whatever
+    changes it later.)
+    """
+    if len(items) < 2:
+        return items
+    seen: set[int] = set()
+    out: list | None = None
+    for k, x in enumerate(items):
+        if id(x) not in seen:
+            seen.add(id(x))
+        elif isinstance(x, Node):
+            if out is None:
+                out = list(items)
+            out[k] = copy.deepcopy(x)
+    return items if out is None else out
+
+
+def _find(lst: list, node: Node, label: str) -> int:
+    """Where ``node`` is in a list its function changed."""
+    for i, x in enumerate(lst):
+        if x is node:
+            return i
+    raise RuntimeError(
+        f"{label}: a filter function took its own node out of the list it is in "
+        "(ctx.container); to delete the node, return []"
+    )
 
 
 Action = Callable[[Node, Context], Any]
@@ -190,7 +235,7 @@ class _Walker:
             if result is not None and result is not lst:
                 if isinstance(result, (Node, str)) or not isinstance(result, (list, tuple)):
                     raise ASTTypeError(spec.label, f"a list of {cls.__name__}s", _describe(result))
-                lst[:] = result  # checked by NodeList
+                lst[:] = _distinct(result)  # checked by NodeList
             return ctx._skip
         finally:
             self.frames.pop()
@@ -213,6 +258,10 @@ class _Walker:
                     self.children(node)
                 if self.wants(type(node)):
                     result, skip = self.call(node)
+                    if i >= len(lst) or lst[i] is not node:
+                        # the function changed the list itself (ctx.container)
+                        i = _find(lst, node, spec.label)
+                        frame[3] = outer + (i,) if outer else i
                     if result is None and skip:
                         i += 1
                         continue
@@ -227,7 +276,7 @@ class _Walker:
                                 "a node, a list of nodes or None",
                                 _describe(result),
                             )
-                        lst[i : i + 1] = result  # checked by NodeList
+                        lst[i : i + 1] = _distinct(result)  # checked by NodeList
                         if not self.top_down or skip:
                             i += len(result)
                             continue
@@ -266,7 +315,10 @@ class _Walker:
                         list.__setitem__(value, i, new)
             return value
         if isinstance(spec, _MapSpec):
-            for k in list(value):
+            # in the order of the keys, as pandoc walks its Map
+            for k in sorted(value):
+                if k not in value:  # a function removed it
+                    continue
                 x = value[k]
                 if isinstance(spec.value, _ClassSpec):
                     self.frames.append([parent, field, value, key + (k,)])

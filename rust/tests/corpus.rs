@@ -21,9 +21,22 @@ fn round_trip() {
     docs.extend(corpus("pandoc.jsonl"));
     for (i, line) in docs.iter().enumerate() {
         let doc = from_str(line).unwrap_or_else(|e| panic!("document {i}: {e}"));
-        let back: serde_json::Value = serde_json::from_str(&to_string(&doc)).unwrap();
-        let orig: serde_json::Value = serde_json::from_str(line).unwrap();
-        assert_eq!(back, orig, "document {i}");
+        // byte for byte: Rust writes keys in pandoc's order and doubles as
+        // Haskell shows them (comparing parsed JSON would read both sides'
+        // numbers with the same parser, and hide what it gets wrong)
+        assert_eq!(&to_string(&doc), line, "document {i}");
+    }
+}
+
+#[test]
+fn doubles_read_exactly() {
+    // 16 and 17 significant digits: serde_json reads these one unit in the
+    // last place off without its float_roundtrip feature
+    for width in ["0.9119595761642921", "0.12105451833716219", "3.9473684210526314e-2"] {
+        let doc = format!(
+            r#"{{"pandoc-api-version":[1,23,1,2],"meta":{{}},"blocks":[{{"t":"Table","c":[["",[],[]],[null,[]],[[{{"t":"AlignDefault"}},{{"t":"ColWidth","c":{width}}}]],[["",[],[]],[]],[],[["",[],[]],[]]]}}]}}"#
+        );
+        assert_eq!(to_string(&from_str(&doc).unwrap()), doc);
     }
 }
 

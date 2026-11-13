@@ -139,7 +139,9 @@ DOUBLES = [
 
 
 class Gen:
-    def __init__(self, rng: random.Random, schema: dict, *, max_depth: int = 5, nasty: float = 0.15):
+    def __init__(
+        self, rng: random.Random, schema: dict, *, max_depth: int = 5, nasty: float = 0.15
+    ):
         self.rng, self.max_depth, self.nasty = rng, max_depth, nasty
         self.types = {t["name"]: t for t in schema["types"]}
         self.version = schema["pandoc-api-version"]
@@ -191,6 +193,9 @@ class Gen:
             if p == "int":
                 return rng.choice(INTS) if rng.random() < self.nasty else rng.randrange(-1, 7)
             if p == "double":
+                if rng.random() < self.nasty / 3:
+                    # what pandoc writes for a Double that isn't finite
+                    return rng.choice([None, "+inf", "-inf"])
                 return rng.choice(DOUBLES) if rng.random() < 0.5 else rng.random()
             if p == "bool":
                 return rng.random() < 0.5

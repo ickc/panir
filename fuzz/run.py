@@ -87,7 +87,11 @@ def run_language(cmd: list[str], tasks: list[tuple[str | None, str]], timeout: f
         out = p.stdout.decode(errors="replace").split("\n")
         if out and out[-1] == "":
             out.pop()
-        died = "" if p.returncode == 0 else f"exit {p.returncode}: {p.stderr.decode(errors='replace')[-2000:]}"
+        died = (
+            ""
+            if p.returncode == 0
+            else f"exit {p.returncode}: {p.stderr.decode(errors='replace')[-2000:]}"
+        )
     except subprocess.TimeoutExpired as e:
         out = (e.stdout or b"").decode(errors="replace").split("\n")[:-1]
         died = f"timeout after {timeout} s"
@@ -101,8 +105,10 @@ def run_language(cmd: list[str], tasks: list[tuple[str | None, str]], timeout: f
     k = len(done)
     if k >= len(tasks):
         return done
-    return done + run_language(cmd, tasks[k : k + 1], timeout) + (
-        run_language(cmd, tasks[k + 1 :], timeout) if k + 1 < len(tasks) else []
+    return (
+        done
+        + run_language(cmd, tasks[k : k + 1], timeout)
+        + (run_language(cmd, tasks[k + 1 :], timeout) if k + 1 < len(tasks) else [])
     )
 
 
@@ -145,7 +151,9 @@ class Checker:
 # -- shrinking ---------------------------------------------------------------
 
 
-def shrink(checker: Checker, lang: str, spec: dict | None, doc: dict, schema: dict, budget: float = 120):
+def shrink(
+    checker: Checker, lang: str, spec: dict | None, doc: dict, schema: dict, budget: float = 120
+):
     """A smaller task that still fails: rules and filters dropped, list
     elements and map entries removed, nodes replaced by their children's."""
     deadline = time.time() + budget
@@ -158,7 +166,9 @@ def shrink(checker: Checker, lang: str, spec: dict | None, doc: dict, schema: di
             cands = []
             if len(spec["filters"]) > 1:
                 for i in range(len(spec["filters"])):
-                    cands.append({**spec, "filters": spec["filters"][:i] + spec["filters"][i + 1 :]})
+                    cands.append(
+                        {**spec, "filters": spec["filters"][:i] + spec["filters"][i + 1 :]}
+                    )
             for i, f in enumerate(spec["filters"]):
                 for name, rule in f["rules"].items():
                     rules = {k: v for k, v in f["rules"].items() if k != name}
@@ -283,16 +293,24 @@ def make_tasks(seed: int, n: int, mode: str, pool: ThreadPoolExecutor) -> tuple[
     raw = []
     for i in range(n):
         rng = random.Random(f"{seed}/{i}")
-        g = gen.Gen(rng, _SCHEMA, max_depth=rng.choice([3, 4, 5, 6]), nasty=rng.choice([0, 0.1, 0.3]))
+        g = gen.Gen(
+            rng, _SCHEMA, max_depth=rng.choice([3, 4, 5, 6]), nasty=rng.choice([0, 0.1, 0.3])
+        )
         doc = g.document()
         filtered = mode == "filter" or (mode == "both" and i % 2 == 1)
-        raw.append((i, gen.dumps(doc), gen.dumps(gen.spec(rng, _SCHEMA, doc)) if filtered else None))
+        raw.append(
+            (i, gen.dumps(doc), gen.dumps(gen.spec(rng, _SCHEMA, doc)) if filtered else None)
+        )
 
     def prepare(item):
         i, doc, spec = item
         ok, d1 = pandoc(doc)
         if not ok:
-            return {"i": i, "oracle_error": f"pandoc rejects a generated document: {d1}", "doc": doc}
+            return {
+                "i": i,
+                "oracle_error": f"pandoc rejects a generated document: {d1}",
+                "doc": doc,
+            }
         if spec is None:
             return {"i": i, "doc": d1, "spec": None, "expected": d1}
         ok, expected = pandoc(d1, spec)
@@ -311,7 +329,9 @@ def make_tasks(seed: int, n: int, mode: str, pool: ThreadPoolExecutor) -> tuple[
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--seed", type=int, default=0, help="first batch's seed")
     ap.add_argument("--count", type=int, default=1000, help="tasks to run (ignored with --time)")
     ap.add_argument("--time", type=float, help="run for this many seconds")
@@ -320,14 +340,18 @@ def main() -> None:
     ap.add_argument("--langs", default="python,ts,rust,julia")
     ap.add_argument("--mode", choices=["data", "filter", "both"], default="both")
     ap.add_argument("--no-shrink", action="store_true")
-    ap.add_argument("--max-failures", type=int, default=20, help="stop after this many, per language")
+    ap.add_argument(
+        "--max-failures", type=int, default=20, help="stop after this many, per language"
+    )
     ap.add_argument("--out", type=Path, default=FUZZ / "failures")
     ap.add_argument("--replay", type=Path, help="run a saved failure again")
     args = ap.parse_args()
 
     if shutil.which(PANDOC) is None:
         sys.exit(f"no pandoc ({PANDOC}); set $PANDOC")
-    version = subprocess.run([PANDOC, "--version"], capture_output=True, text=True).stdout.split("\n")[0]
+    version = subprocess.run([PANDOC, "--version"], capture_output=True, text=True).stdout.split(
+        "\n"
+    )[0]
     cmds = language_commands()
     langs = {name: cmds[name] for name in args.langs.split(",") if name}
     checker = Checker(langs, args.jobs)
@@ -359,7 +383,7 @@ def main() -> None:
         skipped += bad
         total += len(tasks)
         results = list(
-            ThreadPoolExecutor(len(langs)).map(lambda lang: checker.check(lang, tasks), langs)
+            ThreadPoolExecutor(len(langs)).map(checker.check, langs, [tasks] * len(langs))
         )
         for lang, verdicts in zip(langs, results):
             for t, why in zip(tasks, verdicts):
@@ -375,7 +399,11 @@ def main() -> None:
                 args.out.mkdir(parents=True, exist_ok=True)
                 path = args.out / f"{lang}-{kind}-{seed}-{t['i']}.json"
                 path.write_text(
-                    json.dumps({"lang": lang, "why": why, "spec": spec, "doc": doc}, ensure_ascii=False, indent=1)
+                    json.dumps(
+                        {"lang": lang, "why": why, "spec": spec, "doc": doc},
+                        ensure_ascii=False,
+                        indent=1,
+                    )
                     + "\n",
                     encoding="utf-8",
                 )
