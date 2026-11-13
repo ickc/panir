@@ -184,6 +184,43 @@ class Gen:
                 raise SystemExit(f"constructor {c['name']} clashes with a type name")
             self.struct(c, "array", f"pandoc's `{c['name']}`, a `{t['name']}`.")
 
+    def nests(self, name: str) -> bool:
+        """Whether a value of the type can hold another of the same type."""
+        seen: set[str] = set()
+
+        def reach(ty: dict) -> bool:
+            if "prim" in ty:
+                return False
+            if "ref" in ty:
+                if ty["ref"] == name:
+                    return True
+                if ty["ref"] in seen:
+                    return False
+                seen.add(ty["ref"])
+                t = self.types[ty["ref"]]
+                if t["kind"] == "alias":
+                    return reach(t["type"])
+                cons = t.get("constructors", [t] if t["kind"] == "product" else [])
+                return any(reach(f["type"]) for c in cons for f in c["fields"])
+            return any(reach(x) for k in ("list", "maybe") if k in ty for x in [ty[k]]) or any(
+                reach(x) for x in ty.get("tuple", ty.get("map", []))
+            )
+
+        t = self.types[name]
+        return any(reach(f["type"]) for c in t["constructors"] for f in c["fields"])
+
+    def no_double(self, ty: dict, where: str) -> None:
+        """A Double is read and written by its own rules (not finite: null,
+        "+inf", "-inf"), which only a constructor's single field gets."""
+        ty = self.resolve(ty)
+        if ty.get("prim") == "double":
+            raise SystemExit(f"gen_rust.py: a Double in {where}: add support for it")
+        for k in ("list", "maybe"):
+            if k in ty:
+                self.no_double(ty[k], where)
+        for x in ty.get("tuple", ty.get("map", [])):
+            self.no_double(x, where)
+
     def sum_de(self, t: dict) -> None:
         """Deserialize reading "t" then "c" in place, so that errors inside
         "c" keep their path (serde's derive buffers "c" and loses it)."""
@@ -197,13 +234,29 @@ class Gen:
                 skip = "map.next_value::<de::IgnoredAny>()?;"
                 stream.append(f'{" " * 24}"{cn}" => {{ {skip} {name}::{cn} }}\n')
                 early.append(f'                "{cn}" => {name}::{cn},\n')
+            elif len(c["fields"]) == 1 and self.rust(c["fields"][0]["type"]) == "f64":
+                # as pandoc's JSON has a Double: not only a number
+                read = "map.next_value::<crate::Double>()?.0"
+                stream.append(f'{" " * 24}"{cn}" => {name}::{cn}({read}),\n')
+                early.append(
+                    f'                "{cn}" => {name}::{cn}(json::<crate::Double, E>(c)?.0),\n'
+                )
             else:
+                if len(c["fields"]) == 1:
+                    self.no_double(c["fields"][0]["type"], cn)
                 stream.append(f'{" " * 24}"{cn}" => {name}::{cn}(map.next_value()?),\n')
                 early.append(f'                "{cn}" => {name}::{cn}(json(c)?),\n')
         unit_arms = "".join(f'                    "{u}" => Some({name}::{u}),\n' for u in units)
+        # a type that holds itself is read level by level: count them
+        guard = "let _level = crate::Level::enter()?;\n                " if self.nests(name) else ""
         self.out.append(
             SUM_DE.format(
-                name=name, tags=tags, stream="".join(stream), early="".join(early), units=unit_arms
+                name=name,
+                tags=tags,
+                stream="".join(stream),
+                early="".join(early),
+                units=unit_arms,
+                guard=guard,
             )
         )
 
@@ -218,6 +271,8 @@ class Gen:
         derives = ["Debug", "Clone", "PartialEq"]
         if derive_serde:
             derives += ["Serialize", "Deserialize"]
+        for f in fields:
+            self.no_double(f["type"], name)
         o.append(f"/// {doc}\n#[derive({', '.join(derives)})]\n")
         o.append(f"pub struct {name} {{\n")
         if encoding == "root":
@@ -445,7 +500,7 @@ impl<'de> Deserialize<'de> for {name} {{
                 f.write_str("a {name}: {{\\"t\\": ..., \\"c\\": ...}}")
             }}
             fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<{name}, A::Error> {{
-                let mut tag: Option<&'static str> = None;
+                {guard}let mut tag: Option<&'static str> = None;
                 let mut value: Option<{name}> = None;
                 let mut early: Option<serde_json::Value> = None;
                 // keys and tags are matched, not copied
@@ -459,7 +514,7 @@ impl<'de> Deserialize<'de> for {name} {{
                         tag = Some(t);
                     }} else if key == crate::Key::C {{
                         match tag.as_deref() {{
-                            None => early = Some(map.next_value()?),
+                            None => early = Some(map.next_value_seed(crate::Early)?),
                             Some(t) => value = Some(match t {{
 {stream}                        _ => unreachable!(),
                             }}),

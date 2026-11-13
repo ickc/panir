@@ -81,6 +81,7 @@ impl<'de> Deserialize<'de> for Block {
                 f.write_str("a Block: {\"t\": ..., \"c\": ...}")
             }
             fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Block, A::Error> {
+                let _level = crate::Level::enter()?;
                 let mut tag: Option<&'static str> = None;
                 let mut value: Option<Block> = None;
                 let mut early: Option<serde_json::Value> = None;
@@ -95,7 +96,7 @@ impl<'de> Deserialize<'de> for Block {
                         tag = Some(t);
                     } else if key == crate::Key::C {
                         match tag.as_deref() {
-                            None => early = Some(map.next_value()?),
+                            None => early = Some(map.next_value_seed(crate::Early)?),
                             Some(t) => {
                                 value = Some(match t {
                                     "Plain" => Block::Plain(map.next_value()?),
@@ -462,6 +463,7 @@ impl<'de> Deserialize<'de> for MetaValue {
                 f.write_str("a MetaValue: {\"t\": ..., \"c\": ...}")
             }
             fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<MetaValue, A::Error> {
+                let _level = crate::Level::enter()?;
                 let mut tag: Option<&'static str> = None;
                 let mut value: Option<MetaValue> = None;
                 let mut early: Option<serde_json::Value> = None;
@@ -476,7 +478,7 @@ impl<'de> Deserialize<'de> for MetaValue {
                         tag = Some(t);
                     } else if key == crate::Key::C {
                         match tag.as_deref() {
-                            None => early = Some(map.next_value()?),
+                            None => early = Some(map.next_value_seed(crate::Early)?),
                             Some(t) => {
                                 value = Some(match t {
                                     "MetaMap" => MetaValue::MetaMap(map.next_value()?),
@@ -589,6 +591,7 @@ impl<'de> Deserialize<'de> for Inline {
                 f.write_str("a Inline: {\"t\": ..., \"c\": ...}")
             }
             fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Inline, A::Error> {
+                let _level = crate::Level::enter()?;
                 let mut tag: Option<&'static str> = None;
                 let mut value: Option<Inline> = None;
                 let mut early: Option<serde_json::Value> = None;
@@ -603,7 +606,7 @@ impl<'de> Deserialize<'de> for Inline {
                         tag = Some(t);
                     } else if key == crate::Key::C {
                         match tag.as_deref() {
-                            None => early = Some(map.next_value()?),
+                            None => early = Some(map.next_value_seed(crate::Early)?),
                             Some(t) => {
                                 value = Some(match t {
                                     "Str" => Inline::Str(map.next_value()?),
@@ -1365,10 +1368,12 @@ impl<'de> Deserialize<'de> for ColWidth {
                         tag = Some(t);
                     } else if key == crate::Key::C {
                         match tag.as_deref() {
-                            None => early = Some(map.next_value()?),
+                            None => early = Some(map.next_value_seed(crate::Early)?),
                             Some(t) => {
                                 value = Some(match t {
-                                    "ColWidth" => ColWidth::ColWidth(map.next_value()?),
+                                    "ColWidth" => {
+                                        ColWidth::ColWidth(map.next_value::<crate::Double>()?.0)
+                                    }
                                     "ColWidthDefault" => {
                                         map.next_value::<de::IgnoredAny>()?;
                                         ColWidth::ColWidthDefault
@@ -1402,7 +1407,7 @@ impl<'de> Deserialize<'de> for ColWidth {
                 })
             }
             Ok(match t {
-                "ColWidth" => ColWidth::ColWidth(json(c)?),
+                "ColWidth" => ColWidth::ColWidth(json::<crate::Double, E>(c)?.0),
                 "ColWidthDefault" => ColWidth::ColWidthDefault,
                 _ => unreachable!(),
             })

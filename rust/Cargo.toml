@@ -12,6 +12,8 @@ categories = ["text-processing", "parser-implementations"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a double is read exactly (without it, serde_json reads a
-# 17-digit ColWidth one unit in the last place off, and writes another number)
-serde_json = { version = "1", features = ["raw_value", "float_roundtrip"] }
+# 17-digit ColWidth one unit in the last place off, and writes another number).
+# unbounded_depth: serde_json's limit, 128 levels of JSON, is 42 nested divs
+# (a web page's); panir counts the AST's levels itself (MAX_DEPTH).
+serde_json = { version = "1", features = ["raw_value", "float_roundtrip", "unbounded_depth"] }
 serde_path_to_error = "0.1"

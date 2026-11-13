@@ -99,7 +99,11 @@ impl Conversion {
     /// and `PANDOC_INPUT_FORMAT` and `PANDOC_OUTPUT_FORMAT` where set, as
     /// libpandoc does; proposed to pandoc in jgm/pandoc#11016).
     pub fn from_env() -> Self {
-        Self::from_parts(std::env::args().nth(1), |k| std::env::var(k).ok())
+        // (args() panics on an argument that isn't Unicode)
+        let format = std::env::args_os()
+            .nth(1)
+            .and_then(|s| s.into_string().ok());
+        Self::from_parts(format, |k| std::env::var(k).ok())
     }
 
     /// As [`Conversion::from_env`], from the first argument and a lookup.
@@ -232,7 +236,20 @@ impl<F: Filter> Driver<'_, '_, F> {
             }
         }
         let mut i = 0;
-        while i < xs.len() {
+        // The nodes still to walk, once one was replaced by none or several:
+        // out of `xs` from then on, so that what replaces a node is only
+        // appended. (Replacing in place moves all that follows, each time:
+        // minutes, for every other block of 400,000 deleted.)
+        let mut rest: Option<std::vec::IntoIter<T>> = None;
+        loop {
+            match &mut rest {
+                None if i >= xs.len() => break,
+                None => {}
+                Some(rest) => match rest.next() {
+                    Some(x) => xs.push(x), // at `i`, the end
+                    None => break,
+                },
+            }
             if !topdown {
                 children(self, &mut xs[i]);
             }
@@ -244,10 +261,17 @@ impl<F: Filter> Driver<'_, '_, F> {
             };
             let n = match result {
                 None => 1,
+                Some(mut items) if items.len() == 1 => {
+                    xs[i] = items.pop().expect("one item");
+                    1
+                }
                 Some(items) => {
-                    let n = items.len();
-                    xs.splice(i..i + 1, items);
-                    n
+                    if rest.is_none() {
+                        rest = Some(xs.split_off(i + 1).into_iter());
+                    }
+                    xs.truncate(i);
+                    xs.extend(items);
+                    xs.len() - i
                 }
             };
             if topdown && !ctx.skip {

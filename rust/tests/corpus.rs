@@ -32,7 +32,11 @@ fn round_trip() {
 fn doubles_read_exactly() {
     // 16 and 17 significant digits: serde_json reads these one unit in the
     // last place off without its float_roundtrip feature
-    for width in ["0.9119595761642921", "0.12105451833716219", "3.9473684210526314e-2"] {
+    for width in [
+        "0.9119595761642921",
+        "0.12105451833716219",
+        "3.9473684210526314e-2",
+    ] {
         let doc = format!(
             r#"{{"pandoc-api-version":[1,23,1,2],"meta":{{}},"blocks":[{{"t":"Table","c":[["",[],[]],[null,[]],[[{{"t":"AlignDefault"}},{{"t":"ColWidth","c":{width}}}]],[["",[],[]],[]],[],[["",[],[]],[]]]}}]}}"#
         );
