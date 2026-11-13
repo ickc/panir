@@ -24,5 +24,9 @@ export async function runFilter(filter: Filter | readonly Filter[]): Promise<voi
   // the output format (argv), and what pandoc says in the environment
   const conversion = Conversion.fromEnvironment(process.argv.slice(2), process.env);
   const filters: readonly Filter[] = Array.isArray(filter) ? filter : [filter];
-  process.stdout.write(serialize(applyFilter(doc, filters, conversion)));
+  const out = serialize(applyFilter(doc, filters, conversion));
+  // written when this resolves: a script may end the process right after
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.write(out, (e) => (e ? reject(e) : resolve()));
+  });
 }

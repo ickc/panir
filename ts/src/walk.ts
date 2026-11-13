@@ -156,6 +156,81 @@ type OwnerOf<K extends keyof Nodes> = {
   [S in keyof Sums]: Nodes[K] extends Sums[S] ? Sums[S] : never;
 }[keyof Sums] extends infer U ? ([U] extends [never] ? Nodes[K] : U) : never;
 
+/**
+ * `items`, each node once: one that is there twice is copied where it comes
+ * again. As in pandoc's Lua filters, whose results are values: the nodes of
+ * `return [el, el]` are two, changed separately from then on. (One object in
+ * two places of a document would be changed in both by whatever changes it
+ * later.)
+ */
+function distinct(items: readonly unknown[]): readonly unknown[] {
+  if (items.length < 2) return items;
+  const seen = new Set<unknown>();
+  let out: unknown[] | undefined;
+  for (let k = 0; k < items.length; k++) {
+    const x = items[k];
+    if (typeof x !== "object" || x === null) continue;
+    if (seen.has(x)) (out ??= [...items])[k] = copy(x);
+    else seen.add(x);
+  }
+  return out ?? items;
+}
+
+/** A node (or any value of the AST) copied, with everything in it. */
+function copy<T>(v: T): T {
+  if (Array.isArray(v)) return v.map(copy) as T;
+  if (typeof v !== "object" || v === null) return v;
+  const out = Object.create(Object.getPrototypeOf(v)) as Record<string, unknown>;
+  for (const k of Object.keys(v)) {
+    const x = copy((v as Record<string, unknown>)[k]);
+    // (assigning to __proto__ would set the prototype of an object that has one)
+    if (k === "__proto__") Object.defineProperty(out, k, { value: x, writable: true, enumerable: true, configurable: true });
+    else out[k] = x;
+  }
+  return out as T;
+}
+
+/** Replace `count` elements of `list` at `start` by `items`, in place. */
+function replace(list: unknown[], start: number, count: number, items: readonly unknown[]): void {
+  if (items.length < 1024) {
+    list.splice(start, count, ...items);
+    return;
+  }
+  // (too many arguments for a call: engines stop at about a hundred thousand)
+  const tail = list.splice(start + count);
+  list.length = start;
+  for (const x of items) list.push(x);
+  for (const x of tail) list.push(x);
+}
+
+/** The keys of a map in the order pandoc walks its Map: by code point. */
+function sortedKeys(obj: Record<string, unknown>): string[] {
+  return Object.keys(obj).sort(byCodePoint);
+}
+
+function byCodePoint(a: string, b: string): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const x = a.charCodeAt(i);
+    const y = b.charCodeAt(i);
+    if (x === y) continue;
+    // UTF-16 puts the surrogates, which make the code points above U+FFFF,
+    // below U+E000..U+FFFF
+    const sx = x >= 0xd800 && x <= 0xdfff;
+    const sy = y >= 0xd800 && y <= 0xdfff;
+    return sx === sy ? x - y : sx ? 1 : -1;
+  }
+  return a.length - b.length;
+}
+
+/** What a function returned for a position that holds one value: not a list, not a promise. */
+function oneValue(r: unknown, what: string, where: string): void {
+  if (Array.isArray(r)) throw new ASTTypeError(where, `one ${what} (this position holds one)`, "a list");
+  if (typeof (r as { then?: unknown } | null)?.then === "function") {
+    throw new ASTTypeError(where, `a ${what}`, "a promise (filter functions can't be async)");
+  }
+}
+
 type Action = (node: unknown, ctx: Context, type: string) => unknown;
 /** As `Action`, making the context only if it needs it (`ctx()`). */
 type LazyAction = (node: unknown, ctx: () => Context, type: string) => unknown;
@@ -177,6 +252,15 @@ class Walker {
     this.topDown = topDown;
     this.doc = doc;
     this.conversion = conversion;
+  }
+
+  /** Where the walk is, from the document. */
+  #path(): Path {
+    return this.frames.flatMap((f) => [
+      ...(f.field === undefined ? [] : [f.field]),
+      ...f.outer,
+      ...(f.index === undefined ? [] : [f.index]),
+    ]);
   }
 
   /** Call `fn` with a context made on demand; returns its result, and whether it skips the children. */
@@ -211,8 +295,16 @@ class Walker {
         frame.index = i;
         if (!this.topDown) this.children(list[i], type);
         const [r, skip] = this.#call((ctx) => this.action(list[i], ctx, type));
-        const items = r === undefined || r === null ? [list[i]] : Array.isArray(r) ? r : [r];
-        if (items.length !== 1 || items[0] !== list[i]) list.splice(i, 1, ...items);
+        let items: readonly unknown[];
+        if (r === undefined || r === null) {
+          items = [list[i]];
+        } else if (Array.isArray(r)) {
+          items = distinct(r);
+        } else {
+          oneValue(r, type, formatPath(this.#path()));
+          items = [r];
+        }
+        if (items.length !== 1 || items[0] !== list[i]) replace(list, i, 1, items);
         if (this.topDown && !skip) {
           for (let k = 0; k < items.length; k++) {
             frame.index = i + k;
@@ -236,9 +328,11 @@ class Walker {
       const [r, skip] = this.#call((ctx) => listAction(list, ctx, type));
       if (r !== undefined && r !== null && r !== list) {
         if (!Array.isArray(r)) {
-          throw new ASTTypeError(`${frame.field}${formatPath(frame.outer)}`, `a list of ${type}s`, typeof r);
+          throw new ASTTypeError(formatPath(this.#path()), `a list of ${type}s`, typeof r);
         }
-        list.splice(0, list.length, ...r);
+        const items = [...distinct(r)]; // (a copy: `r` may hold `list` itself)
+        list.length = 0;
+        for (const x of items) list.push(x);
       }
       return skip;
     } finally {
@@ -255,7 +349,7 @@ class Walker {
       if (t.kind === "enum") return v;
       this.frames.push({ parent, field, outer, container: undefined, index: undefined });
       try {
-        return this.one(v, r.ref, `${field}${formatPath(outer)}`);
+        return this.one(v, r.ref, formatPath(this.#path()));
       } finally {
         this.frames.pop();
       }
@@ -276,8 +370,22 @@ class Walker {
     }
     if ("map" in r) {
       const obj = v as Record<string, unknown>;
-      for (const k of Object.keys(obj)) {
-        const y = this.value(obj[k], r.map[1], parent, field, [...outer, k]);
+      const item = resolve(r.map[1]);
+      const nodes = "ref" in item && tables().types.get(item.ref)!.kind !== "enum";
+      for (const k of sortedKeys(obj)) {
+        if (!Object.hasOwn(obj, k)) continue; // a function removed it
+        let y;
+        if (nodes) {
+          // a node in a map: the map is its container, the key its index
+          this.frames.push({ parent, field, outer, container: obj, index: k });
+          try {
+            y = this.one(obj[k], (item as { ref: string }).ref, formatPath(this.#path()));
+          } finally {
+            this.frames.pop();
+          }
+        } else {
+          y = this.value(obj[k], r.map[1], parent, field, [...outer, k]);
+        }
         if (y !== obj[k]) obj[k] = y;
       }
       return v;
@@ -311,9 +419,7 @@ class Walker {
 
 function single(r: unknown, node: unknown, where: string): unknown {
   if (r === undefined || r === null) return node;
-  if (Array.isArray(r)) {
-    throw new ASTTypeError(where, "one node (this position holds one)", "a list");
-  }
+  oneValue(r, "node", where);
   return r;
 }
 
@@ -333,14 +439,24 @@ export function walk(node: unknown, action: Action,
 
 type Fns = Record<string, ((x: unknown, ctx: Context) => unknown) | undefined>;
 
-/** `fn(x, ctx)`; an error from it says which function it was, and where. */
-function callNoting(fn: (x: unknown, ctx: Context) => unknown, what: string, x: unknown, ctx: Context): unknown {
+/** Errors already noted with their function and place. */
+const noted = new WeakSet<Error>();
+
+/**
+ * `fn(x, ctx)`, as a method of its filter (`this`); an error from it says
+ * which function it was, and where.
+ */
+function callNoting(fns: Fns, fn: (x: unknown, ctx: Context) => unknown, what: string, x: unknown, ctx: Context): unknown {
   try {
-    return fn(x, ctx);
+    return fn.call(fns, x, ctx);
   } catch (e) {
-    if (e instanceof Error && !(e as { noted?: boolean }).noted) {
-      e.message += `\n  in filter function ${fn.name || "(anonymous)"}, on the ${what} at ${ctx.where}`;
-      (e as { noted?: boolean }).noted = true;
+    if (e instanceof Error && !noted.has(e)) {
+      noted.add(e);
+      try {
+        e.message += `\n  in filter function ${fn.name || "(anonymous)"}, on the ${what} at ${ctx.where}`;
+      } catch {
+        // an error whose message can't be changed (a DOMException, a frozen one)
+      }
     }
     throw e;
   }
@@ -353,7 +469,7 @@ function nodeAction(fns: Fns, only: (type: string) => boolean): LazyAction {
     const tag = (node as { t?: unknown }).t;
     const what = typeof tag === "string" ? tag : type;
     const fn = fns[what] ?? fns[type];
-    return fn ? callNoting(fn, what, node, ctx()) : undefined;
+    return fn ? callNoting(fns, fn, what, node, ctx()) : undefined;
   };
 }
 
@@ -361,7 +477,7 @@ function nodeAction(fns: Fns, only: (type: string) => boolean): LazyAction {
 function listAction(fns: Fns, only: (type: string) => boolean): ListAction {
   return (list, ctx, type) => {
     const fn = only(type) ? fns[`${type}s`] : undefined;
-    return fn ? callNoting(fn, `${type}s`, list, ctx()) : undefined;
+    return fn ? callNoting(fns, fn, `${type}s`, list, ctx()) : undefined;
   };
 }
 
@@ -371,8 +487,10 @@ function straight(fns: Fns, name: string, value: unknown, frames: Frame[], doc: 
   const fn = fns[name];
   if (!fn) return [value, false];
   const ctx = new Context(frames, doc, conversion, topDown);
-  const r = callNoting(fn, name, value, ctx);
-  return [r === undefined || r === null ? value : r, skipping.has(ctx)];
+  const r = callNoting(fns, fn, name, value, ctx);
+  if (r === undefined || r === null) return [value, skipping.has(ctx)];
+  oneValue(r, name, ctx.where);
+  return [r, skipping.has(ctx)];
 }
 
 const INLINE = (t: string) => t === "Inline";
@@ -393,22 +511,23 @@ function applyOne(doc: Pandoc, filter: Filter, conversion: Conversion): Pandoc {
     fns, "Meta", d.meta, [{ parent: d, field: "meta", outer: [], container: undefined, index: undefined }],
     d, conversion, topDown);
   const fields = (tables().types.get(root) as { fields: { name: string; type: TypeExpr }[] }).fields;
-  const obj = doc as unknown as Record<string, unknown>;
-  const all = () => new Walker(nodeAction(fns, () => true), topDown, doc, conversion, listAction(fns, LISTS));
+  const all = (d: Pandoc) => new Walker(nodeAction(fns, () => true), topDown, d, conversion, listAction(fns, LISTS));
   if (topDown) {
     const [d, skip] = straight(fns, root, doc, [], doc, conversion, true);
-    doc = d as Pandoc;
+    doc = d as Pandoc; // the function's document, if it returned one, is the one walked
     if (skip) return doc;
     const [m, skipMeta] = meta(doc);
     doc.meta = m as Meta;
-    const w = all();
+    const w = all(doc);
+    const obj = doc as unknown as Record<string, unknown>;
     for (const f of fields) {
       if (!(skipMeta && f.name === "meta")) obj[f.name] = w.value(obj[f.name], f.type, doc, f.name, []);
     }
     return doc;
   }
+  const obj = doc as unknown as Record<string, unknown>;
   if (traverse === "bottomup") {
-    const w = all();
+    const w = all(doc);
     for (const f of fields) {
       obj[f.name] = w.value(obj[f.name], f.type, doc, f.name, []);
       if (f.name === "meta") doc.meta = meta(doc)[0] as Meta;

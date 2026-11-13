@@ -204,5 +204,8 @@ test("stringify and metadata", () => {
 
 test("structuredClone keeps documents intact (for workers)", () => {
   const d = doc();
-  assert.deepEqual(structuredClone(d), d);
+  const clone = structuredClone(d);
+  // (but for the metadata's missing prototype: a clone's maps are ordinary objects)
+  assert.deepEqual({ ...clone, meta: null }, { ...d, meta: null });
+  assert.equal(serialize(clone), serialize(d));
 });

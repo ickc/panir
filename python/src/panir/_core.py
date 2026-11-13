@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import enum
 import inspect
+import math
 import re
 import sys
 import types
 import typing
 from collections.abc import Iterable, Mapping
+from operator import length_hint
 from typing import Any, ClassVar
 
 __all__ = [
@@ -55,6 +57,9 @@ class ASTError(Exception):
             else f"expected {expected}, got {got}"
         )
 
+    def __reduce__(self) -> tuple:  # the default would call __init__ with the message alone
+        return (type(self), (self.where, self.expected, self.got))
+
 
 class ASTTypeError(ASTError, TypeError):
     """A Python value put where the AST doesn't allow it."""
@@ -70,6 +75,9 @@ class ASTDecodeError(ASTError, ValueError):
     def __init__(self, path: tuple, expected: str, got: str) -> None:
         self.path = path
         super().__init__(format_path(path), expected, got)
+
+    def __reduce__(self) -> tuple:
+        return (type(self), (self.path, self.expected, self.got))
 
 
 def format_path(path: Iterable) -> str:
@@ -153,6 +161,16 @@ class Node:
     _setters: ClassVar[tuple[Any, ...]] = ()
     _spec_list: ClassVar[list[_Spec]] = []
     _tag: ClassVar[str] = ""
+
+    def __init__(self) -> None:
+        # a constructor with fields has its own __init__ (generated); what
+        # comes here is one without (Space), or a type's own class (Inline)
+        if type(self)._encoding is None:
+            name = type(self).__name__
+            raise TypeError(f"{name} is a type, not a constructor: make one of its subclasses")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(f"{type(self).__name__}.{name}: a node's fields can't be deleted")
 
     def __setattr__(self, name: str, value: Any) -> None:
         spec = type(self)._specs.get(name)
@@ -351,6 +369,10 @@ class NodeDict(dict):
         for k, v in dict(*args, **kwargs).items():
             self[k] = v
 
+    def __ior__(self, other: Any) -> NodeDict:  # type: ignore[override,misc]
+        self.update(other)  # dict's own |= doesn't go through __setitem__
+        return self
+
     def setdefault(self, k: Any, v: Any = None) -> Any:
         if k not in self:
             self[k] = v
@@ -414,6 +436,14 @@ class _Spec:
         return False
 
 
+# pandoc's Int is Haskell's, 64 bits: a bigger one can't be written for it.
+_INT_MIN, _INT_MAX = -(2**63), 2**63 - 1
+_INT_HINT = " (pandoc's Int has 64 bits)"
+# A Double that isn't finite has no JSON number: pandoc (aeson) writes these
+# for it, and reads them.
+_NOT_FINITE = {"+inf": math.inf, "-inf": -math.inf, None: math.nan}
+
+
 class _PrimSpec(_Spec):
     NAMES = {str: "a str", int: "an int", float: "a float", bool: "a bool"}
     JSON = {str: "a string", int: "an integer", float: "a number", bool: "a boolean"}
@@ -427,28 +457,53 @@ class _PrimSpec(_Spec):
     def coerce(self, value: Any, label: str | None = None, key: Any = None) -> Any:
         ty = self.ty
         if ty is float:
-            if type(value) in (float, int) or (
-                isinstance(value, (int, float)) and not isinstance(value, bool)
-            ):
-                return float(value)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                try:
+                    return float(value)
+                except OverflowError:
+                    self.fail(label, key, value, " (too big for a float)")
         elif isinstance(value, ty) and not (ty is int and isinstance(value, bool)):
+            if ty is int and not _INT_MIN <= value <= _INT_MAX:
+                self.fail(label, key, value, _INT_HINT)
             return value
         self.fail(label, key, value)
 
     def decode(self, j: Any) -> Any:
-        if type(j) is self.ty:
+        ty = self.ty
+        if type(j) is ty:
+            if ty is int and not _INT_MIN <= j <= _INT_MAX:
+                raise _Bad(self.JSON[ty] + _INT_HINT, j)
             return j
-        if self.ty is float and type(j) is int:
-            return float(j)
-        raise _Bad(self.JSON[self.ty], j)
+        if ty is float:
+            if type(j) is int:
+                try:
+                    return float(j)
+                except OverflowError:
+                    return math.inf if j > 0 else -math.inf  # as pandoc reads 1e999
+            if j is None or type(j) is str:
+                try:
+                    return _NOT_FINITE[j]
+                except KeyError:
+                    pass
+        raise _Bad(self.JSON[ty], j)
 
     def encode(self, value: Any) -> Any:
         ty = self.ty
-        if type(value) is ty or (ty is float and type(value) is int):
-            return value
-        if isinstance(value, ty) and not (ty is int and isinstance(value, bool)):
-            return ty(value)
-        raise _Bad(self.NAMES[ty], value)
+        if type(value) is not ty:
+            if isinstance(value, bool) or not isinstance(
+                value, (int, float) if ty is float else ty
+            ):
+                raise _Bad(self.NAMES[ty], value)
+            try:
+                value = ty(value)  # a subclass's value, or an int for a float
+            except OverflowError:
+                raise _Bad(self.NAMES[ty], value) from None
+        if ty is float:
+            if not math.isfinite(value):
+                return None if value != value else "+inf" if value > 0 else "-inf"
+        elif ty is int and not _INT_MIN <= value <= _INT_MAX:
+            raise _Bad(self.NAMES[ty] + _INT_HINT, value)
+        return value
 
 
 class _ListSpec(_Spec):
@@ -483,30 +538,24 @@ class _ListSpec(_Spec):
         if type(j) is not list:
             raise _Bad("a list", j)
         dec = self.item.decode
+        it = iter(j)
         try:
-            return _list(self, [dec(x) for x in j])
-        except _Bad:
-            for i, x in enumerate(j):
-                try:
-                    dec(x)
-                except _Bad as e:
-                    e.path.append(i)
-                    raise
+            return _list(self, [dec(x) for x in it])
+        except _Bad as e:
+            # where the iterator stopped. (Decoding the elements again to
+            # find it doubled the work at every level of nesting.)
+            e.path.append(len(j) - length_hint(it) - 1)
             raise
 
     def encode(self, value: Any) -> Any:
         if not isinstance(value, list):
             raise _Bad("a list", value)
         enc = self.item.encode
+        it = iter(value)
         try:
-            return [enc(x) for x in value]
-        except _Bad:
-            for i, x in enumerate(value):
-                try:
-                    enc(x)
-                except _Bad as e:
-                    e.path.append(i)
-                    raise
+            return [enc(x) for x in it]
+        except _Bad as e:
+            e.path.append(len(value) - length_hint(it) - 1)
             raise
 
 
@@ -745,6 +794,8 @@ class _SumCodec:
         values = _encode_fields(value)
         if enc == "value":
             return {"t": cls._tag, "c": values[0]}
+        if enc is None:  # the type's own class, not one of its constructors'
+            raise _Bad(f"one of {_ClassSpec(self.base, '').name()}'s constructors", value)
         return {"t": cls._tag, "c": values}
 
 
@@ -935,11 +986,17 @@ def init(self: Node, values: dict[str, Any]) -> None:
             and isinstance(v[0], str)
             and isinstance(spec := cls._specs[f], _ListSpec)
             and isinstance(spec.item, _ClassSpec)
+            and _takes_text(spec.item.cls)
         ):
             v = v[0]  # Para("a b"): the whole list as one string, as in Lua
         if v is None and f in cls._defaults:
             v = cls._specs[f].decode(cls._defaults[f])
         self.__setattr__(f, v)
+
+
+def _takes_text(cls: type) -> bool:
+    """Whether a list of ``cls`` can be given as one string: inlines, blocks."""
+    return issubclass(_CLASSES["Str"], cls) or issubclass(_CLASSES["Plain"], cls)
 
 
 def flat(cls: type[Node], owner: str, field: str, given: Any, parts: dict[str, Any]) -> Any:

@@ -132,6 +132,8 @@ interface Tables {
   types: Map<string, TypeDecl>;
   /** constructor name -> its sum type */
   tagOwner: Map<string, string>;
+  /** sum type -> its constructors, by name */
+  constructors: Map<string, Map<string, Constructor>>;
   /** constructor or product name -> its declaration */
   nodes: Map<string, { fields: Field[]; tag: boolean; encoding: string; owner: string }>;
 }
@@ -143,9 +145,11 @@ export function tables(): Tables {
   const types = new Map<string, TypeDecl>();
   const tagOwner = new Map<string, string>();
   const nodes: Tables["nodes"] = new Map();
+  const constructors: Tables["constructors"] = new Map();
   for (const t of SCHEMA.types) {
     types.set(t.name, t);
     if (t.kind === "sum") {
+      constructors.set(t.name, new Map(t.constructors.map((c) => [c.name, c])));
       for (const c of t.constructors) {
         tagOwner.set(c.name, t.name);
         nodes.set(c.name, { fields: c.fields, tag: true, encoding: c.encoding, owner: t.name });
@@ -154,13 +158,22 @@ export function tables(): Tables {
       nodes.set(t.name, { fields: t.fields, tag: false, encoding: t.encoding, owner: t.name });
     }
   }
-  cache = { types, tagOwner, nodes };
+  cache = { types, tagOwner, nodes, constructors };
   return cache;
+}
+
+/** The declaration of a type, by name. */
+function declaration(name: string): TypeDecl {
+  const t = tables().types.get(name);
+  if (t) return t;
+  const owner = tables().tagOwner.get(name);
+  throw new TypeError(owner ? `${name} is a constructor of the type ${owner}: give ${JSON.stringify(owner)}`
+                            : `no pandoc type is called ${JSON.stringify(name)}`);
 }
 
 export function resolve(ty: TypeExpr): TypeExpr {
   while ("ref" in ty) {
-    const t = tables().types.get(ty.ref)!;
+    const t = declaration(ty.ref);
     if (t.kind !== "alias") break;
     ty = t.type;
   }
@@ -180,38 +193,105 @@ function typeName(ty: TypeExpr): string {
   return t.kind === "sum" ? t.name : `${article(t.name)} ${t.name}`;
 }
 
+/** A plain object: `{}` or one without a prototype (not an array, a Map, a class's). */
 function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+  if (typeof v !== "object" || v === null) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
 }
 
-function withPath<T>(key: string | number, f: () => T): T {
+/**
+ * A map of the AST (the metadata): an object without a prototype, so that
+ * any key is only a key (`__proto__`, `constructor`, `toString`).
+ */
+function emptyMap(): Record<string, unknown> {
+  return Object.create(null) as Record<string, unknown>;
+}
+
+/** `f` on each element of a list; an error says at which index. */
+function mapList(xs: unknown[], f: (x: unknown) => unknown): unknown[] {
+  const out = new Array<unknown>(xs.length);
+  let i = 0;
   try {
-    return f();
+    // by index: a hole in the array is an element too (undefined)
+    for (; i < xs.length; i++) out[i] = f(xs[i]);
+  } catch (e) {
+    if (e instanceof Bad) e.path.push(i);
+    throw e;
+  }
+  return out;
+}
+
+/** `f` on each value of a map, into `out`; an error says at which key. */
+function mapMap(obj: Record<string, unknown>, f: (x: unknown) => unknown,
+                out: Record<string, unknown>): Record<string, unknown> {
+  let key = "";
+  try {
+    for (key of Object.keys(obj)) {
+      if (!isWellFormed(key)) throw new Bad("a key of well-formed text", describe(key) + SURROGATE);
+      const value = f(obj[key]);
+      // (assigning to __proto__ sets the prototype of an object that has one)
+      if (key === "__proto__") Object.defineProperty(out, key, { value, writable: true, enumerable: true, configurable: true });
+      else out[key] = value;
+    }
   } catch (e) {
     if (e instanceof Bad) e.path.push(key);
     throw e;
   }
+  return out;
+}
+
+const SURROGATE = " (half of a surrogate pair: pandoc reads UTF-8, which has none)";
+
+/** Whether a string has no lone surrogate (true where the engine can't tell). */
+function isWellFormed(s: string): boolean {
+  return (s as { isWellFormed?(): boolean }).isWellFormed?.() !== false;
+}
+
+// What pandoc (aeson) writes for a Double that isn't finite, and reads.
+const POSITIVE_INFINITY = "+inf";
+const NEGATIVE_INFINITY = "-inf";
+
+function bad(prim: string, v: unknown, hint = ""): never {
+  throw new Bad(typeName({ prim } as TypeExpr), describe(v) + hint);
+}
+
+/** A string, integer or boolean, which JSON holds as it is. */
+function checkPrim(prim: string, v: unknown): unknown {
+  switch (prim) {
+    case "string":
+      if (typeof v !== "string") break;
+      if (!isWellFormed(v)) bad(prim, v, SURROGATE);
+      return v;
+    case "int":
+      if (typeof v !== "number" || !Number.isInteger(v)) break;
+      // beyond 2^53 JSON.parse has already rounded the number pandoc wrote
+      if (!Number.isSafeInteger(v)) bad(prim, v, " (beyond the integers JavaScript's numbers hold exactly)");
+      return v;
+    case "bool":
+      if (typeof v === "boolean") return v;
+      break;
+  }
+  return bad(prim, v);
+}
+
+function decodePrim(prim: string, j: unknown): unknown {
+  if (prim !== "double") return checkPrim(prim, j);
+  if (typeof j === "number") return j;
+  if (j === null) return NaN;
+  if (j === POSITIVE_INFINITY) return Infinity;
+  if (j === NEGATIVE_INFINITY) return -Infinity;
+  return bad(prim, j);
+}
+
+function encodePrim(prim: string, v: unknown): unknown {
+  if (prim !== "double") return checkPrim(prim, v);
+  if (typeof v !== "number") return bad(prim, v);
+  if (Number.isFinite(v)) return v;
+  return Number.isNaN(v) ? null : v > 0 ? POSITIVE_INFINITY : NEGATIVE_INFINITY;
 }
 
 // -- decoding -------------------------------------------------------------------
-
-function decodePrim(prim: string, j: unknown): unknown {
-  switch (prim) {
-    case "string":
-      if (typeof j === "string") return j;
-      break;
-    case "int":
-      if (typeof j === "number" && Number.isInteger(j)) return j;
-      break;
-    case "double":
-      if (typeof j === "number") return j;
-      break;
-    case "bool":
-      if (typeof j === "boolean") return j;
-      break;
-  }
-  throw new Bad(typeName({ prim } as TypeExpr), describe(j));
-}
 
 function decode(ty: TypeExpr, j: unknown): unknown {
   ty = resolve(ty);
@@ -219,29 +299,29 @@ function decode(ty: TypeExpr, j: unknown): unknown {
   if ("list" in ty) {
     if (!Array.isArray(j)) throw new Bad("a list", describe(j));
     const item = ty.list;
-    return j.map((x, i) => withPath(i, () => decode(item, x)));
+    return mapList(j, (x) => decode(item, x));
   }
   if ("maybe" in ty) return j === null ? null : decode(ty.maybe, j);
   if ("map" in ty) {
     if (!isObject(j)) throw new Bad("an object", describe(j));
-    const out: Record<string, unknown> = {};
-    for (const [k, x] of Object.entries(j)) out[k] = withPath(k, () => decode((ty as { map: [TypeExpr, TypeExpr] }).map[1], x));
-    return out;
+    const value = ty.map[1];
+    return mapMap(j, (x) => decode(value, x), emptyMap());
   }
   if ("tuple" in ty) {
     const items = ty.tuple;
     if (!Array.isArray(j) || j.length !== items.length) {
       throw new Bad(`a list of ${items.length}`, describe(j));
     }
-    return items.map((t, i) => withPath(i, () => decode(t, j[i])));
+    let i = 0;
+    return mapList(j, (x) => decode(items[i++], x));
   }
-  const t = tables().types.get(ty.ref)!;
+  const t = declaration(ty.ref);
   if (t.kind === "enum") {
     if (isObject(j) && typeof j.t === "string" && t.values.includes(j.t)) return j.t;
     throw new Bad(`${article(t.name)} ${t.name}`, describe(j));
   }
   if (t.kind === "sum") {
-    const c = isObject(j) && typeof j.t === "string" ? t.constructors.find((c) => c.name === j.t) : undefined;
+    const c = isObject(j) && typeof j.t === "string" ? tables().constructors.get(t.name)!.get(j.t) : undefined;
     if (!c) throw new Bad(t.name, describe(j));
     const out: Record<string, unknown> = { t: c.name };
     const obj = j as Record<string, unknown>;
@@ -270,64 +350,79 @@ function decode(ty: TypeExpr, j: unknown): unknown {
 
 function decodeFields(name: string, fields: Field[], encoding: string, c: unknown,
                       out: Record<string, unknown>): void {
-  if (encoding === "value") {
-    out[fields[0].name] = withPath(fields[0].name, () => decode(fields[0].type, c));
-    return;
-  }
   if (encoding === "array") {
     if (!Array.isArray(c) || c.length !== fields.length) {
       const got = Array.isArray(c) ? `${name} with ${c.length}` : describe(c);
       throw new Bad(`${name} with ${fields.length} fields`, got);
     }
-    fields.forEach((f, i) => { out[f.name] = withPath(f.name, () => decode(f.type, c[i])); });
-    return;
+  } else if (encoding !== "value") {
+    if (!isObject(c)) throw new Bad(`an object (${name})`, describe(c));
+    for (const f of fields) {
+      if (!Object.hasOwn(c, f.key)) throw new Bad(`${name} with ${JSON.stringify(f.key)}`, "one without");
+    }
   }
-  if (!isObject(c)) throw new Bad(`an object (${name})`, describe(c));
-  for (const f of fields) {
-    if (!(f.key in c)) throw new Bad(`${name} with ${JSON.stringify(f.key)}`, "one without");
-    out[f.name] = withPath(f.name, () => decode(f.type, c[f.key]));
+  let i = 0;
+  try {
+    for (; i < fields.length; i++) {
+      const f = fields[i];
+      const x = encoding === "value" ? c : encoding === "array" ? (c as unknown[])[i] : (c as Record<string, unknown>)[f.key];
+      out[f.name] = decode(f.type, x);
+    }
+  } catch (e) {
+    if (e instanceof Bad) e.path.push(fields[i].name);
+    throw e;
+  }
+}
+
+/** Run a decoder or encoder; what it throws becomes the error `fail` makes of it. */
+function guarded<T>(f: () => T, fail: (e: Bad) => Error): T {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof Bad) throw fail(e);
+    if (e instanceof RangeError && /call stack/i.test(e.message)) {
+      // the functions here call themselves for each level of a document
+      throw fail(new Bad("a document nested less deeply", "one beyond the engine's call stack"));
+    }
+    throw e;
   }
 }
 
 /** A value of a type (default: a document) from pandoc's JSON, checked. */
 export function fromJSON(j: unknown, type: string = SCHEMA.root): unknown {
-  try {
-    return decode({ ref: type }, j);
-  } catch (e) {
-    if (e instanceof Bad) throw new ASTDecodeError(e.path.reverse(), e.expected, e.got);
-    throw e;
-  }
+  return guarded(() => decode({ ref: type }, j),
+                 (e) => new ASTDecodeError(e.path.reverse(), e.expected, e.got));
 }
 
 // -- encoding and checking ------------------------------------------------------
 
 function encode(ty: TypeExpr, v: unknown): unknown {
   ty = resolve(ty);
-  if ("prim" in ty) return decodePrim(ty.prim, v);
+  if ("prim" in ty) return encodePrim(ty.prim, v);
   if ("list" in ty) {
     if (!Array.isArray(v)) throw new Bad("a list", describe(v));
     const item = ty.list;
-    return v.map((x, i) => withPath(i, () => encode(item, x)));
+    return mapList(v, (x) => encode(item, x));
   }
   if ("maybe" in ty) return v === null || v === undefined ? null : encode(ty.maybe, v);
   if ("map" in ty) {
     if (!isObject(v)) throw new Bad("an object", describe(v));
-    const out: Record<string, unknown> = {};
-    for (const [k, x] of Object.entries(v)) out[k] = withPath(k, () => encode((ty as { map: [TypeExpr, TypeExpr] }).map[1], x));
-    return out;
+    const value = ty.map[1];
+    return mapMap(v, (x) => encode(value, x), {}); // JSON: an ordinary object
   }
   if ("tuple" in ty) {
     const items = ty.tuple;
     if (!Array.isArray(v) || v.length !== items.length) throw new Bad(typeName(ty), describe(v));
-    return items.map((t, i) => withPath(i, () => encode(t, v[i])));
+    let i = 0;
+    return mapList(v, (x) => encode(items[i++], x));
   }
-  const t = tables().types.get(ty.ref)!;
+  const t = declaration(ty.ref);
   if (t.kind === "enum") {
     if (typeof v === "string" && t.values.includes(v)) return { t: v };
     throw new Bad(`${article(t.name)} ${t.name}`, describe(v));
   }
   if (t.kind === "sum") {
-    const c = isObject(v) && typeof v.t === "string" ? t.constructors.find((c) => c.name === v.t) : undefined;
+    const c = isObject(v) && typeof v.t === "string" ? tables().constructors.get(t.name)!.get(v.t) : undefined;
     if (!c) throw new Bad(t.name, describe(v));
     if (c.encoding === "none") return { t: c.name };
     return { t: c.name, c: encodeFields(c.fields, c.encoding, v as Record<string, unknown>) };
@@ -344,24 +439,25 @@ function encode(ty: TypeExpr, v: unknown): unknown {
 }
 
 function encodeFields(fields: Field[], encoding: string, v: Record<string, unknown>): unknown {
-  const values = fields.map((f) => withPath(f.name, () => encode(f.type, v[f.name])));
+  const values = new Array<unknown>(fields.length);
+  let i = 0;
+  try {
+    for (; i < fields.length; i++) values[i] = encode(fields[i].type, v[fields[i].name]);
+  } catch (e) {
+    if (e instanceof Bad) e.path.push(fields[i].name);
+    throw e;
+  }
   if (encoding === "value") return values[0];
   if (encoding === "array") return values;
   const out: Record<string, unknown> = {};
-  fields.forEach((f, i) => { out[f.key] = values[i]; });
+  fields.forEach((f, k) => { out[f.key] = values[k]; });
   return out;
 }
 
 /** A value (default: a document) as pandoc's JSON; checks it on the way. */
 export function toJSON(v: unknown, type: string = SCHEMA.root): unknown {
-  try {
-    return encode({ ref: type }, v);
-  } catch (e) {
-    if (e instanceof Bad) {
-      throw new ASTTypeError(formatPath([type, ...e.path.reverse()]), e.expected, e.got);
-    }
-    throw e;
-  }
+  return guarded(() => encode({ ref: type }, v),
+                 (e) => new ASTTypeError(formatPath([type, ...e.path.reverse()]), e.expected, e.got));
 }
 
 /** Throw `ASTTypeError` if a value (default: a document) isn't well-typed. */
@@ -423,22 +519,18 @@ function mapChanged(xs: unknown[], f: (x: unknown, i: number) => unknown): unkno
   return out ?? xs;
 }
 
-function coerce(ty: TypeExpr, v: unknown, where: string): unknown {
+function coerce(ty: TypeExpr, v: unknown, where: [string, string]): unknown {
   const r = resolve(ty);
   // attributes may be given as a record
   if ("list" in r && "tuple" in r.list && isObject(v)) v = Object.entries(v);
   v = fromStrings(ty, v);
-  try {
-    encode(ty, v);
-  } catch (e) {
-    if (e instanceof Bad) {
-      let hint = "";
-      if (typeof v === "string" && "list" in r && "ref" in r.list) hint = " (a string; give a list of nodes)";
-      throw new ASTTypeError(where + formatPath(e.path.reverse()).replace(/^([^[])/, ".$1"),
-                             e.expected, e.got + hint);
-    }
-    throw e;
-  }
+  // a map given as an object with a prototype: its keys, into one without
+  if ("map" in r && isObject(v) && Object.getPrototypeOf(v) !== null) v = Object.assign(emptyMap(), v);
+  guarded(() => encode(ty, v), (e) => {
+    let hint = "";
+    if (typeof v === "string" && "list" in r && "ref" in r.list) hint = " (a string; give a list of nodes)";
+    return new ASTTypeError(formatPath([...where, ...e.path.reverse()]), e.expected, e.got + hint);
+  });
   return v;
 }
 
@@ -472,7 +564,7 @@ export function make<T>(name: string, given: Record<string, unknown>,
       if (!("default" in f)) throw new TypeError(`${name}() needs ${f.name}`);
       v = decode(f.type, f.default); // a fresh value each time
     }
-    out[f.name] = coerce(f.type, v, `${name}.${f.name}`);
+    out[f.name] = coerce(f.type, v, [name, f.name]);
   }
   const unknown = Object.keys(opts).filter((k) => !known.has(k));
   if (unknown.length) {

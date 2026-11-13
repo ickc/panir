@@ -34,4 +34,4 @@ gen-rust = { cmd = "python tools/gen_rust.py && rustfmt --edition 2021 rust/src/
 gen-ts = { cmd = "python tools/gen_ts.py", depends-on = ["derive"] }
 gen-julia = { cmd = "python tools/gen_julia.py", depends-on = ["derive"] }
 test-python = { cmd = "pytest -q python/tests", env = { PYTHONPATH = "python/src" } }
-lint = "ruff check python tools scripts && ruff format --check python/src python/tests tools scripts && pyright -p python/pyrightconfig.json"
+lint = "ruff check python tools scripts fuzz && ruff format --check python/src python/tests tools scripts fuzz && pyright -p python/pyrightconfig.json"

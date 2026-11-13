@@ -20,7 +20,6 @@ a ``Context`` knows the conversion (``ctx.conversion``; see
 from __future__ import annotations
 
 import inspect
-import io
 import json
 import sys
 from collections.abc import Callable, Iterable, Sequence
@@ -101,19 +100,22 @@ class Filter:
 
     def _on(self, *types: type) -> Callable[[F], F]:
         """Register the decorated function for nodes of these types."""
+        if not types:
+            raise TypeError("Filter.on() takes the AST classes the function is for")
         for ty in types:
             if not (isinstance(ty, type) and issubclass(ty, Node)):
                 raise TypeError(f"Filter.on() takes AST classes, got {ty!r}")
 
         def register(fn: F) -> F:
             wants_ctx = _takes_context(fn)
-            for ty in types:
+            for ty in types:  # all or none
                 if ty in self._handlers:
                     raise ValueError(
                         f"{ty.__name__} already has a function in this "
                         f"filter ({self._handlers[ty][0].__name__}); "
                         "combine them, or use a second Filter"
                     )
+            for ty in types:
                 self._handlers[ty] = (fn, wants_ctx)
             self._lookup.clear()
             return fn
@@ -190,6 +192,8 @@ class Filter:
         ``conversion`` describes the pandoc run (``ctx.conversion``); given
         only ``format``, that is all it knows.
         """
+        if self.traverse not in _TRAVERSES:
+            raise ValueError(f"traverse: expected one of {_TRAVERSES}, got {self.traverse!r}")
         conv = conversion if conversion is not None else Conversion(format)
         top_down = self.traverse == "topdown"
         fields = _walk_fields(Pandoc)
@@ -278,19 +282,23 @@ class Filter:
         """Run as a pandoc JSON filter: a document on stdin, to stdout.
 
         pandoc passes the output format as the first argument, and the
-        reader's options in the environment.
+        reader's options in the environment. While the filter's functions
+        run, ``print`` writes to stderr: pandoc reads stdout as the document.
         """
         take = handoff.get()
         if take is not None:
             take(self)  # a program running this script in its own process
             return
         conversion = Conversion.from_environment(argv)
-        stdin = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8")
-        out = self.run_json(stdin.read(), conversion=conversion)
-        stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-        stdout.write(out)
+        stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
+        text = stdin.read()
+        sys.stdout = sys.stderr
+        try:
+            out = self.run_json(text, conversion=conversion)
+        finally:
+            sys.stdout = sys.__stdout__
+        stdout.write(out.encode("utf-8"))
         stdout.flush()
-        stdout.detach()
 
 
 def run(
@@ -335,11 +343,14 @@ def _takes_context(fn: Callable[..., Any]) -> bool:
     except (TypeError, ValueError):
         return False
     positional = [p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
-    if any(p.kind == p.VAR_POSITIONAL for p in params):
-        return True
-    if not 1 <= len(positional) <= 2:
+    # a parameter with a default is the function's own (f(x, mark="*")), not
+    # one for the context
+    required = [p for p in positional if p.default is p.empty]
+    if len(required) > 2 or not positional and not any(p.kind == p.VAR_POSITIONAL for p in params):
         raise TypeError(
             f"a filter function takes the node, and optionally a Context; "
-            f"{fn.__qualname__} takes {len(positional)} arguments"
+            f"{fn.__qualname__} takes {len(required)} arguments"
         )
-    return len(positional) == 2
+    if len(required) == 2:
+        return True
+    return len(positional) < 2 and any(p.kind == p.VAR_POSITIONAL for p in params)

@@ -46,45 +46,133 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+/// How deep a document may be to be read: the levels of `Block`, `Inline`
+/// and `MetaValue` in each other (a `Str` in an `Emph` in a `Para` in a `Div`
+/// is four). A deeper one is an error, not a crash: a reader calls itself for
+/// each level, and the stack is not endless.
+///
+/// It was 128 levels of JSON, serde_json's own limit: 42 nested divs, which a
+/// web page read from HTML can have.
+pub const MAX_DEPTH: usize = 256;
+
+/// The stack a document may take to be read, in bytes: what a level takes
+/// goes from 1 kB (a block quote) to 6 (a table in a table's cell), and five
+/// times that unoptimized, so that [`MAX_DEPTH`] alone doesn't keep within
+/// the megabyte a thread has on Windows, or a wasm module.
+const MAX_STACK: usize = 640 << 10;
+
+thread_local! {
+    // the levels being read, and where the stack was at the first
+    static DEPTH: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    // whether a level was refused since `from_str` began
+    static TOO_DEEP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A level of the AST being read; counted while it lives.
+#[doc(hidden)]
+pub struct Level(());
+
+impl Level {
+    #[inline(never)]
+    pub fn enter<E: serde::de::Error>() -> Result<Level, E> {
+        let here = 0u8;
+        let here = std::hint::black_box(&here) as *const u8 as usize;
+        DEPTH.with(|d| {
+            let (levels, first) = d.get();
+            let first = if levels == 0 { here } else { first };
+            let refused = if levels >= MAX_DEPTH {
+                format!("nested more than {MAX_DEPTH} levels deep")
+            } else if first.abs_diff(here) > MAX_STACK {
+                format!("nested too deep for the stack ({levels} levels)")
+            } else {
+                d.set((levels + 1, first));
+                return Ok(Level(()));
+            };
+            TOO_DEEP.with(|t| t.set(true));
+            Err(E::custom(refused))
+        })
+    }
+}
+
+impl Drop for Level {
+    fn drop(&mut self) {
+        DEPTH.with(|d| {
+            let (levels, first) = d.get();
+            d.set((levels - 1, first));
+        });
+    }
+}
+
+/// `json` as a `T`, whole, to any depth of JSON ([`Level`] counts the AST's).
+fn read<'a, T: serde::Deserialize<'a>>(json: &'a str) -> serde_json::Result<T> {
+    let mut de = serde_json::Deserializer::from_str(json);
+    de.disable_recursion_limit();
+    let value = T::deserialize(&mut de)?;
+    de.end()?;
+    Ok(value)
+}
+
 /// A document from pandoc's JSON, checking its `pandoc-api-version`.
 pub fn from_str(json: &str) -> Result<Pandoc, Error> {
+    let wrong_version = |got: &[i64]| Error {
+        path: "pandoc-api-version".into(),
+        message: format!(
+            "expected {}.{}.*, got {:?}",
+            PANDOC_API_VERSION[0], PANDOC_API_VERSION[1], got
+        ),
+    };
+    let right = |v: &[i64]| v.get(..2) == Some(&PANDOC_API_VERSION[..2]);
     // Read untracked (tracking each value's path made reading 30-40% slower);
     // only if that fails, read again to find the error's path.
-    let doc: Pandoc = match serde_json::from_str(json) {
+    TOO_DEEP.with(|t| t.set(false));
+    let doc: Pandoc = match read(json) {
         Ok(doc) => doc,
         Err(first) => {
-            let de = &mut serde_json::Deserializer::from_str(json);
-            return Err(match serde_path_to_error::deserialize::<_, Pandoc>(de) {
-                Err(e) => Error {
-                    path: e.path().to_string(),
-                    message: e.inner().to_string(),
+            // another version's document: say that, not where it first differs
+            #[derive(serde::Deserialize)]
+            struct Version {
+                #[serde(rename = "pandoc-api-version")]
+                version: Vec<i64>,
+            }
+            if let Ok(v) = read::<Version>(json) {
+                if !right(&v.version) {
+                    return Err(wrong_version(&v.version));
+                }
+            }
+            let whole = Error {
+                path: String::new(),
+                message: first.to_string(),
+            };
+            // Too deep: the reading for the path takes more stack for a
+            // level, and would stop before; and such a path says little.
+            if TOO_DEEP.with(|t| t.get()) {
+                return Err(whole);
+            }
+            let mut de = serde_json::Deserializer::from_str(json);
+            de.disable_recursion_limit();
+            return Err(
+                match serde_path_to_error::deserialize::<_, Pandoc>(&mut de) {
+                    // (it stopped before the error, for its own stack)
+                    Err(_) if TOO_DEEP.with(|t| t.get()) => whole,
+                    Err(e) => Error {
+                        path: e.path().to_string(),
+                        message: e.inner().to_string(),
+                    },
+                    // the document reads, but more follows it
+                    Ok(_) => whole,
                 },
-                // the document reads, but more follows it
-                Ok(_) => Error {
-                    path: String::new(),
-                    message: first.to_string(),
-                },
-            });
+            );
         }
     };
-    if doc.api_version.get(..2) != Some(&PANDOC_API_VERSION[..2]) {
-        return Err(Error {
-            path: "pandoc-api-version".into(),
-            message: format!(
-                "expected {}.{}.*, got {:?}",
-                PANDOC_API_VERSION[0], PANDOC_API_VERSION[1], doc.api_version
-            ),
-        });
+    if !right(&doc.api_version) {
+        return Err(wrong_version(&doc.api_version));
     }
     Ok(doc)
 }
 
-/// A `Double` as pandoc's JSON (aeson) writes it, as Haskell shows it:
-/// `0.5`, `1.0`, and outside 0.1 to 10^7 with an exponent, `5.0e-2`.
+/// A finite `Double` as pandoc's JSON (aeson) writes it, as Haskell shows
+/// it: `0.5`, `1.0`, and outside 0.1 to 10^7 with an exponent, `5.0e-2`.
 fn haskell_double(x: f64) -> String {
-    if !x.is_finite() {
-        return "null".into();
-    }
     let a = x.abs();
     if a == 0.0 || (0.1..1e7).contains(&a) {
         let t = format!("{x}");
@@ -102,16 +190,125 @@ fn haskell_double(x: f64) -> String {
     }
 }
 
+/// A `Double` as pandoc writes it: one that isn't finite has no JSON number,
+/// and is `null` (not a number) or `"+inf"`, `"-inf"`.
 #[doc(hidden)]
 pub fn aeson_double<S: serde::Serializer>(x: &f64, s: S) -> Result<S::Ok, S::Error> {
+    if x.is_nan() {
+        return s.serialize_unit();
+    }
+    if x.is_infinite() {
+        return s.serialize_str(if *x > 0.0 { "+inf" } else { "-inf" });
+    }
     let raw = serde_json::value::RawValue::from_string(haskell_double(*x))
         .map_err(serde::ser::Error::custom)?;
     serde::Serialize::serialize(&raw, s)
 }
 
+/// A `Double` as pandoc reads it: a number, or what [`aeson_double`] writes
+/// for one that isn't finite.
+#[doc(hidden)]
+pub struct Double(pub f64);
+
+impl<'de> serde::Deserialize<'de> for Double {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl serde::de::Visitor<'_> for V {
+            type Value = Double;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a number")
+            }
+            fn visit_f64<E>(self, x: f64) -> Result<Double, E> {
+                Ok(Double(x))
+            }
+            fn visit_i64<E>(self, x: i64) -> Result<Double, E> {
+                Ok(Double(x as f64))
+            }
+            fn visit_u64<E>(self, x: u64) -> Result<Double, E> {
+                Ok(Double(x as f64))
+            }
+            fn visit_unit<E>(self) -> Result<Double, E> {
+                Ok(Double(f64::NAN))
+            }
+            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Double, E> {
+                match s {
+                    "+inf" => Ok(Double(f64::INFINITY)),
+                    "-inf" => Ok(Double(f64::NEG_INFINITY)),
+                    _ => Err(E::invalid_type(serde::de::Unexpected::Str(s), &self)),
+                }
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
+/// Reads any JSON as a `serde_json::Value`, counting its levels as the
+/// AST's are ([`Level`]): the contents of a node that come before its tag
+/// (not pandoc's order) wait in one until the tag says what they are.
+#[doc(hidden)]
+pub struct Early;
+
+impl<'de> serde::de::DeserializeSeed<'de> for Early {
+    type Value = serde_json::Value;
+    fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+        use serde::de::{MapAccess, SeqAccess, Visitor};
+        use serde_json::Value;
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Value;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("JSON")
+            }
+            fn visit_bool<E>(self, x: bool) -> Result<Value, E> {
+                Ok(Value::Bool(x))
+            }
+            fn visit_i64<E>(self, x: i64) -> Result<Value, E> {
+                Ok(x.into())
+            }
+            fn visit_u64<E>(self, x: u64) -> Result<Value, E> {
+                Ok(x.into())
+            }
+            fn visit_f64<E>(self, x: f64) -> Result<Value, E> {
+                Ok(serde_json::Number::from_f64(x).map_or(Value::Null, Value::Number))
+            }
+            fn visit_str<E>(self, x: &str) -> Result<Value, E> {
+                Ok(Value::String(x.to_owned()))
+            }
+            fn visit_string<E>(self, x: String) -> Result<Value, E> {
+                Ok(Value::String(x))
+            }
+            fn visit_unit<E>(self) -> Result<Value, E> {
+                Ok(Value::Null)
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+                let _level = Level::enter()?;
+                let mut out = Vec::new();
+                while let Some(x) = seq.next_element_seed(Early)? {
+                    out.push(x);
+                }
+                Ok(Value::Array(out))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
+                let _level = Level::enter()?;
+                let mut out = serde_json::Map::new();
+                while let Some(k) = map.next_key::<String>()? {
+                    out.insert(k, map.next_value_seed(Early)?);
+                }
+                Ok(Value::Object(out))
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
 /// A document as pandoc's JSON.
 pub fn to_string(doc: &Pandoc) -> String {
     serde_json::to_string(doc).expect("the AST always encodes")
+}
+
+/// Write a document as pandoc's JSON.
+pub fn to_writer<W: Write>(writer: W, doc: &Pandoc) -> std::io::Result<()> {
+    serde_json::to_writer(writer, doc).map_err(std::io::Error::from)
 }
 
 /// Reads `{"t": tag}` for an enum-like type, checking the tag.
@@ -318,22 +515,22 @@ pub fn filter<F: FnOnce(&mut Pandoc, Option<&str>)>(f: F) {
 /// ```
 pub fn filter_with<F: FnOnce(&mut Pandoc, &Conversion)>(f: F) {
     let conversion = Conversion::from_env();
-    let mut input = String::new();
-    let result = std::io::stdin()
-        .read_to_string(&mut input)
-        .map_err(|e| e.to_string())
-        .and_then(|_| from_str(&input).map_err(|e| e.to_string()));
-    match result {
-        Ok(mut doc) => {
-            f(&mut doc, &conversion);
-            let mut out = std::io::stdout().lock();
-            out.write_all(to_string(&doc).as_bytes())
-                .expect("writing stdout");
-        }
-        Err(e) => {
-            eprintln!("panir filter: {e}");
-            std::process::exit(1);
-        }
+    let run = || -> Result<(), String> {
+        let mut input = String::new();
+        std::io::stdin()
+            .read_to_string(&mut input)
+            .map_err(|e| format!("reading the document: {e}"))?;
+        let mut doc = from_str(&input).map_err(|e| e.to_string())?;
+        drop(input);
+        f(&mut doc, &conversion);
+        let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+        to_writer(&mut out, &doc)
+            .and_then(|()| out.flush())
+            .map_err(|e| format!("writing the document: {e}"))
+    };
+    if let Err(e) = run() {
+        eprintln!("panir filter: {e}");
+        std::process::exit(1);
     }
 }
 
@@ -352,5 +549,7 @@ mod double_tests {
         assert_eq!(h(1234567.5), "1234567.5");
         assert_eq!(h(0.0), "0.0");
         assert_eq!(h(-0.25), "-0.25");
+        assert_eq!(h(5e-324), "5.0e-324");
+        assert_eq!(h(1.7976931348623157e308), "1.7976931348623157e308");
     }
 }

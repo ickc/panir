@@ -20,6 +20,9 @@ run_filter(upper)
   (`InlineMath`).
 - Julia checks field types itself: `push!(para.content, Para())` and
   `h.level = "2"` are errors.
+- Two names are not exported, since Julia has them: `Panir.Meta` (the
+  metadata's type; `Meta` is `Base.Meta`) and `Panir.Period` (a list's
+  delimiter; `Period` is `Dates`'s).
 - Constructors: every field positionally (`Header(1, Attr(), Inline[])`),
   or the content as arguments with the rest as keywords:
   `Header(1, Str("Hi"); identifier = "hi")`, `Link(Str("x"); url = "u")`.
@@ -34,9 +37,14 @@ run_filter(upper)
 - `walk!(f, doc)` calls `f(x, ctx)` or `f(x)` wherever `f` has a method for
   `x`, so the most specific method wins, by dispatch. Return `nothing` to
   keep a node, a node to replace it, or a vector to splice in its place.
-  `ctx` is a `Context`: `parent`, `field`, `index`, `path`, `doc`, `format`,
-  and `conversion` (a `Conversion`, as in Python: formats with extensions and
-  reader options, when pandoc or libpandoc tells them).
+  `ctx` is a `Context`: `parent`, `field`, the `container` the node is in
+  and its `index` there (`ctx.container[ctx.index]` is the node), `next` and
+  `prev`, `path` (from the document, counting from 0 as pandoc's JSON and
+  errors do), `doc`, `format`, and `conversion` (a `Conversion`, as in
+  Python: formats with extensions and reader options, when pandoc or
+  libpandoc tells them). As in Lua, what a method returns are values:
+  `[el, el]` puts two nodes in the document, the second a copy; elsewhere,
+  to put a node in a second place, `deepcopy` it.
   As in pandoc's Lua filters, a method for `Vector{Inline}` or
   `Vector{Block}` gets every list of them, and one for `Panir.Meta` the
   metadata (`Meta` alone is `Base.Meta`); methods for anything don't count

@@ -80,8 +80,13 @@ They are checked against pandoc's Lua filters, with the scenarios in
 - Strings convert as in pandoc's Lua: `inlines("hello world")` is its words
   and spaces, `blocks("...")` `Plain` text, and `"x".into()` is a `Str`
   where one inline goes, `Plain` text where one block goes.
-- `from_str`/`to_string` for documents; `from_str` checks the
-  `pandoc-api-version` and reports the path of JSON it can't read.
+- `from_str`/`to_string` (and `to_writer`) for documents; `from_str` checks
+  the `pandoc-api-version` and reports the path of JSON it can't read. It
+  reads a document down to `MAX_DEPTH` (256) levels of blocks and inlines in
+  each other, and as far as 640 kB of stack allow (a level takes five times
+  the stack unoptimized); a deeper one is an error, not a crash.
+- A `ColWidth` that isn't finite is read and written as pandoc does (`null`,
+  `"+inf"`, `"-inf"`); a finite one byte for byte.
 
 Decoding errors give the exact path in the JSON, plus line and column:
 

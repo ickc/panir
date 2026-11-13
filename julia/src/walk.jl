@@ -36,9 +36,15 @@ _conversion(format::AbstractString) = Conversion(; format = String(format))
 
 """
 Where a node is, for a filter method that takes it: `parent` (the node whose
-field holds it), `field`, `index` in that field's list (or key, in a map),
-`container` (that list), `path` from the document, `doc`, `conversion`
-(the pandoc run, a `Conversion`) and `format` (its output format's name).
+field holds it), `field`, `container` (the list it is in, or the map) and
+its `index` there (or key), so that `ctx.container[ctx.index]` is the node;
+`next` and `prev`, its neighbours in that list (or `nothing`); `path` from
+the document, as in errors and in pandoc's JSON, which count from 0
+(`[:blocks, 0, :content, 3]`); `doc`, `conversion` (the pandoc run, a
+`Conversion`) and `format` (its output format's name).
+
+A method may change `container` itself (remove the node before this one,
+say); it may not take its own node out of it (return an empty vector).
 """
 struct Context
     parent::Any
@@ -53,12 +59,17 @@ struct Context
     skip::Base.RefValue{Bool}
 end
 
-"The neighbour of a node in its list, or `nothing`."
+"The neighbour of a node in its list, `step` after it, or `nothing`."
 function sibling(ctx::Context, step::Integer)
-    ctx.container isa AbstractVector && ctx.index isa Integer || return nothing
-    i = ctx.index + 1 + step
-    1 <= i <= length(ctx.container) ? ctx.container[i] : nothing
+    container, index = getfield(ctx, :container), getfield(ctx, :index)
+    container isa AbstractVector && index isa Integer || return nothing
+    i = index + step
+    1 <= i <= length(container) ? container[i] : nothing
 end
+
+Base.propertynames(::Context) = (fieldnames(Context)..., :next, :prev)
+Base.getproperty(ctx::Context, name::Symbol) =
+    name === :next ? sibling(ctx, 1) : name === :prev ? sibling(ctx, -1) : getfield(ctx, name)
 
 """
     skip_children!(ctx)
@@ -94,8 +105,25 @@ end
 
 # `f`'s method for `x`: with the context (2), without (1), or none (0);
 # found once per type (`applicable` for every node is slow).
-_arity(w::_Walker, x) = get!(w.arity, typeof(x)) do
-    hasmethod(w.f, Tuple{typeof(x), Context}) ? 2 : hasmethod(w.f, Tuple{typeof(x)}) ? 1 : 0
+_arity(w::_Walker, x) = get!(() -> _method_arity(w.f, typeof(x)), w.arity, typeof(x))
+
+# With both, the method that is more specific for the node (f(s::Str) over
+# f(x, ctx)): the most specific method wins, as Julia dispatches. A tie
+# goes to the one with the context.
+function _method_arity(@nospecialize(f), T::Type)
+    with, without = hasmethod(f, Tuple{T, Context}), hasmethod(f, Tuple{T})
+    with && without || return with ? 2 : without ? 1 : 0
+    a, b = _first(which(f, Tuple{T, Context})), _first(which(f, Tuple{T}))
+    b <: a && !(a <: b) ? 1 : 2
+end
+
+# The type of a method's first argument: `T`'s bound in f(x::T) where T, the
+# element's type in f(xs...), `Union{}` for a method without arguments.
+function _first(m::Method)
+    ps = Base.unwrap_unionall(m.sig).parameters
+    length(ps) >= 2 || return Union{}
+    p = Base.rewrap_unionall(Base.unwrapva(ps[2]), m.sig)
+    p isa Type ? p : Any
 end
 
 function _context(w::_Walker)
@@ -121,8 +149,7 @@ end
 function _specific(@nospecialize(f), x)
     for args in (Tuple{typeof(x), Context}, Tuple{typeof(x)})
         hasmethod(f, args) || continue
-        sig = Base.unwrap_unionall(which(f, args).sig)
-        sig.parameters[2] === Any || return true
+        _first(which(f, args)) === Any || return true
     end
     false
 end
@@ -132,8 +159,37 @@ end
 function _call_whole(w::_Walker, x)
     _specific(w.f, x) || return nothing, false
     ctx = _context(w)
-    r = applicable(w.f, x, ctx) ? w.f(x, ctx) : w.f(x)
+    r = _arity(w, x) == 2 ? w.f(x, ctx) : w.f(x)
     r, ctx.skip[]
+end
+
+# `items`, each node once: one that is there twice is copied where it comes
+# again. As in pandoc's Lua filters, whose results are values: the nodes of
+# `return {el, el}` are two, changed separately from then on. (One node in
+# two places of a document would be changed in both by whatever changes it
+# later.)
+function _distinct(items::Vector)
+    length(items) < 2 && return items
+    seen = Base.IdSet{Any}()
+    out = items
+    for (k, x) in enumerate(items)
+        if x in seen
+            out === items && (out = copy(items))
+            out[k] = deepcopy(x)
+        else
+            push!(seen, x)
+        end
+    end
+    out
+end
+
+# Where `node` is in a list its method changed (`ctx.container`).
+function _find(list::Vector, node)
+    i = findfirst(x -> x === node, list)
+    i === nothing && throw(ArgumentError(
+        "a filter method took its own node out of the list it is in (ctx.container); " *
+        "to delete the node, return an empty vector"))
+    i
 end
 
 function _one(w::_Walker, x::Node)
@@ -158,11 +214,11 @@ function _whole(w::_Walker, list::Vector, parent, field, path)
     try
         r, skip = _call_whole(w, list)
         if r !== nothing && r !== list
-            r isa AbstractVector || throw(ArgumentError(
+            # (a string, as in pandoc's Lua: its words, or Plain text)
+            r isa Union{AbstractVector, AbstractString} || throw(ArgumentError(
                 "a filter returned $(typeof(r)) for a list of $(eltype(list))s"))
-            items = convert(Vector{eltype(list)}, collect(r))
-            empty!(list)
-            append!(list, items)
+            items = _distinct(convert(typeof(list), r isa AbstractString ? r : collect(r)))
+            items === list || (empty!(list); append!(list, items))
         end
         skip
     finally
@@ -174,20 +230,23 @@ function _many(w::_Walker, list::Vector{T}, parent, field, path) where {T <: Nod
     w.topdown && _whole(w, list, parent, field, path) && return
     i = 1
     while i <= length(list)
-        push!(w.stack, (parent, field, list, i - 1, Any[path..., i - 1]))
+        push!(w.stack, (parent, field, list, i, Any[path..., i - 1]))
         try
-            w.topdown || _children(w, list[i])
-            r, skip = _call(w, list[i])
+            node = list[i]
+            w.topdown || _children(w, node)
+            r, skip = _call(w, node)
+            # the method may have changed the list itself (ctx.container)
+            (i <= length(list) && list[i] === node) || (i = _find(list, node))
             if r === nothing
-                w.topdown && !skip && _children(w, list[i])
+                w.topdown && !skip && _children(w, node)
                 i += 1
                 continue
             end
-            items = r isa Node ? T[r] : convert(Vector{T}, r)
+            items = r isa Node ? T[r] : _distinct(convert(Vector{T}, r))
             splice!(list, i, items)
             if w.topdown && !skip
                 for k in 0:length(items) - 1
-                    w.stack[end] = (parent, field, list, i - 1 + k, Any[path..., i - 1 + k])
+                    w.stack[end] = (parent, field, list, i + k, Any[path..., i - 1 + k])
                     _children(w, list[i + k])
                 end
             end
@@ -217,8 +276,19 @@ function _value(w::_Walker, @nospecialize(x), parent, field, path)
         end
     elseif x isa Dict
         for k in sort!(collect(keys(x)))  # in key order, as pandoc's Map
-            z = _value(w, x[k], parent, field, Any[path..., k])
-            z === x[k] || (x[k] = z)
+            haskey(x, k) || continue  # a method removed it
+            y = x[k]
+            if y isa Node  # the map is its container, the key its index
+                push!(w.stack, (parent, field, x, k, Any[path..., k]))
+                z = try
+                    _one(w, y)
+                finally
+                    pop!(w.stack)
+                end
+            else
+                z = _value(w, y, parent, field, Any[path..., k])
+            end
+            z === y || (x[k] = z)
         end
     elseif x isa Tuple
         ys = Any[_value(w, y, parent, field, Any[path..., i - 1]) for (i, y) in enumerate(x)]
@@ -241,15 +311,12 @@ function _children(w::_Walker, x::T; skip::Union{Nothing, Symbol} = nothing,
 end
 
 # Whether `f` has a method for some node of type `T`.
-_handles(@nospecialize(f), T) = any(methods(f)) do m
-    ps = Base.unwrap_unionall(m.sig).parameters
-    length(ps) >= 2 && typeintersect(ps[2], T) !== Union{}
-end
+_handles(@nospecialize(f), T) = any(m -> typeintersect(_first(m), T) !== Union{}, methods(f))
 
 # Whether `f` has a method for a node that isn't an Inline, a Block or the document.
 _handles_other(@nospecialize(f)) = any(methods(f)) do m
-    ps = Base.unwrap_unionall(m.sig).parameters
-    length(ps) >= 2 && typeintersect(ps[2], Node) !== Union{} && !(ps[2] <: Union{Inline, Block, Pandoc})
+    p = _first(m)
+    typeintersect(p, Node) !== Union{} && !(p <: Union{Inline, Block, Pandoc})
 end
 
 _isnot(T...) = x -> !any(t -> x isa t, T)
@@ -289,45 +356,51 @@ walk!(demote, doc)
 ```
 """
 function walk!(@nospecialize(f), node::Node; traverse::Symbol = :typewise, format = nothing)
-    # not compiled again for each filter: what calls it is dynamic anyway
     traverse in (:typewise, :topdown, :bottomup) || throw(ArgumentError(
         "traverse: expected :typewise, :topdown or :bottomup, got $(repr(traverse))"))
-    conversion = _conversion(format)
+    # With the methods there are now: `f`'s may be newer than the caller (a
+    # filter script a host just included), and a walk that didn't see them
+    # would call none, and say nothing.
+    Base.invokelatest(_walk!, f, node, traverse, _conversion(format))
+end
+
+function _walk!(@nospecialize(f), node::Node, traverse::Symbol, conversion::Conversion)
+    # not compiled again for each filter: what calls it is dynamic anyway
     topdown = traverse === :topdown
     arity = Dict{DataType, Int}()
-    walker(wants, lists) = _Walker(f, topdown, node, conversion, _Frame[], wants, lists, arity)
+    walker(doc, wants, lists) = _Walker(f, topdown, doc, conversion, _Frame[], wants, lists, arity)
     anylist = _ -> true
     nolist = _ -> false
     node isa Pandoc || return traverse === :typewise ?
-        foldl((x, (wants, lists)) -> _one(walker(wants, lists), x), _passes(f); init = node) :
-        _one(walker(_ -> true, anylist), node)
+        foldl((x, (wants, lists)) -> _one(walker(node, wants, lists), x), _passes(f); init = node) :
+        _one(walker(node, _ -> true, anylist), node)
     doc = node
     function root(d)
-        r, skip = _call(walker(_ -> true, nolist), d)
+        r, skip = _call(walker(d, _ -> true, nolist), d)
         r === nothing && return d, skip
         r isa Pandoc || throw(ArgumentError("a filter returned $(typeof(r)) for the Pandoc"))
         r, skip
     end
     function meta(d)
-        w = walker(_ -> true, nolist)
+        w = walker(d, _ -> true, nolist)
         push!(w.stack, (d, :meta, nothing, nothing, Any[:meta]))
         r, skip = _call_whole(w, d.meta)
         r === nothing || (d.meta = r)
         skip
     end
     if topdown
-        doc, skip = root(doc)
+        doc, skip = root(doc)  # the method's document, if it returned one, is the one walked
         skip && return doc
         skipmeta = meta(doc)
-        _children(walker(_isnot(Pandoc), anylist), doc; skip = skipmeta ? :meta : nothing)
+        _children(walker(doc, _isnot(Pandoc), anylist), doc; skip = skipmeta ? :meta : nothing)
         return doc
     end
     if traverse === :bottomup
-        _children(walker(_isnot(Pandoc), anylist), doc; after = :meta, then = meta)
+        _children(walker(doc, _isnot(Pandoc), anylist), doc; after = :meta, then = meta)
         return first(root(doc))
     end
     for (wants, lists) in _passes(f)
-        _children(walker(wants, lists), doc)
+        _children(walker(doc, wants, lists), doc)
     end
     meta(doc)
     first(root(doc))
@@ -388,7 +461,7 @@ stringify(x) = (io = IOBuffer(); _text(io, x); String(take!(io)))
 
 _text(io, x::AbstractVector) = foreach(y -> _text(io, y), x)
 _text(io, x::Tuple) = foreach(y -> _text(io, y), x)
-_text(io, x::AbstractDict) = foreach(y -> _text(io, y), values(x))
+_text(io, x::AbstractDict) = foreach(k -> _text(io, x[k]), sort!(collect(keys(x))))  # as pandoc's Map
 _text(io, x) = nothing
 _text(io, x::Union{Str, Code, Math, MetaString}) = print(io, x.text)
 _text(io, ::Union{Space, SoftBreak, LineBreak}) = print(io, " ")
