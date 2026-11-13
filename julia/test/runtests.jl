@@ -141,7 +141,8 @@ end
     walk!(where_, doc(); format = "html")
     ctx = found[]
     @test ctx.path == Any[:blocks, 1, :content, 2, :content, 0]
-    @test ctx.parent isa Emph && ctx.index == 0 && ctx.format == "html"
+    @test ctx.parent isa Emph && ctx.index == 1 && ctx.format == "html"
+    @test ctx.container[ctx.index] == Str("b")
 end
 
 @testset "JSON text, stringify" begin
@@ -158,3 +159,4 @@ end
     @test fetch(Threads.@spawn Panir.handoff(() -> fetch(Threads.@spawn get(task_local_storage(), Panir._HANDOFF, nothing)))) === nothing
 end
 include("filters.jl")
+include("edges.jl")

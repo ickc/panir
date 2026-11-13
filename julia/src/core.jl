@@ -88,9 +88,19 @@ _typename(T::Type) = T in _SUMS ? _sumname(T) : _article(string(nameof(T)))
 # -- decoding ---------------------------------------------------------------------
 
 _decode(::Type{String}, j) = j isa AbstractString ? String(j) : throw(_Bad("a string", j))
-_decode(::Type{Int}, j) = j isa Integer && !(j isa Bool) ? Int(j) : throw(_Bad("an integer", j))
-_decode(::Type{Float64}, j) = j isa Real && !(j isa Bool) ? Float64(j) : throw(_Bad("a number", j))
+_decode(::Type{Int}, j) = j isa Integer && !(j isa Bool) && typemin(Int) <= j <= typemax(Int) ?
+    Int(j) : throw(_Bad("an integer", j))
 _decode(::Type{Bool}, j) = j isa Bool ? j : throw(_Bad("a boolean", j))
+
+# A Double that isn't finite has no JSON number: pandoc (aeson) writes null
+# for one that is not a number, "+inf" and "-inf", and reads them.
+function _decode(::Type{Float64}, j)
+    j isa Real && !(j isa Bool) && return Float64(j)
+    j === nothing && return NaN
+    j == "+inf" && return Inf
+    j == "-inf" && return -Inf
+    throw(_Bad("a number", j))
+end
 
 function _decode(::Type{Vector{T}}, j) where {T}
     j isa AbstractVector || throw(_Bad("a list", j))
@@ -186,12 +196,22 @@ function fromjson(T::Type, j)
 end
 fromjson(j) = fromjson(Pandoc, j)
 
+# JSON.jl stops at 512 levels of JSON, since it has the option (1.13),
+# unless told: 170 nested divs.
+const _JSON_DEPTH = isdefined(JSON, :LazyOptions) && :maxdepth in fieldnames(JSON.LazyOptions) ?
+    (; maxdepth = 2048) : (;)
+
 "A document from pandoc's JSON text."
-parse(text::AbstractString) = fromjson(Pandoc, JSON.parse(text))
+parse(text::AbstractString) = fromjson(Pandoc, JSON.parse(text; _JSON_DEPTH...))
 
 # -- encoding -----------------------------------------------------------------------
 
-_encode(x::Union{String, Int, Float64, Bool, Nothing}) = x
+_encode(x::Union{Int, Bool, Nothing}) = x
+_encode(x::Float64) = isfinite(x) ? x : isnan(x) ? nothing : x > 0 ? "+inf" : "-inf"
+# (a String may hold bytes that aren't UTF-8; pandoc would then read the
+# whole document as Latin-1)
+_encode(x::String) = isvalid(x) ? x : throw(ArgumentError(
+    "a string that isn't valid UTF-8: $(repr(x))"))
 _encode(x::Vector) = Any[_encode(y) for y in x]
 _encode(x::Dict) = Dict{String, Any}(k => _encode(v) for (k, v) in x)
 _encode(x::Tuple) = Any[_encode(y) for y in x]
@@ -222,6 +242,11 @@ serialize(doc::Pandoc) = JSON.json(tojson(doc))
 
 function Base.:(==)(a::T, b::T) where {T <: Node}
     all(getfield(a, f) == getfield(b, f) for f in fieldnames(T))
+end
+
+# as `hash` below goes: field by field (NaN is NaN, 0.0 isn't -0.0)
+function Base.isequal(a::T, b::T) where {T <: Node}
+    all(isequal(getfield(a, f), getfield(b, f)) for f in fieldnames(T))
 end
 
 function Base.hash(x::T, h::UInt) where {T <: Node}
@@ -276,27 +301,25 @@ _variadic(::Type{T}, xs) where {T} = collect(T, xs)
 _variadic(::Type{Inline}, xs::Tuple{AbstractString}) = inlines(xs[1])
 _variadic(::Type{Block}, xs::Tuple{AbstractString}) = blocks(xs[1])
 
-# A product field given whole (attr = ...) or by its parts (identifier = ...).
+# A product field given whole (attr = ...) or by its parts (identifier =
+# ...): each part is `nothing` unless given, and then its default
+# (`_default`, generated), if it has one.
 function _flat(::Type{P}, given, owner::Symbol, field::Symbol; parts...) where {P}
     names = fieldnames(P)
     if given === nothing
-        missing_ = [n for n in names if parts[n] === nothing]
+        values = Any[parts[n] === nothing ? _default(P, Val(n)) : parts[n] for n in names]
+        missing_ = [n for (n, v) in zip(names, values) if v === nothing]
         isempty(missing_) || throw(ArgumentError(
             "$owner() needs $(join(string.(missing_) .* " =", ", ")) (or $field =)"))
-        values = [_attributes(fieldtype(P, i), parts[n]) for (i, n) in enumerate(names)]
-        return P(values...)
+        return P((_attributes(fieldtype(P, i), v) for (i, v) in enumerate(values))...)
     end
-    default = try
-        P()
-    catch
-        nothing
-    end
-    changed = [n for n in names if parts[n] !== nothing &&
-               (default === nothing || _attributes(fieldtype(P, findfirst(==(n), names)), parts[n]) != getfield(default, n))]
-    isempty(changed) || throw(ArgumentError(
-        "$owner(): give either $field = or $(join(string.(changed) .* " =", ", ")), not both"))
+    both = [n for n in names if parts[n] !== nothing]
+    isempty(both) || throw(ArgumentError(
+        "$owner(): give either $field = or $(join(string.(both) .* " =", ", ")), not both"))
     given
 end
+
+_default(::Type, ::Val) = nothing  # a part without a default
 
 # attributes may be given as a Dict
 _attributes(::Type{Vector{Tuple{String, String}}}, x::AbstractDict) =

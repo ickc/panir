@@ -58,6 +58,8 @@ mutable struct Pandoc <: Node
     Pandoc(meta::AbstractDict, blocks::AbstractVector) = new(meta, blocks)
 end
 _encoding(::Type{Pandoc}) = :root
+_default(::Type{Pandoc}, ::Val{:meta}) = Dict{String, MetaValue}()
+_default(::Type{Pandoc}, ::Val{:blocks}) = Block[]
 _keys(::Type{Pandoc}) = ("meta", "blocks",)
 function Pandoc(blocks::Union{Block, AbstractString}...; meta = Dict{String, MetaValue}())
     Pandoc(meta, _variadic(Block, blocks))
@@ -89,7 +91,7 @@ end
 "pandoc's `LineBlock`, a `Block`."
 mutable struct LineBlock <: Block
     content::Vector{Vector{Inline}}
-    LineBlock(content::AbstractVector) = new(content)
+    LineBlock(content::AbstractVector{<:AbstractVector}) = new(content)
 end
 _encoding(::Type{LineBlock}) = :value
 function LineBlock(content::Union{AbstractVector, AbstractString}...)
@@ -117,7 +119,7 @@ end
 "pandoc's `BulletList`, a `Block`."
 mutable struct BulletList <: Block
     content::Vector{Vector{Block}}
-    BulletList(content::AbstractVector) = new(content)
+    BulletList(content::AbstractVector{<:AbstractVector}) = new(content)
 end
 _encoding(::Type{BulletList}) = :value
 function BulletList(content::Union{AbstractVector, AbstractString}...)
@@ -127,10 +129,10 @@ end
 "pandoc's `DefinitionList`, a `Block`."
 mutable struct DefinitionList <: Block
     content::Vector{Tuple{Vector{Inline}, Vector{Vector{Block}}}}
-    DefinitionList(content::AbstractVector) = new(content)
+    DefinitionList(content::AbstractVector{<:Tuple}) = new(content)
 end
 _encoding(::Type{DefinitionList}) = :value
-function DefinitionList(content::Tuple{Vector{Inline}, Vector{Vector{Block}}}...)
+function DefinitionList(content::Tuple...)
     DefinitionList(_variadic(Tuple{Vector{Inline}, Vector{Vector{Block}}}, content))
 end
 
@@ -327,9 +329,12 @@ mutable struct Attr <: Node
     identifier::String
     classes::Vector{String}
     attributes::Vector{Tuple{String, String}}
-    Attr(identifier, classes::AbstractVector, attributes::AbstractVector) = new(identifier, classes, attributes)
+    Attr(identifier, classes::AbstractVector, attributes::AbstractVector{<:Tuple}) = new(identifier, classes, attributes)
 end
 _encoding(::Type{Attr}) = :array
+_default(::Type{Attr}, ::Val{:identifier}) = ""
+_default(::Type{Attr}, ::Val{:classes}) = String[]
+_default(::Type{Attr}, ::Val{:attributes}) = Tuple{String, String}[]
 function Attr(; identifier = "", classes = String[], attributes = Tuple{String, String}[])
     Attr(identifier, classes, attributes)
 end
@@ -342,6 +347,9 @@ mutable struct ListAttributes <: Node
     ListAttributes(start, style, delimiter) = new(start, style, delimiter)
 end
 _encoding(::Type{ListAttributes}) = :array
+_default(::Type{ListAttributes}, ::Val{:start}) = 1
+_default(::Type{ListAttributes}, ::Val{:style}) = DefaultStyle
+_default(::Type{ListAttributes}, ::Val{:delimiter}) = DefaultDelim
 function ListAttributes(; start = 1, style = DefaultStyle, delimiter = DefaultDelim)
     ListAttributes(start, style, delimiter)
 end
@@ -353,6 +361,8 @@ mutable struct Caption <: Node
     Caption(short, content::AbstractVector) = new(short, content)
 end
 _encoding(::Type{Caption}) = :array
+_default(::Type{Caption}, ::Val{:short}) = nothing
+_default(::Type{Caption}, ::Val{:content}) = Block[]
 function Caption(content::Union{Block, AbstractString}...; short = nothing)
     Caption(short, _variadic(Block, content))
 end
@@ -367,6 +377,8 @@ mutable struct ColSpec <: Node
     ColSpec(alignment, width) = new(alignment, width)
 end
 _encoding(::Type{ColSpec}) = :array
+_default(::Type{ColSpec}, ::Val{:alignment}) = AlignDefault
+_default(::Type{ColSpec}, ::Val{:width}) = ColWidthDefault()
 function ColSpec(; alignment = AlignDefault, width = ColWidthDefault())
     ColSpec(alignment, width)
 end
@@ -382,6 +394,11 @@ mutable struct Citation <: Node
     Citation(id, prefix::AbstractVector, suffix::AbstractVector, mode, note_num, hash) = new(id, prefix, suffix, mode, note_num, hash)
 end
 _encoding(::Type{Citation}) = :object
+_default(::Type{Citation}, ::Val{:prefix}) = Inline[]
+_default(::Type{Citation}, ::Val{:suffix}) = Inline[]
+_default(::Type{Citation}, ::Val{:mode}) = NormalCitation
+_default(::Type{Citation}, ::Val{:note_num}) = 0
+_default(::Type{Citation}, ::Val{:hash}) = 0
 _keys(::Type{Citation}) = ("citationId", "citationPrefix", "citationSuffix", "citationMode", "citationNoteNum", "citationHash",)
 function Citation(id; prefix = Inline[], suffix = Inline[], mode = NormalCitation, note_num = 0, hash = 0)
     Citation(id, prefix, suffix, mode, note_num, hash)
@@ -394,6 +411,7 @@ mutable struct Target <: Node
     Target(url, title) = new(url, title)
 end
 _encoding(::Type{Target}) = :array
+_default(::Type{Target}, ::Val{:title}) = ""
 function Target(url; title = "")
     Target(url, title)
 end
@@ -420,11 +438,16 @@ mutable struct Cell <: Node
     Cell(attr::Attr, alignment, row_span, col_span, content::AbstractVector) = new(attr, alignment, row_span, col_span, content)
 end
 _encoding(::Type{Cell}) = :array
-function Cell(content::Union{Block, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[], alignment = AlignDefault, row_span = 1, col_span = 1)
+_default(::Type{Cell}, ::Val{:attr}) = Attr()
+_default(::Type{Cell}, ::Val{:alignment}) = AlignDefault
+_default(::Type{Cell}, ::Val{:row_span}) = 1
+_default(::Type{Cell}, ::Val{:col_span}) = 1
+_default(::Type{Cell}, ::Val{:content}) = Block[]
+function Cell(content::Union{Block, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, alignment = AlignDefault, row_span = 1, col_span = 1)
     __attr = _flat(Attr, attr, :Cell, :attr; identifier, classes, attributes)
     Cell(__attr, alignment, row_span, col_span, _variadic(Block, content))
 end
-function Cell(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[], alignment = AlignDefault, row_span = 1, col_span = 1)
+function Cell(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, alignment = AlignDefault, row_span = 1, col_span = 1)
     __attr = _flat(Attr, attr, :Cell, :attr; identifier, classes, attributes)
     Cell(__attr, alignment, row_span, col_span, _variadic(Block, content))
 end
@@ -436,7 +459,7 @@ mutable struct CodeBlock <: Block
     CodeBlock(attr::Attr, text) = new(attr, text)
 end
 _encoding(::Type{CodeBlock}) = :array
-function CodeBlock(text; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+function CodeBlock(text; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :CodeBlock, :attr; identifier, classes, attributes)
     CodeBlock(__attr, text)
 end
@@ -445,10 +468,10 @@ end
 mutable struct OrderedList <: Block
     list_attributes::ListAttributes
     content::Vector{Vector{Block}}
-    OrderedList(list_attributes::ListAttributes, content::AbstractVector) = new(list_attributes, content)
+    OrderedList(list_attributes::ListAttributes, content::AbstractVector{<:AbstractVector}) = new(list_attributes, content)
 end
 _encoding(::Type{OrderedList}) = :array
-function OrderedList(content::Union{AbstractVector, AbstractString}...; list_attributes::Union{Nothing, ListAttributes} = nothing, start = 1, style = DefaultStyle, delimiter = DefaultDelim)
+function OrderedList(content::Union{AbstractVector, AbstractString}...; list_attributes::Union{Nothing, ListAttributes} = nothing, start = nothing, style = nothing, delimiter = nothing)
     __list_attributes = _flat(ListAttributes, list_attributes, :OrderedList, :list_attributes; start, style, delimiter)
     OrderedList(__list_attributes, _variadic(Vector{Block}, content))
 end
@@ -461,11 +484,11 @@ mutable struct Header <: Block
     Header(level, attr::Attr, content::AbstractVector) = new(level, attr, content)
 end
 _encoding(::Type{Header}) = :array
-function Header(level, content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+function Header(level, content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Header, :attr; identifier, classes, attributes)
     Header(level, __attr, _variadic(Inline, content))
 end
-function Header(level, content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+function Header(level, content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Header, :attr; identifier, classes, attributes)
     Header(level, __attr, _variadic(Inline, content))
 end
@@ -478,11 +501,11 @@ mutable struct Figure <: Block
     Figure(attr::Attr, caption::Caption, content::AbstractVector) = new(attr, caption, content)
 end
 _encoding(::Type{Figure}) = :array
-function Figure(content::Union{Block, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[], caption = Caption())
+function Figure(content::Union{Block, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, caption = Caption())
     __attr = _flat(Attr, attr, :Figure, :attr; identifier, classes, attributes)
     Figure(__attr, caption, _variadic(Block, content))
 end
-function Figure(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[], caption = Caption())
+function Figure(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, caption = Caption())
     __attr = _flat(Attr, attr, :Figure, :attr; identifier, classes, attributes)
     Figure(__attr, caption, _variadic(Block, content))
 end
@@ -494,11 +517,11 @@ mutable struct Div <: Block
     Div(attr::Attr, content::AbstractVector) = new(attr, content)
 end
 _encoding(::Type{Div}) = :array
-function Div(content::Union{Block, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+function Div(content::Union{Block, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Div, :attr; identifier, classes, attributes)
     Div(__attr, _variadic(Block, content))
 end
-function Div(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+function Div(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Div, :attr; identifier, classes, attributes)
     Div(__attr, _variadic(Block, content))
 end
@@ -521,7 +544,7 @@ mutable struct Code <: Inline
     Code(attr::Attr, text) = new(attr, text)
 end
 _encoding(::Type{Code}) = :array
-function Code(text; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+function Code(text; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Code, :attr; identifier, classes, attributes)
     Code(__attr, text)
 end
@@ -534,12 +557,12 @@ mutable struct Link <: Inline
     Link(attr::Attr, content::AbstractVector, target::Target) = new(attr, content, target)
 end
 _encoding(::Type{Link}) = :array
-function Link(content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[], target::Union{Nothing, Target} = nothing, url = nothing, title = "")
+function Link(content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, target::Union{Nothing, Target} = nothing, url = nothing, title = nothing)
     __attr = _flat(Attr, attr, :Link, :attr; identifier, classes, attributes)
     __target = _flat(Target, target, :Link, :target; url, title)
     Link(__attr, _variadic(Inline, content), __target)
 end
-function Link(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[], target::Union{Nothing, Target} = nothing, url = nothing, title = "")
+function Link(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, target::Union{Nothing, Target} = nothing, url = nothing, title = nothing)
     __attr = _flat(Attr, attr, :Link, :attr; identifier, classes, attributes)
     __target = _flat(Target, target, :Link, :target; url, title)
     Link(__attr, _variadic(Inline, content), __target)
@@ -553,12 +576,12 @@ mutable struct Image <: Inline
     Image(attr::Attr, content::AbstractVector, target::Target) = new(attr, content, target)
 end
 _encoding(::Type{Image}) = :array
-function Image(content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[], target::Union{Nothing, Target} = nothing, url = nothing, title = "")
+function Image(content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, target::Union{Nothing, Target} = nothing, url = nothing, title = nothing)
     __attr = _flat(Attr, attr, :Image, :attr; identifier, classes, attributes)
     __target = _flat(Target, target, :Image, :target; url, title)
     Image(__attr, _variadic(Inline, content), __target)
 end
-function Image(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[], target::Union{Nothing, Target} = nothing, url = nothing, title = "")
+function Image(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, target::Union{Nothing, Target} = nothing, url = nothing, title = nothing)
     __attr = _flat(Attr, attr, :Image, :attr; identifier, classes, attributes)
     __target = _flat(Target, target, :Image, :target; url, title)
     Image(__attr, _variadic(Inline, content), __target)
@@ -571,11 +594,11 @@ mutable struct Span <: Inline
     Span(attr::Attr, content::AbstractVector) = new(attr, content)
 end
 _encoding(::Type{Span}) = :array
-function Span(content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+function Span(content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Span, :attr; identifier, classes, attributes)
     Span(__attr, _variadic(Inline, content))
 end
-function Span(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+function Span(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Span, :attr; identifier, classes, attributes)
     Span(__attr, _variadic(Inline, content))
 end
@@ -587,11 +610,13 @@ mutable struct Row <: Node
     Row(attr::Attr, cells::AbstractVector) = new(attr, cells)
 end
 _encoding(::Type{Row}) = :array
-function Row(cells::Cell...; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+_default(::Type{Row}, ::Val{:attr}) = Attr()
+_default(::Type{Row}, ::Val{:cells}) = Cell[]
+function Row(cells::Cell...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Row, :attr; identifier, classes, attributes)
     Row(__attr, _variadic(Cell, cells))
 end
-function Row(cells::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+function Row(cells::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Row, :attr; identifier, classes, attributes)
     Row(__attr, _variadic(Cell, cells))
 end
@@ -603,11 +628,13 @@ mutable struct TableHead <: Node
     TableHead(attr::Attr, rows::AbstractVector) = new(attr, rows)
 end
 _encoding(::Type{TableHead}) = :array
-function TableHead(rows::Row...; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+_default(::Type{TableHead}, ::Val{:attr}) = Attr()
+_default(::Type{TableHead}, ::Val{:rows}) = Row[]
+function TableHead(rows::Row...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :TableHead, :attr; identifier, classes, attributes)
     TableHead(__attr, _variadic(Row, rows))
 end
-function TableHead(rows::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+function TableHead(rows::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :TableHead, :attr; identifier, classes, attributes)
     TableHead(__attr, _variadic(Row, rows))
 end
@@ -621,7 +648,11 @@ mutable struct TableBody <: Node
     TableBody(attr::Attr, row_head_columns, head::AbstractVector, body::AbstractVector) = new(attr, row_head_columns, head, body)
 end
 _encoding(::Type{TableBody}) = :array
-function TableBody(; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[], row_head_columns = 0, head = Row[], body = Row[])
+_default(::Type{TableBody}, ::Val{:attr}) = Attr()
+_default(::Type{TableBody}, ::Val{:row_head_columns}) = 0
+_default(::Type{TableBody}, ::Val{:head}) = Row[]
+_default(::Type{TableBody}, ::Val{:body}) = Row[]
+function TableBody(; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, row_head_columns = 0, head = Row[], body = Row[])
     __attr = _flat(Attr, attr, :TableBody, :attr; identifier, classes, attributes)
     TableBody(__attr, row_head_columns, head, body)
 end
@@ -633,11 +664,13 @@ mutable struct TableFoot <: Node
     TableFoot(attr::Attr, rows::AbstractVector) = new(attr, rows)
 end
 _encoding(::Type{TableFoot}) = :array
-function TableFoot(rows::Row...; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+_default(::Type{TableFoot}, ::Val{:attr}) = Attr()
+_default(::Type{TableFoot}, ::Val{:rows}) = Row[]
+function TableFoot(rows::Row...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :TableFoot, :attr; identifier, classes, attributes)
     TableFoot(__attr, _variadic(Row, rows))
 end
-function TableFoot(rows::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[])
+function TableFoot(rows::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :TableFoot, :attr; identifier, classes, attributes)
     TableFoot(__attr, _variadic(Row, rows))
 end
@@ -653,7 +686,7 @@ mutable struct Table <: Block
     Table(attr::Attr, caption::Caption, col_specs::AbstractVector, head::TableHead, bodies::AbstractVector, foot::TableFoot) = new(attr, caption, col_specs, head, bodies, foot)
 end
 _encoding(::Type{Table}) = :array
-function Table(; attr::Union{Nothing, Attr} = nothing, identifier = "", classes = String[], attributes = Tuple{String, String}[], caption = Caption(), col_specs = ColSpec[], head = TableHead(), bodies = TableBody[], foot = TableFoot())
+function Table(; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, caption = Caption(), col_specs = ColSpec[], head = TableHead(), bodies = TableBody[], foot = TableFoot())
     __attr = _flat(Attr, attr, :Table, :attr; identifier, classes, attributes)
     Table(__attr, caption, col_specs, head, bodies, foot)
 end
@@ -666,4 +699,4 @@ _constructors(::Type{ColWidthBase}) = (ColWidth, ColWidthDefault,)
 const _SUMS = (Block, MetaValue, Inline, ColWidthBase,)
 const _ENUMS = (QuoteType, MathType, ListNumberStyle, ListNumberDelim, Alignment, CitationMode,)
 
-export PANDOC_API_VERSION, Pandoc, Meta, Block, Plain, Para, LineBlock, CodeBlock, RawBlock, BlockQuote, OrderedList, BulletList, DefinitionList, Header, HorizontalRule, Table, Figure, Div, MetaValue, MetaMap, MetaList, MetaBool, MetaString, MetaInlines, MetaBlocks, Inline, Str, Emph, Underline, Strong, Strikeout, Superscript, Subscript, SmallCaps, Quoted, Cite, Code, Space, SoftBreak, LineBreak, Math, RawInline, Link, Image, Note, Span, Attr, Format, ListAttributes, Caption, ColSpec, TableHead, TableBody, TableFoot, QuoteType, SingleQuote, DoubleQuote, Citation, MathType, DisplayMath, InlineMath, Target, ListNumberStyle, DefaultStyle, Example, Decimal, LowerRoman, UpperRoman, LowerAlpha, UpperAlpha, ListNumberDelim, DefaultDelim, Period, OneParen, TwoParens, ShortCaption, Alignment, AlignLeft, AlignRight, AlignCenter, AlignDefault, ColWidthBase, ColWidth, ColWidthDefault, Row, RowHeadColumns, CitationMode, AuthorInText, SuppressAuthor, NormalCitation, Cell, RowSpan, ColSpan
+export PANDOC_API_VERSION, Pandoc, Block, Plain, Para, LineBlock, CodeBlock, RawBlock, BlockQuote, OrderedList, BulletList, DefinitionList, Header, HorizontalRule, Table, Figure, Div, MetaValue, MetaMap, MetaList, MetaBool, MetaString, MetaInlines, MetaBlocks, Inline, Str, Emph, Underline, Strong, Strikeout, Superscript, Subscript, SmallCaps, Quoted, Cite, Code, Space, SoftBreak, LineBreak, Math, RawInline, Link, Image, Note, Span, Attr, Format, ListAttributes, Caption, ColSpec, TableHead, TableBody, TableFoot, QuoteType, SingleQuote, DoubleQuote, Citation, MathType, DisplayMath, InlineMath, Target, ListNumberStyle, DefaultStyle, Example, Decimal, LowerRoman, UpperRoman, LowerAlpha, UpperAlpha, ListNumberDelim, DefaultDelim, OneParen, TwoParens, ShortCaption, Alignment, AlignLeft, AlignRight, AlignCenter, AlignDefault, ColWidthBase, ColWidth, ColWidthDefault, Row, RowHeadColumns, CitationMode, AuthorInText, SuppressAuthor, NormalCitation, Cell, RowSpan, ColSpan
