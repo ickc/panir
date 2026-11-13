@@ -38,6 +38,13 @@ ORACLE_TIMEOUT = 20
 MAX_EXPECTED = 2_000_000
 
 
+# What a language can't hold, and says so: counted, not a failure.
+LIMITS = {
+    # a JavaScript number holds integers exactly only up to 2^53
+    "ts": ["beyond the integers JavaScript's numbers hold exactly"],
+}
+
+
 def language_commands() -> dict[str, list[str]]:
     node = os.environ.get("NODE", "node")
     return {
@@ -115,12 +122,16 @@ def run_language(cmd: list[str], tasks: list[tuple[str | None, str]], timeout: f
 class Checker:
     def __init__(self, langs: dict[str, list[str]], jobs: int) -> None:
         self.langs, self.pool = langs, ThreadPoolExecutor(jobs)
+        self.refused: dict[str, int] = {}
 
-    def verdict(self, expected: str, got: str) -> str | None:
+    def verdict(self, lang: str, expected: str, got: str) -> str | None:
         """None if pandoc reads ``got`` as the AST of ``expected``, else why not."""
         if got == expected:
             return None
         if got.startswith("!"):
+            if any(limit in got for limit in LIMITS.get(lang, ())):
+                self.refused[lang] = self.refused.get(lang, 0) + 1
+                return None
             return got
         ok, back = pandoc(got)
         if not ok:
@@ -133,7 +144,9 @@ class Checker:
         outs = run_language(self.langs[lang], [(t["spec"], t["doc"]) for t in tasks], timeout)
         for t, o in zip(tasks, outs):
             t.setdefault("got", {})[lang] = o
-        return list(self.pool.map(lambda p: self.verdict(p[0]["expected"], p[1]), zip(tasks, outs)))
+        return list(
+            self.pool.map(lambda p: self.verdict(lang, p[0]["expected"], p[1]), zip(tasks, outs))
+        )
 
     def fails(self, lang: str, spec: dict | None, doc: dict) -> bool:
         """Whether a (shrunk) task still fails: for the same kind of reason isn't required."""
@@ -145,7 +158,7 @@ class Checker:
         if not ok or len(expected) > MAX_EXPECTED:
             return False
         out = run_language(self.langs[lang], [(s, d1)], 60)[0]
-        return self.verdict(expected, out) is not None
+        return self.verdict(lang, expected, out) is not None
 
 
 # -- shrinking ---------------------------------------------------------------
@@ -365,7 +378,7 @@ def main() -> None:
         bad = 0
         for lang in langs:
             out = run_language(langs[lang], [(spec, d1)], 60)[0]
-            why = checker.verdict(expected, out)
+            why = checker.verdict(lang, expected, out)
             print(f"{lang}: {'ok' if why is None else why}")
             if why is not None:
                 bad += 1
@@ -412,7 +425,8 @@ def main() -> None:
         elapsed = time.time() - start
         print(
             f"seed {seed - 1}: {total} tasks ({skipped} skipped), {elapsed:.0f} s, failures: "
-            + ", ".join(f"{k} {v}" for k, v in failures.items()),
+            + ", ".join(f"{k} {v}" for k, v in failures.items())
+            + "".join(f"; {k} refused {v}" for k, v in checker.refused.items()),
             flush=True,
         )
         if all(v >= args.max_failures for v in failures.values()):

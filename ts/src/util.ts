@@ -20,6 +20,8 @@ export function blocks(text: string): Block[] {
   return [{ t: "Plain", content: inlines(text) }];
 }
 
+const META_VALUES = new Set(["MetaMap", "MetaList", "MetaBool", "MetaString", "MetaInlines", "MetaBlocks"]);
+
 const QUOTES: Record<string, [string, string]> = {
   SingleQuote: ["‘", "’"],
   DoubleQuote: ["“", "”"],
@@ -94,11 +96,11 @@ export function fromPlain(value: unknown): MetaValue {
   if (typeof value === "boolean") return { t: "MetaBool", value };
   if (Array.isArray(value)) return { t: "MetaList", content: value.map(fromPlain) };
   if (typeof value === "object" && value !== null) {
-    if (typeof (value as { t?: unknown }).t === "string") return value as MetaValue;
-    return {
-      t: "MetaMap",
-      content: Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fromPlain(v)])),
-    };
+    const t = (value as { t?: unknown }).t;
+    if (typeof t === "string" && META_VALUES.has(t)) return value as MetaValue;
+    const content = Object.create(null) as Record<string, MetaValue>;
+    for (const [k, v] of Object.entries(value)) content[k] = fromPlain(v);
+    return { t: "MetaMap", content };
   }
   throw new TypeError(`no metadata form for ${String(value)}`);
 }
