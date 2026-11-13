@@ -70,6 +70,29 @@ impl Text {
         }
     }
 
+    /// The string's bytes (UTF-8).
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        match &self.0 {
+            Repr::Inline { len, buf } => &buf[..*len as usize],
+            Repr::Heap(s) => s.as_bytes(),
+        }
+    }
+
+    /// Its length in bytes.
+    #[inline]
+    pub fn len(&self) -> usize {
+        match &self.0 {
+            Repr::Inline { len, .. } => *len as usize,
+            Repr::Heap(s) => s.len(),
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn into_string(self) -> String {
         match self.0 {
             Repr::Inline { .. } => self.as_str().to_owned(),
@@ -88,7 +111,8 @@ impl Text {
             }
             Repr::Heap(h) => h.push_str(s),
             Repr::Inline { .. } => {
-                let mut h = String::with_capacity(2 * (self.len() + s.len()));
+                // room to go on appending, as a String that grew would have
+                let mut h = String::with_capacity((self.len() + s.len()).max(2 * INLINE));
                 h.push_str(self.as_str());
                 h.push_str(s);
                 self.0 = Repr::Heap(Box::new(h));
@@ -249,9 +273,12 @@ impl fmt::Display for Text {
     }
 }
 
+// By the bytes, which compare as the strings do: `as_str` checks a short
+// string's UTF-8 each time, half of the time of comparing two documents.
 impl PartialEq for Text {
+    #[inline]
     fn eq(&self, other: &Text) -> bool {
-        self.as_str() == other.as_str()
+        self.as_bytes() == other.as_bytes()
     }
 }
 
@@ -265,7 +292,7 @@ impl PartialOrd for Text {
 
 impl Ord for Text {
     fn cmp(&self, other: &Text) -> Ordering {
-        self.as_str().cmp(other.as_str())
+        self.as_bytes().cmp(other.as_bytes())
     }
 }
 
@@ -279,12 +306,12 @@ macro_rules! eq_str {
     ($($t:ty),*) => {$(
         impl PartialEq<$t> for Text {
             fn eq(&self, other: &$t) -> bool {
-                self.as_str() == &other[..]
+                self.as_bytes() == other.as_bytes()
             }
         }
         impl PartialEq<Text> for $t {
             fn eq(&self, other: &Text) -> bool {
-                &self[..] == other.as_str()
+                self.as_bytes() == other.as_bytes()
             }
         }
     )*};

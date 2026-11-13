@@ -16,4 +16,7 @@ serde = { version = "1", features = ["derive"] }
 # unbounded_depth: serde_json's limit, 128 levels of JSON, is 42 nested divs
 # (a web page's); panir counts the AST's levels itself (MAX_DEPTH).
 serde_json = { version = "1", features = ["raw_value", "float_roundtrip", "unbounded_depth"] }
+
+[dev-dependencies]
+# the tests compare an error's path with what tracking every value says
 serde_path_to_error = "0.1"

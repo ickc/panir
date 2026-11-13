@@ -73,24 +73,29 @@ thread_local! {
 pub struct Level(());
 
 impl Level {
-    #[inline(never)]
+    #[inline]
     pub fn enter<E: serde::de::Error>() -> Result<Level, E> {
         let here = 0u8;
         let here = std::hint::black_box(&here) as *const u8 as usize;
         DEPTH.with(|d| {
             let (levels, first) = d.get();
             let first = if levels == 0 { here } else { first };
-            let refused = if levels >= MAX_DEPTH {
-                format!("nested more than {MAX_DEPTH} levels deep")
-            } else if first.abs_diff(here) > MAX_STACK {
-                format!("nested too deep for the stack ({levels} levels)")
-            } else {
+            if levels < MAX_DEPTH && first.abs_diff(here) <= MAX_STACK {
                 d.set((levels + 1, first));
                 return Ok(Level(()));
-            };
-            TOO_DEEP.with(|t| t.set(true));
-            Err(E::custom(refused))
+            }
+            Err(E::custom(Self::refused(levels)))
         })
+    }
+
+    #[cold]
+    fn refused(levels: usize) -> String {
+        TOO_DEEP.with(|t| t.set(true));
+        if levels >= MAX_DEPTH {
+            format!("nested more than {MAX_DEPTH} levels deep")
+        } else {
+            format!("nested too deep for the stack ({levels} levels)")
+        }
     }
 }
 
@@ -122,12 +127,10 @@ pub fn from_str(json: &str) -> Result<Pandoc, Error> {
         ),
     };
     let right = |v: &[i64]| v.get(..2) == Some(&PANDOC_API_VERSION[..2]);
-    // Read untracked (tracking each value's path made reading 30-40% slower);
-    // only if that fails, read again to find the error's path.
     TOO_DEEP.with(|t| t.set(false));
     let doc: Pandoc = match read(json) {
         Ok(doc) => doc,
-        Err(first) => {
+        Err(e) => {
             // another version's document: say that, not where it first differs
             #[derive(serde::Deserialize)]
             struct Version {
@@ -139,35 +142,156 @@ pub fn from_str(json: &str) -> Result<Pandoc, Error> {
                     return Err(wrong_version(&v.version));
                 }
             }
-            let whole = Error {
-                path: String::new(),
-                message: first.to_string(),
-            };
-            // Too deep: the reading for the path takes more stack for a
-            // level, and would stop before; and such a path says little.
-            if TOO_DEEP.with(|t| t.get()) {
-                return Err(whole);
-            }
-            let mut de = serde_json::Deserializer::from_str(json);
-            de.disable_recursion_limit();
-            return Err(
-                match serde_path_to_error::deserialize::<_, Pandoc>(&mut de) {
-                    // (it stopped before the error, for its own stack)
-                    Err(_) if TOO_DEEP.with(|t| t.get()) => whole,
-                    Err(e) => Error {
-                        path: e.path().to_string(),
-                        message: e.inner().to_string(),
-                    },
-                    // the document reads, but more follows it
-                    Ok(_) => whole,
+            return Err(Error {
+                // (of a document too deep, a path says little, at length)
+                path: if TOO_DEEP.with(|t| t.get()) {
+                    String::new()
+                } else {
+                    path_at(json, &e)
                 },
-            );
+                message: e.to_string(),
+            });
         }
     };
     if !right(&doc.api_version) {
         return Err(wrong_version(&doc.api_version));
     }
     Ok(doc)
+}
+
+/// Where in a JSON text a place is (a line and a column, as serde_json gives
+/// an error's): `blocks[0].c[1]`, the value being read there, or the one
+/// just read.
+///
+/// The text is gone through up to there, keeping only where it is. (Reading
+/// the document a second time with every value's path tracked said the
+/// same, and was a second copy of every type's reader: a fifth of a wasm
+/// filter.)
+fn path_at(json: &str, error: &serde_json::Error) -> String {
+    let (line, column) = (error.line(), error.column());
+    /// A list and the index of the element in it, or an object and the key
+    /// of the value in it (its place in the text), once one has begun.
+    enum In {
+        List(Option<usize>),
+        Object(Option<(usize, usize)>, bool),
+    }
+    let bytes = json.as_bytes();
+    let line_start = json
+        .match_indices('\n')
+        .nth(line.saturating_sub(2))
+        .map_or(0, |(i, _)| i + 1);
+    let mut end = if line <= 1 {
+        column
+    } else {
+        line_start + column
+    }
+    .min(bytes.len());
+    let message = error.to_string();
+    // An element too many is refused when seen, not read: the error is at it.
+    if message.starts_with("trailing characters") {
+        end = end.saturating_sub(1);
+    }
+    // A list or an object where another value belongs is refused before it
+    // is entered: the error is at what comes before it.
+    if message.starts_with("invalid type: map") || message.starts_with("invalid type: sequence") {
+        let next = bytes[end..].iter().position(|b| !b.is_ascii_whitespace());
+        if let Some(n) = next.filter(|n| matches!(bytes[end + n], b'[' | b'{')) {
+            end += n + 1;
+        }
+    }
+    let mut stack: Vec<In> = Vec::new();
+    let mut i = 0;
+    while i < end {
+        let byte = bytes[i];
+        // a value begins: the next element of a list
+        if !byte.is_ascii_whitespace() && !matches!(byte, b',' | b']' | b'}' | b':') {
+            if let Some(In::List(index @ None)) = stack.last_mut() {
+                *index = Some(0);
+            }
+        }
+        match byte {
+            b'"' => {
+                let start = i + 1;
+                i = start;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                if let Some(In::Object(key, false)) = stack.last_mut() {
+                    *key = Some((start, i.min(bytes.len())));
+                }
+            }
+            b':' => {
+                if let Some(In::Object(_, value)) = stack.last_mut() {
+                    *value = true;
+                }
+            }
+            b',' => match stack.last_mut() {
+                Some(In::List(index)) => *index = index.map(|n| n + 1),
+                Some(In::Object(key, value)) => (*key, *value) = (None, false),
+                None => {}
+            },
+            b'[' => stack.push(In::List(None)),
+            b'{' => stack.push(In::Object(None, false)),
+            b']' | b'}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // a tag that isn't one of the type's is the node's error
+    if message.starts_with("unknown variant") {
+        if let Some(In::Object(Some((start, close)), _)) = stack.last() {
+            if &json[*start..*close] == "t" {
+                stack.pop();
+            }
+        }
+    }
+    // an element too many is the list's
+    if message.starts_with("trailing characters") {
+        if let Some(In::List(index)) = stack.last_mut() {
+            *index = None;
+        }
+    }
+    let mut path = String::new();
+    for place in &stack {
+        match place {
+            In::List(Some(index)) => path += &format!("[{index}]"),
+            In::Object(Some((start, close)), _) => {
+                if !path.is_empty() {
+                    path.push('.');
+                }
+                path += &json[*start..*close];
+            }
+            In::List(None) | In::Object(None, _) => {}
+        }
+    }
+    path
+}
+
+/// A node's contents that came before its tag (not pandoc's order: sorted
+/// keys), read once the tag says what they are. An error says where in them.
+#[doc(hidden)]
+pub fn contents<'a, T: serde::Deserialize<'a>, E: serde::de::Error>(
+    c: &'a serde_json::value::RawValue,
+) -> Result<T, E> {
+    read(c.get()).map_err(|e| {
+        let message = e.to_string();
+        // (the line and column are in the contents: of no use in the document)
+        let message = message
+            .rfind(" at line ")
+            .map_or(message.as_str(), |i| &message[..i]);
+        if TOO_DEEP.with(|t| t.get()) {
+            return E::custom(message); // (where says little, at length)
+        }
+        let path = path_at(c.get(), &e);
+        let dot = if path.is_empty() || path.starts_with('[') {
+            ""
+        } else {
+            "."
+        };
+        E::custom(format_args!("c{dot}{path}: {message}"))
+    })
 }
 
 /// A finite `Double` as pandoc's JSON (aeson) writes it, as Haskell shows
@@ -242,73 +366,173 @@ impl<'de> serde::Deserialize<'de> for Double {
     }
 }
 
-/// Reads any JSON as a `serde_json::Value`, counting its levels as the
-/// AST's are ([`Level`]): the contents of a node that come before its tag
-/// (not pandoc's order) wait in one until the tag says what they are.
-#[doc(hidden)]
-pub struct Early;
-
-impl<'de> serde::de::DeserializeSeed<'de> for Early {
-    type Value = serde_json::Value;
-    fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
-        use serde::de::{MapAccess, SeqAccess, Visitor};
-        use serde_json::Value;
-        struct V;
-        impl<'de> Visitor<'de> for V {
-            type Value = Value;
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("JSON")
-            }
-            fn visit_bool<E>(self, x: bool) -> Result<Value, E> {
-                Ok(Value::Bool(x))
-            }
-            fn visit_i64<E>(self, x: i64) -> Result<Value, E> {
-                Ok(x.into())
-            }
-            fn visit_u64<E>(self, x: u64) -> Result<Value, E> {
-                Ok(x.into())
-            }
-            fn visit_f64<E>(self, x: f64) -> Result<Value, E> {
-                Ok(serde_json::Number::from_f64(x).map_or(Value::Null, Value::Number))
-            }
-            fn visit_str<E>(self, x: &str) -> Result<Value, E> {
-                Ok(Value::String(x.to_owned()))
-            }
-            fn visit_string<E>(self, x: String) -> Result<Value, E> {
-                Ok(Value::String(x))
-            }
-            fn visit_unit<E>(self) -> Result<Value, E> {
-                Ok(Value::Null)
-            }
-            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
-                let _level = Level::enter()?;
-                let mut out = Vec::new();
-                while let Some(x) = seq.next_element_seed(Early)? {
-                    out.push(x);
-                }
-                Ok(Value::Array(out))
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
-                let _level = Level::enter()?;
-                let mut out = serde_json::Map::new();
-                while let Some(k) = map.next_key::<String>()? {
-                    out.insert(k, map.next_value_seed(Early)?);
-                }
-                Ok(Value::Object(out))
-            }
-        }
-        d.deserialize_any(V)
-    }
-}
-
 /// A document as pandoc's JSON.
 pub fn to_string(doc: &Pandoc) -> String {
-    serde_json::to_string(doc).expect("the AST always encodes")
+    let mut out = String::new();
+    doc.json(&mut out);
+    out
 }
 
 /// Write a document as pandoc's JSON.
-pub fn to_writer<W: Write>(writer: W, doc: &Pandoc) -> std::io::Result<()> {
-    serde_json::to_writer(writer, doc).map_err(std::io::Error::from)
+pub fn to_writer<W: Write>(mut writer: W, doc: &Pandoc) -> std::io::Result<()> {
+    // block by block, so that the whole text is never in memory
+    let mut out = String::from("{\"pandoc-api-version\":");
+    doc.api_version.json(&mut out);
+    out.push_str(",\"meta\":");
+    doc.meta.json(&mut out);
+    out.push_str(",\"blocks\":[");
+    for (i, block) in doc.blocks.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        block.json(&mut out);
+        if out.len() >= 1 << 16 {
+            writer.write_all(out.as_bytes())?;
+            out.clear();
+        }
+    }
+    out.push_str("]}");
+    writer.write_all(out.as_bytes())
+}
+
+/// A value's JSON, as pandoc writes it, appended to a string. What
+/// [`to_string`] writes with: the same text as the types' `Serialize` gives
+/// serde_json, in half the time (no serializer between a node and the text).
+#[doc(hidden)]
+pub trait Json {
+    fn json(&self, out: &mut String);
+}
+
+// By byte: 0 for one written as it is, else how it is escaped (as
+// serde_json does: `u` for \u00XX).
+const ESCAPE: [u8; 256] = {
+    let mut table = [0; 256];
+    let mut i = 0;
+    while i < 0x20 {
+        table[i] = b'u';
+        i += 1;
+    }
+    table[0x08] = b'b';
+    table[0x09] = b't';
+    table[0x0a] = b'n';
+    table[0x0c] = b'f';
+    table[0x0d] = b'r';
+    table[b'"' as usize] = b'"';
+    table[b'\\' as usize] = b'\\';
+    table
+};
+
+impl Json for str {
+    fn json(&self, out: &mut String) {
+        out.push('"');
+        let mut start = 0;
+        for (i, &byte) in self.as_bytes().iter().enumerate() {
+            let escape = ESCAPE[byte as usize];
+            if escape == 0 {
+                continue;
+            }
+            // (an ASCII byte: `i` is between characters)
+            out.push_str(&self[start..i]);
+            out.push('\\');
+            if escape == b'u' {
+                const HEX: &[u8; 16] = b"0123456789abcdef";
+                out.push_str("u00");
+                out.push(HEX[(byte >> 4) as usize] as char);
+                out.push(HEX[(byte & 15) as usize] as char);
+            } else {
+                out.push(escape as char);
+            }
+            start = i + 1;
+        }
+        out.push_str(&self[start..]);
+        out.push('"');
+    }
+}
+
+impl Json for Text {
+    #[inline]
+    fn json(&self, out: &mut String) {
+        self.as_str().json(out)
+    }
+}
+
+impl Json for i64 {
+    fn json(&self, out: &mut String) {
+        use fmt::Write as _;
+        let _ = write!(out, "{self}");
+    }
+}
+
+impl Json for bool {
+    fn json(&self, out: &mut String) {
+        out.push_str(if *self { "true" } else { "false" });
+    }
+}
+
+/// A `Double`, as [`aeson_double`].
+#[doc(hidden)]
+pub fn write_double(x: f64, out: &mut String) {
+    if x.is_nan() {
+        out.push_str("null");
+    } else if x.is_infinite() {
+        out.push_str(if x > 0.0 { "\"+inf\"" } else { "\"-inf\"" });
+    } else {
+        out.push_str(&haskell_double(x));
+    }
+}
+
+impl<T: Json> Json for Vec<T> {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        for (i, x) in self.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            x.json(out);
+        }
+        out.push(']');
+    }
+}
+
+impl<T: Json> Json for Box<T> {
+    #[inline]
+    fn json(&self, out: &mut String) {
+        (**self).json(out)
+    }
+}
+
+impl<T: Json> Json for Option<T> {
+    fn json(&self, out: &mut String) {
+        match self {
+            Some(x) => x.json(out),
+            None => out.push_str("null"),
+        }
+    }
+}
+
+impl<A: Json, B: Json> Json for (A, B) {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.0.json(out);
+        out.push(',');
+        self.1.json(out);
+        out.push(']');
+    }
+}
+
+impl<V: Json> Json for std::collections::BTreeMap<Text, V> {
+    fn json(&self, out: &mut String) {
+        out.push('{');
+        for (i, (key, value)) in self.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            key.json(out);
+            out.push(':');
+            value.json(out);
+        }
+        out.push('}');
+    }
 }
 
 /// Reads `{"t": tag}` for an enum-like type, checking the tag.

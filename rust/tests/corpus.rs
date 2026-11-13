@@ -25,7 +25,33 @@ fn round_trip() {
         // Haskell shows them (comparing parsed JSON would read both sides'
         // numbers with the same parser, and hide what it gets wrong)
         assert_eq!(&to_string(&doc), line, "document {i}");
+        // the types' Serialize gives serde_json the same text, and a writer gets it
+        assert_eq!(&serde_json::to_string(&doc).unwrap(), line, "document {i}");
+        let mut written = Vec::new();
+        panir::to_writer(&mut written, &doc).unwrap();
+        assert_eq!(written, line.as_bytes(), "document {i}");
     }
+}
+
+#[test]
+fn strings_are_escaped_as_serde_json_does() {
+    let text: String = (0..0x80u8)
+        .map(char::from)
+        .chain("é\u{2028}\u{1f600}".chars())
+        .collect();
+    let doc = panir::Pandoc::new(vec![panir::Block::Para(vec![
+        panir::Inline::Str(text.as_str().into()),
+        panir::Inline::Str("".into()),
+        panir::Inline::Str("\"\\\"".into()),
+    ])]);
+    let written = to_string(&doc);
+    assert_eq!(written, serde_json::to_string(&doc).unwrap());
+    assert!(from_str(&written).unwrap() == doc);
+    // more than the 64 kB a writer gets at a time
+    let big = panir::Pandoc::new(vec![doc.blocks[0].clone(); 2000]);
+    let mut out = Vec::new();
+    panir::to_writer(&mut out, &big).unwrap();
+    assert_eq!(out, to_string(&big).into_bytes());
 }
 
 #[test]
@@ -110,4 +136,82 @@ fn invalid() {
             }
         }
     }
+}
+
+/// An error's path is found from its position in the text; a reading that
+/// tracks every value's path (serde_path_to_error) must say the same, for
+/// values of the wrong type anywhere in the corpus.
+#[test]
+fn an_errors_path_is_where_tracking_every_value_finds_it() {
+    let mut seed = 12345u64;
+    let mut rand = move |n: usize| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % n as u64) as usize
+    };
+    const WRONG: [&str; 9] = [
+        "null",
+        "7",
+        "\"x\"",
+        "[]",
+        "{}",
+        "true",
+        "[1,2,3,4,5,6,7]",
+        "{\"t\":\"Bogus\"}",
+        "1.5",
+    ];
+    let mut errors = 0;
+    for line in corpus("arbitrary.jsonl") {
+        // where the values that aren't lists or objects are (and empty lists)
+        let b = line.as_bytes();
+        let mut spans = Vec::new();
+        let mut i = 0;
+        while i < b.len() {
+            match b[i] {
+                b'"' => {
+                    let start = i;
+                    i += 1;
+                    while b[i] != b'"' {
+                        i += if b[i] == b'\\' { 2 } else { 1 };
+                    }
+                    i += 1;
+                    if b.get(i) != Some(&b':') {
+                        spans.push((start, i));
+                    }
+                }
+                b'0'..=b'9' | b'-' | b't' | b'f' | b'n' => {
+                    let start = i;
+                    while i < b.len() && !matches!(b[i], b',' | b']' | b'}') {
+                        i += 1;
+                    }
+                    spans.push((start, i));
+                }
+                b'[' if b.get(i + 1) == Some(&b']') => {
+                    spans.push((i, i + 2));
+                    i += 2;
+                }
+                _ => i += 1,
+            }
+        }
+        for _ in 0..20 {
+            let (start, end) = spans[rand(spans.len())];
+            let wrong = WRONG[rand(WRONG.len())];
+            let doc = format!("{}{}{}", &line[..start], wrong, &line[end..]);
+            let Err(e) = from_str(&doc) else { continue };
+            let mut de = serde_json::Deserializer::from_str(&doc);
+            // (read as a document: only its version was wrong)
+            let Err(tracked) = serde_path_to_error::deserialize::<_, panir::Pandoc>(&mut de) else {
+                continue;
+            };
+            let tracked = tracked.path().to_string();
+            assert_eq!(
+                e.path,
+                if tracked == "." { "" } else { &tracked },
+                "{e}\n{doc}"
+            );
+            errors += 1;
+        }
+    }
+    assert!(errors > 3000, "{errors}");
 }

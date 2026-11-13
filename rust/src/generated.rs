@@ -33,6 +33,18 @@ impl Default for Pandoc {
     }
 }
 
+impl crate::Json for Pandoc {
+    fn json(&self, out: &mut String) {
+        out.push_str("{\"pandoc-api-version\":");
+        self.api_version.json(out);
+        out.push_str(",\"meta\":");
+        self.meta.json(out);
+        out.push_str(",\"blocks\":");
+        self.blocks.json(out);
+        out.push('}');
+    }
+}
+
 /// pandoc's `Meta`.
 pub type Meta = BTreeMap<Text, MetaValue>;
 
@@ -84,19 +96,19 @@ impl<'de> Deserialize<'de> for Block {
                 let _level = crate::Level::enter()?;
                 let mut tag: Option<&'static str> = None;
                 let mut value: Option<Block> = None;
-                let mut early: Option<serde_json::Value> = None;
+                let mut early: Option<Box<serde_json::value::RawValue>> = None;
                 // keys and tags are matched, not copied
                 while let Some(key) = map.next_key::<crate::Key>()? {
                     if key == crate::Key::T {
                         let t = crate::Tag::check(map.next_value_seed(crate::Tag(TAGS))?, TAGS)?;
                         value = match early.take() {
-                            Some(c) => Some(from_value(&t, c)?),
+                            Some(c) => Some(later(&t, &c)?),
                             None => unit(&t),
                         };
                         tag = Some(t);
                     } else if key == crate::Key::C {
                         match tag.as_deref() {
-                            None => early = Some(map.next_value_seed(crate::Early)?),
+                            None => early = Some(map.next_value()?),
                             Some(t) => {
                                 value = Some(match t {
                                     "Plain" => Block::Plain(map.next_value()?),
@@ -131,34 +143,24 @@ impl<'de> Deserialize<'de> for Block {
                 }
             }
         }
-        // "c" before "t" (not pandoc's order): decode it once "t" is known
-        fn from_value<E: de::Error>(t: &str, c: serde_json::Value) -> Result<Block, E> {
-            fn json<T: de::DeserializeOwned, E: de::Error>(c: serde_json::Value) -> Result<T, E> {
-                serde_path_to_error::deserialize(c).map_err(|e| {
-                    let p = e.path().to_string();
-                    let at = match p.as_str() {
-                        "." => "c".to_string(),
-                        p if p.starts_with('[') => format!("c{p}"),
-                        p => format!("c.{p}"),
-                    };
-                    E::custom(format!("{at}: {}", e.inner()))
-                })
-            }
+        // "c" before "t" (not pandoc's order): its text waits, and is read
+        // once "t" is known
+        fn later<E: de::Error>(t: &str, c: &serde_json::value::RawValue) -> Result<Block, E> {
             Ok(match t {
-                "Plain" => Block::Plain(json(c)?),
-                "Para" => Block::Para(json(c)?),
-                "LineBlock" => Block::LineBlock(json(c)?),
-                "CodeBlock" => Block::CodeBlock(json(c)?),
-                "RawBlock" => Block::RawBlock(json(c)?),
-                "BlockQuote" => Block::BlockQuote(json(c)?),
-                "OrderedList" => Block::OrderedList(json(c)?),
-                "BulletList" => Block::BulletList(json(c)?),
-                "DefinitionList" => Block::DefinitionList(json(c)?),
-                "Header" => Block::Header(json(c)?),
+                "Plain" => Block::Plain(crate::contents(c)?),
+                "Para" => Block::Para(crate::contents(c)?),
+                "LineBlock" => Block::LineBlock(crate::contents(c)?),
+                "CodeBlock" => Block::CodeBlock(crate::contents(c)?),
+                "RawBlock" => Block::RawBlock(crate::contents(c)?),
+                "BlockQuote" => Block::BlockQuote(crate::contents(c)?),
+                "OrderedList" => Block::OrderedList(crate::contents(c)?),
+                "BulletList" => Block::BulletList(crate::contents(c)?),
+                "DefinitionList" => Block::DefinitionList(crate::contents(c)?),
+                "Header" => Block::Header(crate::contents(c)?),
                 "HorizontalRule" => Block::HorizontalRule,
-                "Table" => Block::Table(json(c)?),
-                "Figure" => Block::Figure(json(c)?),
-                "Div" => Block::Div(json(c)?),
+                "Table" => Block::Table(crate::contents(c)?),
+                "Figure" => Block::Figure(crate::contents(c)?),
+                "Div" => Block::Div(crate::contents(c)?),
                 _ => unreachable!(),
             })
         }
@@ -169,6 +171,79 @@ impl<'de> Deserialize<'de> for Block {
             }
         }
         d.deserialize_map(V)
+    }
+}
+
+impl crate::Json for Block {
+    fn json(&self, out: &mut String) {
+        match self {
+            Block::Plain(x) => {
+                out.push_str("{\"t\":\"Plain\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::Para(x) => {
+                out.push_str("{\"t\":\"Para\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::LineBlock(x) => {
+                out.push_str("{\"t\":\"LineBlock\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::CodeBlock(x) => {
+                out.push_str("{\"t\":\"CodeBlock\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::RawBlock(x) => {
+                out.push_str("{\"t\":\"RawBlock\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::BlockQuote(x) => {
+                out.push_str("{\"t\":\"BlockQuote\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::OrderedList(x) => {
+                out.push_str("{\"t\":\"OrderedList\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::BulletList(x) => {
+                out.push_str("{\"t\":\"BulletList\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::DefinitionList(x) => {
+                out.push_str("{\"t\":\"DefinitionList\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::Header(x) => {
+                out.push_str("{\"t\":\"Header\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::HorizontalRule => out.push_str("{\"t\":\"HorizontalRule\"}"),
+            Block::Table(x) => {
+                out.push_str("{\"t\":\"Table\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::Figure(x) => {
+                out.push_str("{\"t\":\"Figure\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Block::Div(x) => {
+                out.push_str("{\"t\":\"Div\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+        }
     }
 }
 
@@ -221,6 +296,16 @@ pub struct CodeBlock {
     pub text: Text,
 }
 
+impl crate::Json for CodeBlock {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.text.json(out);
+        out.push(']');
+    }
+}
+
 impl Serialize for CodeBlock {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         (&self.attr, &self.text).serialize(s)
@@ -239,6 +324,16 @@ impl<'de> Deserialize<'de> for CodeBlock {
 pub struct RawBlock {
     pub format: Format,
     pub text: Text,
+}
+
+impl crate::Json for RawBlock {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.format.json(out);
+        out.push(',');
+        self.text.json(out);
+        out.push(']');
+    }
 }
 
 impl Serialize for RawBlock {
@@ -270,6 +365,16 @@ impl Default for OrderedList {
     }
 }
 
+impl crate::Json for OrderedList {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.list_attributes.json(out);
+        out.push(',');
+        self.content.json(out);
+        out.push(']');
+    }
+}
+
 impl Serialize for OrderedList {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         (&self.list_attributes, &self.content).serialize(s)
@@ -292,6 +397,18 @@ pub struct Header {
     pub level: i64,
     pub attr: Attr,
     pub content: Vec<Inline>,
+}
+
+impl crate::Json for Header {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.level.json(out);
+        out.push(',');
+        self.attr.json(out);
+        out.push(',');
+        self.content.json(out);
+        out.push(']');
+    }
 }
 
 impl Serialize for Header {
@@ -332,6 +449,24 @@ impl Default for Table {
             bodies: Vec::new(),
             foot: TableFoot::default(),
         }
+    }
+}
+
+impl crate::Json for Table {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.caption.json(out);
+        out.push(',');
+        self.col_specs.json(out);
+        out.push(',');
+        self.head.json(out);
+        out.push(',');
+        self.bodies.json(out);
+        out.push(',');
+        self.foot.json(out);
+        out.push(']');
     }
 }
 
@@ -388,6 +523,18 @@ impl Default for Figure {
     }
 }
 
+impl crate::Json for Figure {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.caption.json(out);
+        out.push(',');
+        self.content.json(out);
+        out.push(']');
+    }
+}
+
 impl Serialize for Figure {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         (&self.attr, &self.caption, &self.content).serialize(s)
@@ -418,6 +565,16 @@ impl Default for Div {
             attr: Attr::default(),
             content: Vec::new(),
         }
+    }
+}
+
+impl crate::Json for Div {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.content.json(out);
+        out.push(']');
     }
 }
 
@@ -466,19 +623,19 @@ impl<'de> Deserialize<'de> for MetaValue {
                 let _level = crate::Level::enter()?;
                 let mut tag: Option<&'static str> = None;
                 let mut value: Option<MetaValue> = None;
-                let mut early: Option<serde_json::Value> = None;
+                let mut early: Option<Box<serde_json::value::RawValue>> = None;
                 // keys and tags are matched, not copied
                 while let Some(key) = map.next_key::<crate::Key>()? {
                     if key == crate::Key::T {
                         let t = crate::Tag::check(map.next_value_seed(crate::Tag(TAGS))?, TAGS)?;
                         value = match early.take() {
-                            Some(c) => Some(from_value(&t, c)?),
+                            Some(c) => Some(later(&t, &c)?),
                             None => unit(&t),
                         };
                         tag = Some(t);
                     } else if key == crate::Key::C {
                         match tag.as_deref() {
-                            None => early = Some(map.next_value_seed(crate::Early)?),
+                            None => early = Some(map.next_value()?),
                             Some(t) => {
                                 value = Some(match t {
                                     "MetaMap" => MetaValue::MetaMap(map.next_value()?),
@@ -502,26 +659,16 @@ impl<'de> Deserialize<'de> for MetaValue {
                 }
             }
         }
-        // "c" before "t" (not pandoc's order): decode it once "t" is known
-        fn from_value<E: de::Error>(t: &str, c: serde_json::Value) -> Result<MetaValue, E> {
-            fn json<T: de::DeserializeOwned, E: de::Error>(c: serde_json::Value) -> Result<T, E> {
-                serde_path_to_error::deserialize(c).map_err(|e| {
-                    let p = e.path().to_string();
-                    let at = match p.as_str() {
-                        "." => "c".to_string(),
-                        p if p.starts_with('[') => format!("c{p}"),
-                        p => format!("c.{p}"),
-                    };
-                    E::custom(format!("{at}: {}", e.inner()))
-                })
-            }
+        // "c" before "t" (not pandoc's order): its text waits, and is read
+        // once "t" is known
+        fn later<E: de::Error>(t: &str, c: &serde_json::value::RawValue) -> Result<MetaValue, E> {
             Ok(match t {
-                "MetaMap" => MetaValue::MetaMap(json(c)?),
-                "MetaList" => MetaValue::MetaList(json(c)?),
-                "MetaBool" => MetaValue::MetaBool(json(c)?),
-                "MetaString" => MetaValue::MetaString(json(c)?),
-                "MetaInlines" => MetaValue::MetaInlines(json(c)?),
-                "MetaBlocks" => MetaValue::MetaBlocks(json(c)?),
+                "MetaMap" => MetaValue::MetaMap(crate::contents(c)?),
+                "MetaList" => MetaValue::MetaList(crate::contents(c)?),
+                "MetaBool" => MetaValue::MetaBool(crate::contents(c)?),
+                "MetaString" => MetaValue::MetaString(crate::contents(c)?),
+                "MetaInlines" => MetaValue::MetaInlines(crate::contents(c)?),
+                "MetaBlocks" => MetaValue::MetaBlocks(crate::contents(c)?),
                 _ => unreachable!(),
             })
         }
@@ -531,6 +678,43 @@ impl<'de> Deserialize<'de> for MetaValue {
             }
         }
         d.deserialize_map(V)
+    }
+}
+
+impl crate::Json for MetaValue {
+    fn json(&self, out: &mut String) {
+        match self {
+            MetaValue::MetaMap(x) => {
+                out.push_str("{\"t\":\"MetaMap\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            MetaValue::MetaList(x) => {
+                out.push_str("{\"t\":\"MetaList\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            MetaValue::MetaBool(x) => {
+                out.push_str("{\"t\":\"MetaBool\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            MetaValue::MetaString(x) => {
+                out.push_str("{\"t\":\"MetaString\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            MetaValue::MetaInlines(x) => {
+                out.push_str("{\"t\":\"MetaInlines\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            MetaValue::MetaBlocks(x) => {
+                out.push_str("{\"t\":\"MetaBlocks\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+        }
     }
 }
 
@@ -594,19 +778,19 @@ impl<'de> Deserialize<'de> for Inline {
                 let _level = crate::Level::enter()?;
                 let mut tag: Option<&'static str> = None;
                 let mut value: Option<Inline> = None;
-                let mut early: Option<serde_json::Value> = None;
+                let mut early: Option<Box<serde_json::value::RawValue>> = None;
                 // keys and tags are matched, not copied
                 while let Some(key) = map.next_key::<crate::Key>()? {
                     if key == crate::Key::T {
                         let t = crate::Tag::check(map.next_value_seed(crate::Tag(TAGS))?, TAGS)?;
                         value = match early.take() {
-                            Some(c) => Some(from_value(&t, c)?),
+                            Some(c) => Some(later(&t, &c)?),
                             None => unit(&t),
                         };
                         tag = Some(t);
                     } else if key == crate::Key::C {
                         match tag.as_deref() {
-                            None => early = Some(map.next_value_seed(crate::Early)?),
+                            None => early = Some(map.next_value()?),
                             Some(t) => {
                                 value = Some(match t {
                                     "Str" => Inline::Str(map.next_value()?),
@@ -653,40 +837,30 @@ impl<'de> Deserialize<'de> for Inline {
                 }
             }
         }
-        // "c" before "t" (not pandoc's order): decode it once "t" is known
-        fn from_value<E: de::Error>(t: &str, c: serde_json::Value) -> Result<Inline, E> {
-            fn json<T: de::DeserializeOwned, E: de::Error>(c: serde_json::Value) -> Result<T, E> {
-                serde_path_to_error::deserialize(c).map_err(|e| {
-                    let p = e.path().to_string();
-                    let at = match p.as_str() {
-                        "." => "c".to_string(),
-                        p if p.starts_with('[') => format!("c{p}"),
-                        p => format!("c.{p}"),
-                    };
-                    E::custom(format!("{at}: {}", e.inner()))
-                })
-            }
+        // "c" before "t" (not pandoc's order): its text waits, and is read
+        // once "t" is known
+        fn later<E: de::Error>(t: &str, c: &serde_json::value::RawValue) -> Result<Inline, E> {
             Ok(match t {
-                "Str" => Inline::Str(json(c)?),
-                "Emph" => Inline::Emph(json(c)?),
-                "Underline" => Inline::Underline(json(c)?),
-                "Strong" => Inline::Strong(json(c)?),
-                "Strikeout" => Inline::Strikeout(json(c)?),
-                "Superscript" => Inline::Superscript(json(c)?),
-                "Subscript" => Inline::Subscript(json(c)?),
-                "SmallCaps" => Inline::SmallCaps(json(c)?),
-                "Quoted" => Inline::Quoted(json(c)?),
-                "Cite" => Inline::Cite(json(c)?),
-                "Code" => Inline::Code(json(c)?),
+                "Str" => Inline::Str(crate::contents(c)?),
+                "Emph" => Inline::Emph(crate::contents(c)?),
+                "Underline" => Inline::Underline(crate::contents(c)?),
+                "Strong" => Inline::Strong(crate::contents(c)?),
+                "Strikeout" => Inline::Strikeout(crate::contents(c)?),
+                "Superscript" => Inline::Superscript(crate::contents(c)?),
+                "Subscript" => Inline::Subscript(crate::contents(c)?),
+                "SmallCaps" => Inline::SmallCaps(crate::contents(c)?),
+                "Quoted" => Inline::Quoted(crate::contents(c)?),
+                "Cite" => Inline::Cite(crate::contents(c)?),
+                "Code" => Inline::Code(crate::contents(c)?),
                 "Space" => Inline::Space,
                 "SoftBreak" => Inline::SoftBreak,
                 "LineBreak" => Inline::LineBreak,
-                "Math" => Inline::Math(json(c)?),
-                "RawInline" => Inline::RawInline(json(c)?),
-                "Link" => Inline::Link(json(c)?),
-                "Image" => Inline::Image(json(c)?),
-                "Note" => Inline::Note(json(c)?),
-                "Span" => Inline::Span(json(c)?),
+                "Math" => Inline::Math(crate::contents(c)?),
+                "RawInline" => Inline::RawInline(crate::contents(c)?),
+                "Link" => Inline::Link(crate::contents(c)?),
+                "Image" => Inline::Image(crate::contents(c)?),
+                "Note" => Inline::Note(crate::contents(c)?),
+                "Span" => Inline::Span(crate::contents(c)?),
                 _ => unreachable!(),
             })
         }
@@ -699,6 +873,101 @@ impl<'de> Deserialize<'de> for Inline {
             }
         }
         d.deserialize_map(V)
+    }
+}
+
+impl crate::Json for Inline {
+    fn json(&self, out: &mut String) {
+        match self {
+            Inline::Str(x) => {
+                out.push_str("{\"t\":\"Str\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Emph(x) => {
+                out.push_str("{\"t\":\"Emph\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Underline(x) => {
+                out.push_str("{\"t\":\"Underline\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Strong(x) => {
+                out.push_str("{\"t\":\"Strong\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Strikeout(x) => {
+                out.push_str("{\"t\":\"Strikeout\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Superscript(x) => {
+                out.push_str("{\"t\":\"Superscript\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Subscript(x) => {
+                out.push_str("{\"t\":\"Subscript\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::SmallCaps(x) => {
+                out.push_str("{\"t\":\"SmallCaps\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Quoted(x) => {
+                out.push_str("{\"t\":\"Quoted\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Cite(x) => {
+                out.push_str("{\"t\":\"Cite\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Code(x) => {
+                out.push_str("{\"t\":\"Code\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Space => out.push_str("{\"t\":\"Space\"}"),
+            Inline::SoftBreak => out.push_str("{\"t\":\"SoftBreak\"}"),
+            Inline::LineBreak => out.push_str("{\"t\":\"LineBreak\"}"),
+            Inline::Math(x) => {
+                out.push_str("{\"t\":\"Math\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::RawInline(x) => {
+                out.push_str("{\"t\":\"RawInline\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Link(x) => {
+                out.push_str("{\"t\":\"Link\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Image(x) => {
+                out.push_str("{\"t\":\"Image\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Note(x) => {
+                out.push_str("{\"t\":\"Note\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+            Inline::Span(x) => {
+                out.push_str("{\"t\":\"Span\",\"c\":");
+                x.json(out);
+                out.push('}');
+            }
+        }
     }
 }
 
@@ -757,6 +1026,16 @@ pub struct Quoted {
     pub content: Vec<Inline>,
 }
 
+impl crate::Json for Quoted {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.quote_type.json(out);
+        out.push(',');
+        self.content.json(out);
+        out.push(']');
+    }
+}
+
 impl Serialize for Quoted {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         (&self.quote_type, &self.content).serialize(s)
@@ -789,6 +1068,16 @@ impl Default for Cite {
     }
 }
 
+impl crate::Json for Cite {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.citations.json(out);
+        out.push(',');
+        self.content.json(out);
+        out.push(']');
+    }
+}
+
 impl Serialize for Cite {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         (&self.citations, &self.content).serialize(s)
@@ -807,6 +1096,16 @@ impl<'de> Deserialize<'de> for Cite {
 pub struct Code {
     pub attr: Attr,
     pub text: Text,
+}
+
+impl crate::Json for Code {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.text.json(out);
+        out.push(']');
+    }
 }
 
 impl Serialize for Code {
@@ -829,6 +1128,16 @@ pub struct Math {
     pub text: Text,
 }
 
+impl crate::Json for Math {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.math_type.json(out);
+        out.push(',');
+        self.text.json(out);
+        out.push(']');
+    }
+}
+
 impl Serialize for Math {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         (&self.math_type, &self.text).serialize(s)
@@ -847,6 +1156,16 @@ impl<'de> Deserialize<'de> for Math {
 pub struct RawInline {
     pub format: Format,
     pub text: Text,
+}
+
+impl crate::Json for RawInline {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.format.json(out);
+        out.push(',');
+        self.text.json(out);
+        out.push(']');
+    }
 }
 
 impl Serialize for RawInline {
@@ -868,6 +1187,18 @@ pub struct Link {
     pub attr: Attr,
     pub content: Vec<Inline>,
     pub target: Target,
+}
+
+impl crate::Json for Link {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.content.json(out);
+        out.push(',');
+        self.target.json(out);
+        out.push(']');
+    }
 }
 
 impl Serialize for Link {
@@ -893,6 +1224,18 @@ pub struct Image {
     pub attr: Attr,
     pub content: Vec<Inline>,
     pub target: Target,
+}
+
+impl crate::Json for Image {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.content.json(out);
+        out.push(',');
+        self.target.json(out);
+        out.push(']');
+    }
 }
 
 impl Serialize for Image {
@@ -928,6 +1271,16 @@ impl Default for Span {
     }
 }
 
+impl crate::Json for Span {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.content.json(out);
+        out.push(']');
+    }
+}
+
 impl Serialize for Span {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         (&self.attr, &self.content).serialize(s)
@@ -956,6 +1309,18 @@ impl Default for Attr {
             classes: Vec::new(),
             attributes: Vec::new(),
         }
+    }
+}
+
+impl crate::Json for Attr {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.identifier.json(out);
+        out.push(',');
+        self.classes.json(out);
+        out.push(',');
+        self.attributes.json(out);
+        out.push(']');
     }
 }
 
@@ -998,6 +1363,18 @@ impl Default for ListAttributes {
     }
 }
 
+impl crate::Json for ListAttributes {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.start.json(out);
+        out.push(',');
+        self.style.json(out);
+        out.push(',');
+        self.delimiter.json(out);
+        out.push(']');
+    }
+}
+
 impl Serialize for ListAttributes {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         (&self.start, &self.style, &self.delimiter).serialize(s)
@@ -1031,6 +1408,16 @@ impl Default for Caption {
     }
 }
 
+impl crate::Json for Caption {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.short.json(out);
+        out.push(',');
+        self.content.json(out);
+        out.push(']');
+    }
+}
+
 impl Serialize for Caption {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         (&self.short, &self.content).serialize(s)
@@ -1060,6 +1447,16 @@ impl Default for ColSpec {
     }
 }
 
+impl crate::Json for ColSpec {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.alignment.json(out);
+        out.push(',');
+        self.width.json(out);
+        out.push(']');
+    }
+}
+
 impl Serialize for ColSpec {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         (&self.alignment, &self.width).serialize(s)
@@ -1086,6 +1483,16 @@ impl Default for TableHead {
             attr: Attr::default(),
             rows: Vec::new(),
         }
+    }
+}
+
+impl crate::Json for TableHead {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.rows.json(out);
+        out.push(']');
     }
 }
 
@@ -1119,6 +1526,20 @@ impl Default for TableBody {
             head: Vec::new(),
             body: Vec::new(),
         }
+    }
+}
+
+impl crate::Json for TableBody {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.row_head_columns.json(out);
+        out.push(',');
+        self.head.json(out);
+        out.push(',');
+        self.body.json(out);
+        out.push(']');
     }
 }
 
@@ -1157,6 +1578,16 @@ impl Default for TableFoot {
     }
 }
 
+impl crate::Json for TableFoot {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.rows.json(out);
+        out.push(']');
+    }
+}
+
 impl Serialize for TableFoot {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         (&self.attr, &self.rows).serialize(s)
@@ -1190,6 +1621,15 @@ impl<'de> Deserialize<'de> for QuoteType {
     }
 }
 
+impl crate::Json for QuoteType {
+    fn json(&self, out: &mut String) {
+        out.push_str(match self {
+            QuoteType::SingleQuote => "{\"t\":\"SingleQuote\"}",
+            QuoteType::DoubleQuote => "{\"t\":\"DoubleQuote\"}",
+        });
+    }
+}
+
 /// pandoc's `Citation`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Citation {
@@ -1205,6 +1645,24 @@ pub struct Citation {
     pub note_num: i64,
     #[serde(rename = "citationHash")]
     pub hash: i64,
+}
+
+impl crate::Json for Citation {
+    fn json(&self, out: &mut String) {
+        out.push_str("{\"citationId\":");
+        self.id.json(out);
+        out.push_str(",\"citationPrefix\":");
+        self.prefix.json(out);
+        out.push_str(",\"citationSuffix\":");
+        self.suffix.json(out);
+        out.push_str(",\"citationMode\":");
+        self.mode.json(out);
+        out.push_str(",\"citationNoteNum\":");
+        self.note_num.json(out);
+        out.push_str(",\"citationHash\":");
+        self.hash.json(out);
+        out.push('}');
+    }
 }
 
 /// pandoc's `MathType`.
@@ -1227,11 +1685,30 @@ impl<'de> Deserialize<'de> for MathType {
     }
 }
 
+impl crate::Json for MathType {
+    fn json(&self, out: &mut String) {
+        out.push_str(match self {
+            MathType::DisplayMath => "{\"t\":\"DisplayMath\"}",
+            MathType::InlineMath => "{\"t\":\"InlineMath\"}",
+        });
+    }
+}
+
 /// pandoc's `Target`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Target {
     pub url: Text,
     pub title: Text,
+}
+
+impl crate::Json for Target {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.url.json(out);
+        out.push(',');
+        self.title.json(out);
+        out.push(']');
+    }
 }
 
 impl Serialize for Target {
@@ -1285,6 +1762,20 @@ impl<'de> Deserialize<'de> for ListNumberStyle {
     }
 }
 
+impl crate::Json for ListNumberStyle {
+    fn json(&self, out: &mut String) {
+        out.push_str(match self {
+            ListNumberStyle::DefaultStyle => "{\"t\":\"DefaultStyle\"}",
+            ListNumberStyle::Example => "{\"t\":\"Example\"}",
+            ListNumberStyle::Decimal => "{\"t\":\"Decimal\"}",
+            ListNumberStyle::LowerRoman => "{\"t\":\"LowerRoman\"}",
+            ListNumberStyle::UpperRoman => "{\"t\":\"UpperRoman\"}",
+            ListNumberStyle::LowerAlpha => "{\"t\":\"LowerAlpha\"}",
+            ListNumberStyle::UpperAlpha => "{\"t\":\"UpperAlpha\"}",
+        });
+    }
+}
+
 /// pandoc's `ListNumberDelim`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "t")]
@@ -1306,6 +1797,17 @@ impl<'de> Deserialize<'de> for ListNumberDelim {
             "TwoParens" => ListNumberDelim::TwoParens,
             _ => unreachable!(),
         })
+    }
+}
+
+impl crate::Json for ListNumberDelim {
+    fn json(&self, out: &mut String) {
+        out.push_str(match self {
+            ListNumberDelim::DefaultDelim => "{\"t\":\"DefaultDelim\"}",
+            ListNumberDelim::Period => "{\"t\":\"Period\"}",
+            ListNumberDelim::OneParen => "{\"t\":\"OneParen\"}",
+            ListNumberDelim::TwoParens => "{\"t\":\"TwoParens\"}",
+        });
     }
 }
 
@@ -1336,6 +1838,17 @@ impl<'de> Deserialize<'de> for Alignment {
     }
 }
 
+impl crate::Json for Alignment {
+    fn json(&self, out: &mut String) {
+        out.push_str(match self {
+            Alignment::AlignLeft => "{\"t\":\"AlignLeft\"}",
+            Alignment::AlignRight => "{\"t\":\"AlignRight\"}",
+            Alignment::AlignCenter => "{\"t\":\"AlignCenter\"}",
+            Alignment::AlignDefault => "{\"t\":\"AlignDefault\"}",
+        });
+    }
+}
+
 /// pandoc's `ColWidth`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "t", content = "c")]
@@ -1356,19 +1869,19 @@ impl<'de> Deserialize<'de> for ColWidth {
             fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<ColWidth, A::Error> {
                 let mut tag: Option<&'static str> = None;
                 let mut value: Option<ColWidth> = None;
-                let mut early: Option<serde_json::Value> = None;
+                let mut early: Option<Box<serde_json::value::RawValue>> = None;
                 // keys and tags are matched, not copied
                 while let Some(key) = map.next_key::<crate::Key>()? {
                     if key == crate::Key::T {
                         let t = crate::Tag::check(map.next_value_seed(crate::Tag(TAGS))?, TAGS)?;
                         value = match early.take() {
-                            Some(c) => Some(from_value(&t, c)?),
+                            Some(c) => Some(later(&t, &c)?),
                             None => unit(&t),
                         };
                         tag = Some(t);
                     } else if key == crate::Key::C {
                         match tag.as_deref() {
-                            None => early = Some(map.next_value_seed(crate::Early)?),
+                            None => early = Some(map.next_value()?),
                             Some(t) => {
                                 value = Some(match t {
                                     "ColWidth" => {
@@ -1393,21 +1906,11 @@ impl<'de> Deserialize<'de> for ColWidth {
                 }
             }
         }
-        // "c" before "t" (not pandoc's order): decode it once "t" is known
-        fn from_value<E: de::Error>(t: &str, c: serde_json::Value) -> Result<ColWidth, E> {
-            fn json<T: de::DeserializeOwned, E: de::Error>(c: serde_json::Value) -> Result<T, E> {
-                serde_path_to_error::deserialize(c).map_err(|e| {
-                    let p = e.path().to_string();
-                    let at = match p.as_str() {
-                        "." => "c".to_string(),
-                        p if p.starts_with('[') => format!("c{p}"),
-                        p => format!("c.{p}"),
-                    };
-                    E::custom(format!("{at}: {}", e.inner()))
-                })
-            }
+        // "c" before "t" (not pandoc's order): its text waits, and is read
+        // once "t" is known
+        fn later<E: de::Error>(t: &str, c: &serde_json::value::RawValue) -> Result<ColWidth, E> {
             Ok(match t {
-                "ColWidth" => ColWidth::ColWidth(json::<crate::Double, E>(c)?.0),
+                "ColWidth" => ColWidth::ColWidth(crate::contents::<crate::Double, E>(c)?.0),
                 "ColWidthDefault" => ColWidth::ColWidthDefault,
                 _ => unreachable!(),
             })
@@ -1419,6 +1922,19 @@ impl<'de> Deserialize<'de> for ColWidth {
             }
         }
         d.deserialize_map(V)
+    }
+}
+
+impl crate::Json for ColWidth {
+    fn json(&self, out: &mut String) {
+        match self {
+            ColWidth::ColWidth(x) => {
+                out.push_str("{\"t\":\"ColWidth\",\"c\":");
+                crate::write_double(*x, out);
+                out.push('}');
+            }
+            ColWidth::ColWidthDefault => out.push_str("{\"t\":\"ColWidthDefault\"}"),
+        }
     }
 }
 
@@ -1435,6 +1951,16 @@ impl Default for Row {
             attr: Attr::default(),
             cells: Vec::new(),
         }
+    }
+}
+
+impl crate::Json for Row {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.cells.json(out);
+        out.push(']');
     }
 }
 
@@ -1476,6 +2002,16 @@ impl<'de> Deserialize<'de> for CitationMode {
     }
 }
 
+impl crate::Json for CitationMode {
+    fn json(&self, out: &mut String) {
+        out.push_str(match self {
+            CitationMode::AuthorInText => "{\"t\":\"AuthorInText\"}",
+            CitationMode::SuppressAuthor => "{\"t\":\"SuppressAuthor\"}",
+            CitationMode::NormalCitation => "{\"t\":\"NormalCitation\"}",
+        });
+    }
+}
+
 /// pandoc's `Cell`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cell {
@@ -1495,6 +2031,22 @@ impl Default for Cell {
             col_span: 1,
             content: Vec::new(),
         }
+    }
+}
+
+impl crate::Json for Cell {
+    fn json(&self, out: &mut String) {
+        out.push('[');
+        self.attr.json(out);
+        out.push(',');
+        self.alignment.json(out);
+        out.push(',');
+        self.row_span.json(out);
+        out.push(',');
+        self.col_span.json(out);
+        out.push(',');
+        self.content.json(out);
+        out.push(']');
     }
 }
 
