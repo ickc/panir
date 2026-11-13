@@ -1,0 +1,2 @@
+# The corpus is compared byte for byte: no line ends of Windows's on checkout.
+*.jsonl -text

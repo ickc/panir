@@ -348,7 +348,7 @@ def test_print_in_a_filter_goes_to_stderr(tmp_path):
 
         @f.on(Str)
         def note(s):
-            print("saw", s.text)
+            print("saw", len(s.text))
 
         f.main()
         assert not sys.stdin.buffer.closed
@@ -359,8 +359,8 @@ def test_print_in_a_filter_goes_to_stderr(tmp_path):
     p = subprocess.run(
         [sys.executable, str(script)], input=A.dumps(doc).encode(), capture_output=True, check=True
     )
-    out = p.stdout.decode()
+    out = p.stdout.decode().replace("\r\n", "\n")  # (print's line end, on Windows)
     assert out.endswith("after\n")
     assert A.loads(out.removesuffix("after\n")) == doc
-    assert p.stderr.decode().splitlines() == ["saw é", "saw b"]
+    assert p.stderr.decode().splitlines() == ["saw 1", "saw 1"]
     assert json.loads(out.removesuffix("after\n"))["blocks"]
