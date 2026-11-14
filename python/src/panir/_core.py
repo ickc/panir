@@ -25,18 +25,46 @@ import types
 import typing
 from collections.abc import Iterable, Mapping
 from operator import length_hint
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
+
+    from .filter import Filter
 
 __all__ = [
     "ASTDecodeError",
     "ASTError",
     "ASTTypeError",
+    "Attributes",
     "Enum",
+    "Field",
     "Node",
     "NodeDict",
     "NodeList",
     "finalize",
 ]
+
+_T = TypeVar("_T")
+_In = TypeVar("_In")
+_Get = TypeVar("_Get")
+_Set = TypeVar("_Set", contravariant=True)
+
+
+class Field(Generic[_Get, _Set]):
+    """A node's field, as type checkers see it (the generated declarations):
+    read, a ``_Get``; set from a ``_Set``, which converts to one (a string
+    where inlines go, an enum's name, ...). At run time a field is a slot,
+    and ``Node.__setattr__`` converts."""
+
+    if TYPE_CHECKING:
+
+        @overload
+        def __get__(self, obj: None, owner: Any) -> Field[_Get, _Set]: ...
+        @overload
+        def __get__(self, obj: object, owner: Any) -> _Get: ...
+        def __get__(self, obj: Any, owner: Any) -> Any: ...
+        def __set__(self, obj: object, value: _Set) -> None: ...
 
 
 # -- errors ------------------------------------------------------------------
@@ -155,6 +183,7 @@ class Node:
     _positional: ClassVar[tuple[str, ...]] = ()
     _defaults: ClassVar[dict[str, Any]] = {}
     _keys: ClassVar[dict[str, str]] = {}
+    _parts: ClassVar[dict[str, str]] = {}
     # set by finalize
     _fields: ClassVar[tuple[str, ...]] = ()
     _specs: ClassVar[dict[str, _Spec]] = {}
@@ -175,11 +204,23 @@ class Node:
     def __setattr__(self, name: str, value: Any) -> None:
         spec = type(self)._specs.get(name)
         if spec is None:
+            whole = type(self)._parts.get(name)
+            if whole is not None:  # el.identifier = ..., as in pandoc's Lua
+                setattr(getattr(self, whole), name, value)
+                return
             fields = ", ".join(type(self)._fields) or "none"
             raise AttributeError(
                 f"{type(self).__name__} has no field {name!r} (its fields: {fields})"
             )
         object.__setattr__(self, name, spec.coerce(value))
+
+    def __getattr__(self, name: str) -> Any:
+        # (only for what isn't a field: a flattened product's field, read
+        # through the node, as in pandoc's Lua: el.identifier, el.url)
+        whole = type(self)._parts.get(name)
+        if whole is None:
+            raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+        return getattr(getattr(self, whole), name)
 
     def __eq__(self, other: object) -> bool:
         if type(other) is not type(self):
@@ -230,6 +271,13 @@ class Node:
 
         return clone(self)
 
+    def walk(self, filter: Filter, format: str | None = None, **kwargs: Any) -> Self:
+        """Apply a filter to what is in this node (in place), as pandoc's
+        Lua ``el:walk{...}``: not to the node itself, unless it is a
+        document. Returns the node (a document: what its ``Pandoc`` function
+        returned, if anything)."""
+        return filter(self, format, **kwargs)
+
     def to_json(self) -> Any:
         """This value as pandoc's JSON (lists, dicts, str, ...; for json.dumps)."""
         try:
@@ -240,7 +288,7 @@ class Node:
             ) from None
 
     @classmethod
-    def from_json(cls, j: Any) -> Any:
+    def from_json(cls, j: Any) -> Self:
         """A value of this type (or constructor) from pandoc's JSON."""
         spec = _SPEC_OF.get(_sum_of(cls) or cls)
         if spec is None:
@@ -285,14 +333,16 @@ class Enum(str, enum.Enum):
     __str__ = str.__str__
 
 
-class NodeList(list):
-    """A list in the AST: checks what is put into it.
+class NodeList(list[_T], Generic[_T, _In]):
+    """A list in the AST: checks what is put into it, and converts what
+    converts (a ``_In``: a string where an inline goes, ...).
 
     Assigning a list to a field copies it into a new ``NodeList``: a field
     has its own list, which is in no other node.
     """
 
     __slots__ = ("_spec",)
+    _spec: _ListSpec
 
     def __init__(self, spec: _ListSpec, items: Iterable = ()) -> None:
         self._spec = spec
@@ -301,21 +351,25 @@ class NodeList(list):
     def _check(self, x: Any, i: int) -> Any:
         return self._spec.item.coerce(x, self._spec.label, i)
 
-    def append(self, x: Any) -> None:
+    def append(self, x: _In) -> None:  # type: ignore[override]
         list.append(self, self._check(x, len(self)))
 
-    def insert(self, i: typing.SupportsIndex, x: Any) -> None:
+    def insert(self, i: typing.SupportsIndex, x: _In) -> None:  # type: ignore[override]
         list.insert(self, i, self._check(x, int(i)))
 
-    def extend(self, xs: Iterable) -> None:
+    def extend(self, xs: Iterable[_In]) -> None:  # type: ignore[override]
         n = len(self)
         list.extend(self, [self._check(x, n + i) for i, x in enumerate(_items(xs))])
 
-    def __iadd__(self, xs: Iterable) -> NodeList:  # type: ignore[override]
+    def __iadd__(self, xs: Iterable[_In]) -> Self:  # type: ignore[override,misc]
         self.extend(xs)
         return self
 
-    def __setitem__(self, i: Any, x: Any) -> None:
+    @overload
+    def __setitem__(self, i: typing.SupportsIndex, x: _In) -> None: ...
+    @overload
+    def __setitem__(self, i: slice, x: Iterable[_In]) -> None: ...
+    def __setitem__(self, i: Any, x: Any) -> None:  # type: ignore[override]
         if isinstance(i, slice):
             start = i.indices(len(self))[0]
             x = [self._check(v, start + k) for k, v in enumerate(_items(x))]
@@ -323,22 +377,90 @@ class NodeList(list):
             x = self._check(x, i)
         list.__setitem__(self, i, x)
 
-    def copy(self) -> NodeList:
-        return _list(self._spec, self)
+    def copy(self) -> Self:
+        return _list(self._spec, self)  # type: ignore[return-value]
+
+    def walk(self, filter: Filter, format: str | None = None, **kwargs: Any) -> Self:
+        """Apply a filter to this list of nodes and what is in them (in
+        place), as pandoc's Lua ``inlines:walk{...}``: its function for
+        lists of inlines (or blocks) applies to this one too. Returns it."""
+        return filter(self, format, **kwargs)
 
     def __reduce__(self) -> tuple:
         return (list, (list(self),))
 
-    def __copy__(self) -> NodeList:
-        return _list(self._spec, self)
+    def __copy__(self) -> Self:
+        return _list(self._spec, self)  # type: ignore[return-value]
 
-    def __deepcopy__(self, memo: dict) -> NodeList:
+    def __deepcopy__(self, memo: dict) -> Self:
         import copy
 
-        return _list(self._spec, [copy.deepcopy(x, memo) for x in self])
+        return _list(self._spec, [copy.deepcopy(x, memo) for x in self])  # type: ignore[return-value]
 
     def __repr__(self) -> str:
         return list.__repr__(self)
+
+
+class Attributes(NodeList[tuple[str, str], tuple[str, str]]):
+    """An element's attributes: (key, value) pairs, in order, a key perhaps
+    in two of them. Also by key, as pandoc's Lua (``el.attributes.key``):
+    ``attrs["k"]`` is the value of the first pair with that key; setting it
+    replaces that value, or adds a pair at the end; ``del`` removes that
+    pair; ``"k" in attrs``. Given whole, a mapping is its pairs."""
+
+    __slots__ = ()
+
+    @overload
+    def __getitem__(self, i: typing.SupportsIndex) -> tuple[str, str]: ...
+    @overload
+    def __getitem__(self, i: slice) -> list[tuple[str, str]]: ...
+    @overload
+    def __getitem__(self, i: str) -> str: ...
+    def __getitem__(self, i: Any) -> Any:
+        if isinstance(i, str):
+            for k, v in self:
+                if k == i:
+                    return v
+            raise KeyError(i)
+        return list.__getitem__(self, i)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """The value of the first pair with ``key``, else ``default``."""
+        for k, v in self:
+            if k == key:
+                return v
+        return default
+
+    @overload
+    def __setitem__(self, i: typing.SupportsIndex, x: tuple[str, str]) -> None: ...
+    @overload
+    def __setitem__(self, i: slice, x: Iterable[tuple[str, str]]) -> None: ...
+    @overload
+    def __setitem__(self, i: str, x: str) -> None: ...
+    def __setitem__(self, i: Any, x: Any) -> None:
+        if not isinstance(i, str):
+            NodeList.__setitem__(self, i, x)
+            return
+        for n, (k, _) in enumerate(self):
+            if k == i:
+                list.__setitem__(self, n, self._check((i, x), n))
+                return
+        self.append((i, x))
+
+    def __delitem__(self, i: Any) -> None:
+        if not isinstance(i, str):
+            list.__delitem__(self, i)
+            return
+        for n, (k, _) in enumerate(self):
+            if k == i:
+                list.__delitem__(self, n)
+                return
+        raise KeyError(i)
+
+    def __contains__(self, x: object) -> bool:
+        if isinstance(x, str):
+            return any(k == x for k, _ in self)
+        return list.__contains__(self, x)
 
 
 def _items(xs: Any) -> Iterable:
@@ -349,23 +471,25 @@ def _items(xs: Any) -> Iterable:
 
 def _list(spec: _ListSpec, items: Iterable) -> NodeList:
     """A NodeList of values already checked."""
-    lst = NodeList.__new__(NodeList)
+    lst = spec.cls.__new__(spec.cls)
     lst._spec = spec
     list.__init__(lst, items)
     return lst
 
 
-class NodeDict(dict):
-    """A map in the AST (metadata): checks what is put into it."""
+class NodeDict(dict[str, _T], Generic[_T, _In]):
+    """A map in the AST (metadata): checks what is put into it, and
+    converts what converts (a ``_In``: ``doc.meta["draft"] = True``)."""
 
     __slots__ = ("_spec",)
+    _spec: _MapSpec
 
     def __init__(self, spec: _MapSpec, items: Mapping | Iterable = ()) -> None:
         self._spec = spec
         dict.__init__(self)
         self.update(items)
 
-    def __setitem__(self, k: Any, v: Any) -> None:
+    def __setitem__(self, k: str, v: _In) -> None:  # type: ignore[override]
         if not isinstance(k, str):
             raise ASTTypeError(f"{self._spec.label} key", "a str", _describe(k))
         dict.__setitem__(self, k, self._spec.value.coerce(v, self._spec.label, k))
@@ -378,24 +502,24 @@ class NodeDict(dict):
         self.update(other)  # dict's own |= doesn't go through __setitem__
         return self
 
-    def setdefault(self, k: Any, v: Any = None) -> Any:
+    def setdefault(self, k: str, v: _In = None) -> _T:  # type: ignore[override,assignment]
         if k not in self:
             self[k] = v
         return self[k]
 
-    def copy(self) -> NodeDict:
-        return _dict(self._spec, self)
+    def copy(self) -> Self:
+        return _dict(self._spec, self)  # type: ignore[return-value]
 
     def __reduce__(self) -> tuple:
         return (dict, (dict(self),))
 
-    def __copy__(self) -> NodeDict:
-        return _dict(self._spec, self)
+    def __copy__(self) -> Self:
+        return _dict(self._spec, self)  # type: ignore[return-value]
 
-    def __deepcopy__(self, memo: dict) -> NodeDict:
+    def __deepcopy__(self, memo: dict) -> Self:  # type: ignore[override]
         import copy
 
-        return _dict(self._spec, {k: copy.deepcopy(v, memo) for k, v in self.items()})
+        return _dict(self._spec, {k: copy.deepcopy(v, memo) for k, v in self.items()})  # type: ignore[return-value]
 
     def __repr__(self) -> str:
         return dict.__repr__(self)
@@ -515,29 +639,41 @@ class _ListSpec(_Spec):
     def __init__(self, item: _Spec, label: str) -> None:
         self.item, self.label = item, label
         self.has_nodes = item.has_nodes
+        # attributes ((str, str) pairs) can also be had by key
+        pairs = isinstance(item, _TupleSpec) and all(
+            isinstance(s, _PrimSpec) and s.ty is str for s in item.items
+        )
+        self.cls: type[NodeList] = Attributes if pairs and len(item.items) == 2 else NodeList  # type: ignore[assignment]
 
     def name(self) -> str:
         return f"a list of {self.item.name()}"
 
     def coerce(self, value: Any, label: str | None = None, key: Any = None) -> Any:
-        if type(value) is NodeList and value._spec is self:
+        if type(value) is self.cls and value._spec is self:
             return _list(self, value)  # checked already; a copy: one list, one field
         if isinstance(value, Mapping) and isinstance(self.item, _TupleSpec):
             value = list(value.items())  # e.g. attributes given as a dict
-        if isinstance(value, str) and isinstance(self.item, _ClassSpec):
+        item = self.item
+        if isinstance(item, _ClassSpec) and isinstance(value, (str, Node)):
             # as pandoc's Lua: a string where a list of inlines goes is its
-            # words and spaces, and where a list of blocks goes, Plain text
-            item = self.item.cls
-            if issubclass(_CLASSES["Str"], item):
-                return NodeList(self, text_inlines(value))
-            if issubclass(_CLASSES["Plain"], item):
-                return NodeList(self, [_new("Plain", *text_inlines(value))])
+            # words and spaces, and where a list of blocks goes, Plain text;
+            # one inline where inlines go, or one block (or inline) where
+            # blocks go, is a list of it
+            texts = issubclass(_CLASSES["Str"], item.cls)
+            if texts or issubclass(_CLASSES["Plain"], item.cls):
+                if isinstance(value, str):
+                    words = text_inlines(value)
+                    return self.cls(self, words if texts else [_new("Plain", *words)])
+                if isinstance(value, item.cls) or not texts and isinstance(value, _inline()):
+                    return self.cls(self, [value])
         if isinstance(value, (str, bytes, Node, Mapping)) or not isinstance(value, Iterable):
             hint = ""
             if self.item.accepts_node_type(type(value)):
                 hint = f" (a single {type(value).__name__}; wrap it in a list)"
             self.fail(label, key, value, hint)
-        return NodeList(self, value)
+        if isinstance(value, (set, frozenset)):
+            self.fail(label, key, value, " (a set has no order)")
+        return self.cls(self, value)
 
     def decode(self, j: Any) -> Any:
         if type(j) is not list:
@@ -733,13 +869,23 @@ class _ClassSpec(_Spec):
             return _make(
                 cls, [cls._specs[f].coerce(v, f"{where}.{f}") for f, v in zip(cls._fields, value)]
             )
-        if isinstance(value, str) and _is_sum(cls):
-            # as pandoc's Lua: a string is a Str where one inline goes, and
-            # Plain text where one block goes
-            if issubclass(_CLASSES["Str"], cls):
-                return _new("Str", value)
-            if issubclass(_CLASSES["Plain"], cls):
-                return _new("Plain", *text_inlines(value))
+        if _is_sum(cls):
+            # as pandoc's Lua: a string is a Str where one inline goes; where
+            # one block goes, a string is Plain text, and an inline or a
+            # list of inlines (or strings: a Str each) a Plain of them
+            if isinstance(value, str):
+                if issubclass(_CLASSES["Str"], cls):
+                    return _new("Str", value)
+                if issubclass(_CLASSES["Plain"], cls):
+                    return _new("Plain", *text_inlines(value))
+            elif issubclass(_CLASSES["Plain"], cls):
+                inline = _inline()
+                if isinstance(value, inline):
+                    return _plain([value])
+                if isinstance(value, (list, tuple)) and all(
+                    isinstance(v, (inline, str)) for v in value
+                ):
+                    return _plain(value)
         hint = ""
         if isinstance(value, (list, tuple)) and value and all(isinstance(v, cls) for v in value):
             hint = " (a list; this takes one)"
@@ -951,6 +1097,18 @@ def finalize(namespace: dict[str, Any], api_version: tuple[int, ...]) -> None:
 
 
 # -- constructors ---------------------------------------------------------------
+
+
+def _inline() -> type:
+    """The class of inlines (the type of Str)."""
+    return _CLASSES["Str"].__mro__[1]
+
+
+def _plain(content: Iterable) -> Node:
+    """A Plain of these inlines (strings: a Str each, not split)."""
+    node = _new("Plain")
+    node.content = list(content)  # type: ignore[attr-defined]
+    return node
 
 
 def _new(name: str, *args: Any) -> Node:

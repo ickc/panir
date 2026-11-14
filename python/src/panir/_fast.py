@@ -131,12 +131,13 @@ def _reader(spec: _Spec) -> Reader:
     if isinstance(spec, _ListSpec):
         item = spec.item
         whole = _made(item) or (_STR if isinstance(item, _PrimSpec) and item.ty is str else None)
+        cls = spec.cls
         if whole is not None:
             ok = whole.issuperset
 
             def read_whole(j: Any) -> Any:
                 if type(j) is list and ok(map(type, j)):
-                    lst = _new_list(NodeList)
+                    lst = _new_list(cls)
                     lst._spec = spec
                     _init_list(lst, j)
                     return lst
@@ -148,7 +149,7 @@ def _reader(spec: _Spec) -> Reader:
         def read_list(j: Any) -> Any:
             if type(j) is not list:
                 raise _Slow
-            lst = _new_list(NodeList)
+            lst = _new_list(cls)
             lst._spec = spec
             _init_list(lst, map(read_item, j))
             return lst
@@ -572,7 +573,7 @@ def _cloner(spec: _Spec) -> Cloner | None:
 
 
 def _as_list(spec: _ListSpec, items: Any) -> NodeList:
-    lst = _new_list(NodeList)
+    lst = _new_list(spec.cls)
     lst._spec = spec
     _init_list(lst, items)
     return lst

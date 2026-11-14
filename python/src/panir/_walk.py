@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, TypeVar, overload
 
 from ._core import (
     ASTTypeError,
@@ -20,6 +20,7 @@ from ._core import (
     _MapSpec,
     _MaybeSpec,
     _Spec,
+    _sum_of,
     _TupleSpec,
     add_note,
     format_path,
@@ -52,6 +53,7 @@ class Context:
         "_frames",
         "_keys",
         "_parent",
+        "_root",
         "_skip",
         "_top_down",
         "_walker",
@@ -68,9 +70,10 @@ class Context:
         conversion: Conversion,
         top_down: bool = False,
         walker: _Walker | None = None,
+        root: str = "",
     ) -> None:
         self._frames, self._top_down, self._skip = frames, top_down, False
-        self._walker = walker
+        self._walker, self._root = walker, root
         # each frame's key now: the walker changes them as it goes on
         self._keys = tuple([f[3] for f in frames])
         self._doc, self.conversion, self.format = doc, conversion, conversion.format
@@ -116,7 +119,14 @@ class Context:
 
     @property
     def where(self) -> str:
-        return format_path(self.path) or "the document"
+        """``path`` as text, from the document, or from the fragment being
+        walked: ``Para.content[1]``, ``inlines[0]``."""
+        path = format_path(self.path)
+        if not self._root:
+            return path or "the document"
+        if not path or path.startswith("["):
+            return self._root + path
+        return f"{self._root}.{path}"
 
     @property
     def ancestors(self) -> list[Node]:
@@ -124,7 +134,7 @@ class Context:
         self._mend()
         seen: list[Node] = []
         for parent, *_ in self._frames:
-            if not seen or seen[-1] is not parent:
+            if parent is not None and (not seen or seen[-1] is not parent):
                 seen.append(parent)
         return seen
 
@@ -316,8 +326,9 @@ class _Walker:
         conversion: Conversion,
         lists: dict[type, Handler] | None = None,
         splicing: list[_Splice] | None = None,
+        root: str = "",
     ) -> None:
-        self.find, self.top_down = find, top_down
+        self.find, self.top_down, self.root = find, top_down, root
         self.doc, self.conversion = doc, conversion
         self.lists = lists or {}
         self.frames: list = []
@@ -345,7 +356,16 @@ class _Walker:
         return plan
 
     def context(self) -> Context:
-        return Context(tuple(self.frames), self.doc, self.conversion, self.top_down, self)
+        return Context(
+            tuple(self.frames), self.doc, self.conversion, self.top_down, self, self.root
+        )
+
+    def returned(self, e: BaseException, fn: Callable[..., Any], what: str) -> None:
+        """Note on an error in what ``fn`` returned which function, and where."""
+        if not getattr(e, "_panir_noted", False):
+            where = self.context().where
+            add_note(e, f"returned by filter function {fn.__qualname__}, for the {what} at {where}")
+            e._panir_noted = True  # type: ignore[attr-defined]
 
     def call(self, fn: Callable[..., Any], wants_ctx: bool, x: Any, what: str) -> tuple[Any, bool]:
         """``fn`` on ``x``: its result, and whether to skip what is in ``x``.
@@ -371,7 +391,7 @@ class _Walker:
             if fn is not None:
                 result, skip = self.call(fn, wants_ctx, node, type(node).__name__)
                 if result is not None and result is not node:
-                    node = self.single(result, where)
+                    node = self.single(result, where, fn, type(node).__name__)
                     kids = (self.plans.get(type(node)) or self.plan(type(node)))[0]
             if kids and not skip:
                 self.children(node, kids)
@@ -381,14 +401,17 @@ class _Walker:
         if fn is not None:
             result = self.call(fn, wants_ctx, node, type(node).__name__)[0]
             if result is not None:
-                node = self.single(result, where)
+                node = self.single(result, where, fn, type(node).__name__)
         return node
 
-    @staticmethod
-    def single(result: Any, where: str) -> Node:
+    def single(self, result: Any, where: str, fn: Callable[..., Any], what: str) -> Node:
+        """What a function returned for a node in a position that holds one
+        (pandoc's Lua has no functions for these: no conversions)."""
         if isinstance(result, Node):
             return result
-        raise ASTTypeError(where, "one node (this position holds one)", _describe(result))
+        e = ASTTypeError(where, "one node (this position holds one)", _describe(result))
+        self.returned(e, fn, what)
+        raise e
 
     def whole(
         self, lst: list, spec: _ListSpec, parent: Node, field: str | None, key: tuple
@@ -400,12 +423,23 @@ class _Walker:
         if handler is None:
             return lst, False
         self.frames.append([parent, field, None, key or None])
+        what = f"list of {cls.__name__}s"
         try:
-            result, skip = self.call(*handler, lst, f"list of {cls.__name__}s")
+            result, skip = self.call(*handler, lst, what)
             if result is not None and result is not lst:
-                if isinstance(result, (Node, str)) or not isinstance(result, (list, tuple)):
-                    raise ASTTypeError(spec.label, f"a list of {cls.__name__}s", _describe(result))
-                lst = NodeList(spec, _distinct(result))  # checked
+                try:
+                    # as pandoc's Lua: a string is its words (Plain text,
+                    # where blocks go), one node a list of it
+                    if isinstance(result, (Node, str)):
+                        result = spec.coerce(result)
+                    elif not isinstance(result, (list, tuple)):
+                        raise ASTTypeError(
+                            spec.label, f"a list of {cls.__name__}s", _describe(result)
+                        )
+                    lst = spec.cls(spec, _distinct(result))  # checked
+                except ASTTypeError as e:
+                    self.returned(e, handler[0], what)
+                    raise
             return lst, skip
         finally:
             self.frames.pop()
@@ -450,7 +484,7 @@ class _Walker:
                     i += 1
                     continue
                 if not isinstance(result, item):
-                    new = self.several(result, lst, spec, i)
+                    new = self.several(result, lst, spec, i, fn, type(node).__name__)
                     if len(new) != 1:
                         # none or several: the rest of the walk makes the list aside
                         self.aside(lst, spec, frame, outer, i, new, skip)
@@ -468,19 +502,29 @@ class _Walker:
             return self.whole(lst, spec, parent, field, outer)[0]
         return lst
 
-    @staticmethod
-    def several(result: Any, lst: list, spec: _ListSpec, i: int) -> list:
-        """What a function returned for ``lst[i]``, not one node of its list's class."""
-        if isinstance(result, Node):
-            result = [result]  # of another type: NodeList says so
-        elif isinstance(result, tuple):
-            result = list(result)
-        elif not isinstance(result, list):
-            raise ASTTypeError(
-                spec.label + f"[{i}]", "a node, a list of nodes or None", _describe(result)
-            )
-        check = lst._check  # type: ignore[attr-defined]
-        return [check(x, i + k) for k, x in enumerate(_distinct(result))]
+    def several(
+        self, result: Any, lst: list, spec: _ListSpec, i: int, fn: Callable[..., Any], what: str
+    ) -> list:
+        """What a function returned for ``lst[i]``, not one node of its
+        list's class: none, one or several to put there, converted as
+        pandoc's Lua converts them (a string where inlines go is its words,
+        where blocks go Plain text; an inline where blocks go, Plain)."""
+        try:
+            if isinstance(result, Node):
+                result = [result]  # (one of another class: converted, or an error)
+            elif isinstance(result, str):
+                result = spec.coerce(result)
+            elif isinstance(result, tuple):
+                result = list(result)
+            elif not isinstance(result, list):
+                raise ASTTypeError(
+                    spec.label + f"[{i}]", "a node, a list of nodes or None", _describe(result)
+                )
+            check = lst._check  # type: ignore[attr-defined]
+            return [check(x, i + k) for k, x in enumerate(_distinct(result))]
+        except ASTTypeError as e:
+            self.returned(e, fn, what)
+            raise
 
     def aside(
         self, lst: list, spec: _ListSpec, frame: list, outer: tuple, i: int, new: list, skip: bool
@@ -562,7 +606,7 @@ class _Walker:
                         sp.at += 1
                     continue
                 if not isinstance(result, item):
-                    new = self.several(result, lst, spec, i)
+                    new = self.several(result, lst, spec, i, fn, type(node).__name__)
                     n = len(new)
                     if n == 1:
                         result = new[0]
@@ -625,7 +669,7 @@ class _Walker:
                             del value[k]
                             continue
                         if result is not None and result is not x:
-                            x = self.single(result, f"{spec.label}[{k!r}]")
+                            x = self.single(result, f"{spec.label}[{k!r}]", fn, type(x).__name__)  # type: ignore[arg-type]
                             value[k] = x
                             kids = (self.plans.get(type(x)) or self.plan(type(x)))[0]
                         if self.top_down and kids and not skip:
@@ -663,8 +707,34 @@ class _Walker:
                 setattr(node, f, new)
 
 
+_N = TypeVar("_N", bound=Node)
+_L = TypeVar("_L", bound=list)
+
+
+@overload
+def walk(
+    node: _L,
+    action: Action,
+    *,
+    top_down: bool = False,
+    format: str | None = None,
+    conversion: Conversion | None = None,
+    doc: Any = None,
+    wants: Callable[[type], bool] | None = None,
+) -> _L: ...
+@overload
 def walk(
     node: Node,
+    action: Action,
+    *,
+    top_down: bool = False,
+    format: str | None = None,
+    conversion: Conversion | None = None,
+    doc: Any = None,
+    wants: Callable[[type], bool] | None = None,
+) -> Node: ...
+def walk(
+    node: Any,
     action: Action,
     *,
     top_down: bool = False,
@@ -683,10 +753,44 @@ def walk(
     ``conversion`` (or just its output ``format``) is what ``ctx.conversion``
     tells the action.
 
-    Returns ``node``, or what replaced it.
+    Returns ``node``, or what replaced it. ``node`` may also be a list of
+    nodes (``para.content``): each is walked, and the list changed in place
+    and returned.
     """
     conv = conversion if conversion is not None else Conversion(format)
     handler = (action, True)
     find = (lambda cls: handler) if wants is None else (lambda cls: handler if wants(cls) else None)
-    w = _Walker(find, top_down, node if doc is None else doc, conv)
-    return w.one(node, type(node).__name__)
+    if isinstance(node, Node):
+        w = _Walker(find, top_down, node if doc is None else doc, conv)
+        return w.one(node, type(node).__name__)
+    if isinstance(node, NodeList) and isinstance(node._spec.item, _ClassSpec):
+        lst, spec = node, node._spec
+    elif isinstance(node, list):
+        if not node:
+            return node
+        spec = _nodes_spec(node)
+        lst = spec.cls(spec, node)
+    else:
+        raise TypeError(f"walk() takes a node or a list of nodes, got {_describe(node)}")
+    w = _Walker(find, top_down, doc, conv, root=spec.label)
+    w.many(lst, spec, None, None, ())  # type: ignore[arg-type]
+    if lst is not node:
+        node[:] = lst
+    return node
+
+
+_NODES_SPECS: dict[type, _ListSpec] = {}
+
+
+def _nodes_spec(items: list) -> _ListSpec:
+    """How to check a list of nodes not in the AST: by its elements' type
+    (the sum type all are of, or their class)."""
+    kinds = {_sum_of(type(x)) or type(x) for x in items}
+    if len(kinds) != 1 or not issubclass(next(iter(kinds)), Node):
+        raise TypeError(f"expected a list of nodes of one type, got {_describe(items)}")
+    cls = next(iter(kinds))
+    spec = _NODES_SPECS.get(cls)
+    if spec is None:
+        name = cls.__name__.removesuffix("Base").lower() + "s"
+        spec = _NODES_SPECS[cls] = _ListSpec(_ClassSpec(cls, name + "[*]"), name)
+    return spec

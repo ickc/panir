@@ -21,18 +21,27 @@ from __future__ import annotations
 
 import inspect
 import sys
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, overload
 
 from . import _fast
-from ._core import Node, add_note
-from ._types import Block, Inline, Meta, Pandoc
-from ._walk import Context, _walk_fields, _Walker
+from ._core import (
+    ASTTypeError,
+    Node,
+    NodeDict,
+    NodeList,
+    _ClassSpec,
+    _describe,
+    _ListSpec,
+    add_note,
+)
+from ._types import Block, Inline, MetaValue, Pandoc
+from ._walk import Context, _nodes_spec, _walk_fields, _Walker
 from .conversion import Conversion
 
 if TYPE_CHECKING:
-    from ._types import _typed_on
+    from ._types import _MetaValueIn, _typed_on
 
 __all__ = ["Filter", "run"]
 
@@ -50,11 +59,31 @@ F = TypeVar("F", bound=Callable[..., Any])
 Traverse = Literal["typewise", "topdown", "bottomup"]
 _TRAVERSES = ("typewise", "topdown", "bottomup")
 
-_L = TypeVar("_L", Inline, Block)
-_ListFn = (
-    Callable[[list[_L]], Sequence[_L] | None] | Callable[[list[_L], Context], Sequence[_L] | None]
+# What a function for every list of inlines, of blocks, or for the metadata,
+# takes and returns: as pandoc's Lua converts them, a string is the list of
+# its words (Plain text, for blocks), one node a list of it.
+_Inlines: TypeAlias = "NodeList[Inline, Inline | str]"
+_Blocks: TypeAlias = "NodeList[Block, Block | Inline | str | Sequence[Inline | str]]"
+_InlinesResult: TypeAlias = "Sequence[Inline | str] | Inline | str | None"
+_BlocksResult: TypeAlias = (
+    "Sequence[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str | None"
 )
-_MetaFn = Callable[[Meta], Meta | None] | Callable[[Meta, Context], Meta | None]
+_Meta: TypeAlias = "NodeDict[MetaValue, _MetaValueIn]"
+_MetaResult: TypeAlias = "Mapping[str, _MetaValueIn] | None"
+_InlinesFn = TypeVar(
+    "_InlinesFn",
+    bound="Callable[[_Inlines], _InlinesResult] | Callable[[_Inlines, Context], _InlinesResult]",
+)
+_BlocksFn = TypeVar(
+    "_BlocksFn",
+    bound="Callable[[_Blocks], _BlocksResult] | Callable[[_Blocks, Context], _BlocksResult]",
+)
+_MetaFn = TypeVar(
+    "_MetaFn", bound="Callable[[_Meta], _MetaResult] | Callable[[_Meta, Context], _MetaResult]"
+)
+# what a filter applies to, other than a document: a node, or a list of
+# nodes, as of inlines (and returns, changed in place)
+_Fragment = TypeVar("_Fragment", bound="Node | list[Any]")
 
 
 class Filter:
@@ -138,11 +167,11 @@ class Filter:
         self._lists[cls] = (fn, _takes_context(fn))
         return fn
 
-    def on_inlines(self, fn: _ListFn[Inline]) -> _ListFn[Inline]:
+    def on_inlines(self, fn: _InlinesFn) -> _InlinesFn:
         """Register the decorated function for every list of inlines."""
         return self._on_list(Inline, fn)
 
-    def on_blocks(self, fn: _ListFn[Block]) -> _ListFn[Block]:
+    def on_blocks(self, fn: _BlocksFn) -> _BlocksFn:
         """Register the decorated function for every list of blocks."""
         return self._on_list(Block, fn)
 
@@ -163,10 +192,24 @@ class Filter:
             self._lookup[ty] = found
             return found
 
+    @overload
     def __call__(
         self, doc: Pandoc, format: str | None = None, *, conversion: Conversion | None = None
-    ) -> Pandoc:
+    ) -> Pandoc: ...
+    @overload
+    def __call__(
+        self, doc: _Fragment, format: str | None = None, *, conversion: Conversion | None = None
+    ) -> _Fragment: ...
+    def __call__(
+        self, doc: Any, format: str | None = None, *, conversion: Conversion | None = None
+    ) -> Any:
         """Apply the filter to a document (in place), and return it.
+
+        Or to a fragment: any node, or a list of inlines or of blocks; as
+        pandoc's Lua ``el:walk{...}``, the functions apply to what is in a
+        node, not to the node itself (a list's function to the list itself
+        too), and the metadata and ``Pandoc`` functions only to a document.
+        Unlike Lua, in place: returns the fragment.
 
         ``conversion`` describes the pandoc run (``ctx.conversion``); given
         only ``format``, that is all it knows.
@@ -175,8 +218,18 @@ class Filter:
             raise ValueError(f"traverse: expected one of {_TRAVERSES}, got {self.traverse!r}")
         conv = conversion if conversion is not None else Conversion(format)
         top_down = self.traverse == "topdown"
-        fields = _walk_fields(Pandoc)
         splicing: list = []  # (every pass's: see _Walker.splicing)
+        whole = isinstance(doc, Pandoc)
+        if whole:
+            label = ""
+        elif isinstance(doc, Node):
+            label = type(doc).__name__
+        else:
+            fragment = _fragment(doc)
+            if fragment is None:
+                return doc  # nothing in it
+            lst, spec = fragment
+            label = spec.label
 
         def walker(only: Callable[[type], bool], lists: Callable[[type], bool] | None) -> _Walker:
             """A walk calling the functions of the nodes ``only`` accepts,
@@ -185,10 +238,11 @@ class Filter:
             return _Walker(
                 lambda cls: handler(cls) if only(cls) else None,
                 top_down,
-                doc,
+                doc if whole else None,
                 conv,
                 {} if lists is None else {c: h for c, h in self._lists.items() if lists(c)},
                 splicing,
+                label,
             )
 
         def root(d: Pandoc) -> tuple[Pandoc, bool]:
@@ -200,9 +254,9 @@ class Filter:
             if result is None:
                 return d, ctx._skip
             if not isinstance(result, Pandoc):
-                raise TypeError(
-                    f"the function for Pandoc returned {type(result).__name__}, not a Pandoc"
-                )
+                e = ASTTypeError("Pandoc", "a Pandoc or None", _describe(result))
+                _returned(e, handler[0], "Pandoc", ctx)
+                raise e
             return result, ctx._skip
 
         def meta(d: Pandoc) -> bool:
@@ -211,32 +265,55 @@ class Filter:
             ctx = Context(((d, "meta", None, None),), d, conv, top_down)
             result = _call(*self._meta, d.meta, ctx, "metadata")
             if result is not None:
-                d.meta = result
+                try:
+                    d.meta = result
+                except ASTTypeError as e:
+                    _returned(e, self._meta[0], "metadata", ctx)
+                    raise
             return ctx._skip
 
-        def walk_fields(
-            w: _Walker, d: Pandoc, skip_meta: bool = False, after_meta: Any = None
-        ) -> None:
-            for f, spec in fields:
+        def walk_all(w: _Walker, skip_meta: bool = False, after_meta: Any = None) -> None:
+            """Walk what is in the document, or the fragment."""
+            nonlocal lst
+            if not whole and not isinstance(doc, Node):
+                new = w.many(lst, spec, None, None, ())  # type: ignore[arg-type]
+                if new is not lst:  # (its list function's)
+                    lst = new
+                return
+            for f, field_spec in _walk_fields(type(doc)):
                 if f == "meta" and skip_meta:
                     continue
-                old = getattr(d, f)
-                new = w.value(old, spec, d, f, ())
+                old = getattr(doc, f)
+                new = w.value(old, field_spec, doc, f, ())
                 if new is not old:
-                    setattr(d, f, new)
+                    setattr(doc, f, new)
                 if f == "meta" and after_meta is not None:
-                    after_meta(d)
+                    after_meta(doc)
+
+        def done() -> Any:
+            if whole or isinstance(doc, Node):
+                return doc
+            if lst is not doc:  # a copy, or its list function's
+                if isinstance(doc, NodeList):
+                    list.__setitem__(doc, slice(None), lst)
+                else:
+                    doc[:] = lst
+            return doc
 
         not_root = lambda ty: ty is not Pandoc  # noqa: E731
         if top_down:
-            doc, skip = root(doc)
-            if not skip:
+            if whole:
+                doc, skip = root(doc)
+                if skip:
+                    return doc
                 skip_meta = meta(doc)
-                walk_fields(walker(not_root, self._lists.__contains__), doc, skip_meta=skip_meta)
-            return doc
+            else:
+                skip_meta = False
+            walk_all(walker(not_root, self._lists.__contains__), skip_meta=skip_meta)
+            return done()
         if self.traverse == "bottomup":
-            walk_fields(walker(not_root, self._lists.__contains__), doc, after_meta=meta)
-            return root(doc)[0]
+            walk_all(walker(not_root, self._lists.__contains__), after_meta=meta)
+            return root(doc)[0] if whole else done()
         passes: list[tuple[Callable[[type], bool], Callable[[type], bool] | None, bool]] = [
             (_is(Inline), None, self._has(Inline)),
             (_none, lambda ty: ty is Inline, Inline in self._lists),
@@ -246,7 +323,9 @@ class Filter:
         ]
         for only, lists, needed in passes:
             if needed:
-                walk_fields(walker(only, lists), doc)
+                walk_all(walker(only, lists))
+        if not whole:
+            return done()
         meta(doc)
         return root(doc)[0]
 
@@ -302,6 +381,28 @@ def run(
     for f in filters:
         doc = f(doc, format, conversion=conversion)
     return doc
+
+
+def _fragment(x: Any) -> tuple[NodeList, _ListSpec] | None:
+    """A list to walk as a fragment, and its spec; None if it is empty (and
+    not a list of the AST, which knows what it holds)."""
+    if isinstance(x, NodeList) and isinstance(x._spec.item, _ClassSpec):
+        return x, x._spec
+    if not isinstance(x, list):
+        raise TypeError(
+            f"a filter applies to a document, a node, or a list of inlines or of blocks; "
+            f"got {_describe(x)}"
+        )
+    if not x:
+        return None
+    spec = _nodes_spec(x)
+    return spec.cls(spec, x), spec
+
+
+def _returned(e: BaseException, fn: Callable[..., Any], what: str, ctx: Context) -> None:
+    if not getattr(e, "_panir_noted", False):
+        add_note(e, f"returned by filter function {fn.__qualname__}, for the {what} at {ctx.where}")
+        e._panir_noted = True  # type: ignore[attr-defined]
 
 
 def _call(fn: Callable[..., Any], wants_ctx: bool, x: Any, ctx: Context, what: str) -> Any:

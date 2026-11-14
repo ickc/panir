@@ -15,7 +15,15 @@ from __future__ import annotations
 from typing import IO, Any
 
 from . import _fast, _types
-from ._core import ASTDecodeError, ASTError, ASTTypeError, Node, NodeDict, NodeList
+from ._core import (
+    ASTDecodeError,
+    ASTError,
+    ASTTypeError,
+    Attributes,
+    Node,
+    NodeDict,
+    NodeList,
+)
 from ._types import *  # noqa: F403  the AST classes
 from ._types import Pandoc
 from ._walk import Context, walk
@@ -52,6 +60,7 @@ __all__ = [
     "ASTDecodeError",
     "ASTError",
     "ASTTypeError",
+    "Attributes",
     "Context",
     "Conversion",
     "Filter",

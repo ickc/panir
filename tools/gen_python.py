@@ -6,6 +6,11 @@ type's class) or product, fields as annotations, the JSON encoding as class
 attributes, and a constructor. What classes do is in ``_core.py``, which
 reads these declarations.
 
+Type checkers see more than the run time reads: each field as a descriptor
+(``_Field``) read as its value's type and set from what converts to it (a
+string where inlines go, an enum's name, ...), and ``Filter.on``'s
+signatures, per class of node.
+
     python3 tools/gen_python.py
 """
 
@@ -37,11 +42,34 @@ class Gen:
             name = t["name"]
             clash = t["kind"] == "sum" and any(c["name"] == name for c in t["constructors"])
             self.cls_name[name] = name + "Base" if clash else name
+        # the pandoc types found as the elements of a list somewhere: a
+        # filter function for them may return a list (to splice)
+        self.listed: set[str] = set()
+        for t in schema["types"]:
+            for c in t.get("constructors", [t] if t["kind"] == "product" else []):
+                for f in c["fields"]:
+                    self.scan_lists(f["type"])
+
+    def scan_lists(self, ty: dict) -> None:
+        r = self.resolve(ty)
+        if "list" in r:
+            inner = self.resolve(r["list"])
+            if "ref" in inner:
+                self.listed.add(inner["ref"])
+            self.scan_lists(r["list"])
+        for k in ("maybe",):
+            if k in r:
+                self.scan_lists(r[k])
+        if "map" in r:
+            self.scan_lists(r["map"][1])
+        if "tuple" in r:
+            for t in r["tuple"]:
+                self.scan_lists(t)
 
     # -- types -------------------------------------------------------------
 
     def field_type(self, ty: dict) -> str:
-        """The type of a field's value."""
+        """The type of a field's value, as the run time reads it (``_core``)."""
         if "prim" in ty:
             return PRIM[ty["prim"]]
         if "ref" in ty:
@@ -61,36 +89,68 @@ class Gen:
             ty = self.types[ty["ref"]]["type"]
         return ty
 
-    def param_type(self, ty: dict) -> str:
-        """What a constructor accepts for a field: lists as any iterable."""
+    @staticmethod
+    def is_pairs(ty: dict) -> bool:
+        """A list of (str, str): attributes."""
+        return (
+            "tuple" in ty
+            and len(ty["tuple"]) == 2
+            and all(t.get("prim") == "string" for t in ty["tuple"])
+        )
+
+    def get_type(self, ty: dict) -> str:
+        """What reading a field gives, for type checkers: its lists and maps
+        are ``NodeList``s and ``NodeDict``s, attributes ``Attributes``."""
         r = self.resolve(ty)
         if "list" in r:
-            inner = r["list"]
-            if (
-                "tuple" in inner
-                and len(inner["tuple"]) == 2
-                and all(t.get("prim") == "string" for t in inner["tuple"])
-            ):
-                return "Iterable[tuple[str, str]] | Mapping[str, str]"
-            listed = f"Iterable[{self.param_type(inner)}]"
-            # a string where a list of inlines or blocks goes: split into
-            # words, as pandoc's Lua does
-            return f"{listed} | str" if self.stringy(inner) else listed
+            if self.is_pairs(self.resolve(r["list"])):
+                return "Attributes"
+            return f"NodeList[{self.get_type(r['list'])}, {self.in_one(r['list'])}]"
         if "map" in r:
-            return f"Mapping[str, {self.param_type(r['map'][1])}]"
+            return f"NodeDict[{self.get_type(r['map'][1])}, {self.in_one(r['map'][1])}]"
         if "maybe" in r:
-            return f"{self.param_type(r['maybe'])} | None"
+            return f"{self.get_type(r['maybe'])} | None"
         if "tuple" in r:
-            return f"tuple[{', '.join(self.param_type(t) for t in r['tuple'])}]"
-        if self.stringy(ty):
-            return f"{self.field_type(ty)} | str"
-        return self.field_type(ty)
+            return f"tuple[{', '.join(self.get_type(t) for t in r['tuple'])}]"
+        return self.field_type(r)
 
-    def stringy(self, ty: dict) -> bool:
-        """Whether a str converts to this type (an Inline or a Block), as in
-        pandoc's Lua."""
+    def in_one(self, ty: dict) -> str:
+        """What converts to one value of a type (a list's element, a field
+        that isn't a list), as ``_core`` converts it."""
         r = self.resolve(ty)
-        return r.get("ref") in ("Inline", "Block")
+        if "list" in r:
+            return self.in_list(r)
+        if "map" in r:
+            return f"Mapping[str, {self.in_one(r['map'][1])}]"
+        if "maybe" in r:
+            return f"{self.in_one(r['maybe'])} | None"
+        if "tuple" in r:
+            return f"tuple[{', '.join(self.in_one(t) for t in r['tuple'])}]"
+        if "ref" in r:
+            t = self.types[r["ref"]]
+            if t["kind"] == "enum":
+                names = ", ".join(json.dumps(v) for v in t["values"])
+                return f"{t['name']} | Literal[{names}]"
+            if t["kind"] == "sum" and t["name"] in CONVERTED:
+                # (metadata by an alias: its type is recursive)
+                return "_MetaValueIn" if t["name"] == "MetaValue" else CONVERTED[t["name"]]
+            if t["kind"] == "product" and t["encoding"] == "array":
+                fields = ", ".join(self.in_one(f["type"]) for f in t["fields"])
+                return f"{t['name']} | tuple[{fields}]"
+        return self.field_type(r)
+
+    def in_list(self, r: dict) -> str:
+        """What converts to a list: any iterable of what converts to its
+        elements; for inlines and blocks also a string or one element, as
+        in pandoc's Lua; for attributes a mapping."""
+        item = self.resolve(r["list"])
+        if self.is_pairs(item):
+            return "Iterable[tuple[str, str]] | Mapping[str, str]"
+        if item.get("ref") == "Inline":
+            return f"Iterable[{CONVERTED['Inline']}] | Inline | str"
+        if item.get("ref") == "Block":
+            return f"Iterable[{CONVERTED['Block']}] | Block | Inline | str"
+        return f"Iterable[{self.in_one(item)}]"
 
     def default_literal(self, ty: dict, value) -> str:
         r = self.resolve(ty)
@@ -106,6 +166,14 @@ class Gen:
                 return f"{t['name']}.{value['t']}"
             return "None"  # a product: its own default
         return repr(value)
+
+    @staticmethod
+    def in_aliases() -> str:
+        return (
+            "\n# What converts to metadata (a MetaValue, or a plain Python value: see\n"
+            "# from_python), for constructors' parameters and fields' setters.\n"
+            f"_MetaValueIn: TypeAlias = {CONVERTED['MetaValue']!r}\n"
+        )
 
     # -- declarations --------------------------------------------------------
 
@@ -140,6 +208,7 @@ class Gen:
             if t["kind"] == "alias":
                 out.append(f"{t['name']}: TypeAlias = {self.field_type(t['type'])}\n")
                 names.append(t["name"])
+        out.append(self.in_aliases())
         out.append(self.typed_on())
         out.append("\n__all__ = [\n")
         out.extend(f"    {n!r},\n" for n in ["PANDOC_API_VERSION", *names])
@@ -147,36 +216,66 @@ class Gen:
         out.append("finalize(globals(), PANDOC_API_VERSION)\n")
         return "".join(out)
 
+    def result(self, name: str) -> str:
+        """What a filter function for a node of pandoc type ``name`` may
+        return: None, a node of the type (or what converts to one, for
+        inlines and blocks, as in pandoc's Lua), or, where the type is in a
+        list, a list of them."""
+        if name in RESULTS:
+            return RESULTS[name]
+        cls = self.cls_name[name]
+        return f"{cls} | Sequence[{cls}] | None" if name in self.listed else f"{cls} | None"
+
     def typed_on(self) -> str:
-        """``Filter.on``'s signatures for type checkers: per family of nodes
-        (Block, Inline, ...), what a function for it takes and returns."""
-        sums = [self.cls_name[t["name"]] for t in self.schema["types"] if t["kind"] == "sum"]
+        """``Filter.on``'s signatures for type checkers: per class, what a
+        function for it takes and returns; the function keeps its type."""
         o = [
             "\n# How Filter.on types a filter's functions, for type checkers only: a\n"
-            "# function for a kind of node takes it (and optionally a Context) and\n"
-            "# returns None, a node of the same family, or a list of them.\n"
+            "# function for a class of node takes it (and optionally a Context) and\n"
+            "# returns None, a node of its type (or what converts to one), or, where\n"
+            "# the type is in a list, a list of them. It keeps its own type.\n"
             "if TYPE_CHECKING:\n"
-            "    from collections.abc import Callable, Sequence\n"
-            "    from typing import Any, TypeVar, overload\n\n"
+            "    from collections.abc import Callable\n"
+            "    from typing import Any, Concatenate, ParamSpec, TypeVar, overload\n\n"
             "    from ._walk import Context\n\n"
             '    _F = TypeVar("_F", bound=Callable[..., Any])\n'
-            '    _Node = TypeVar("_Node", bound=Node)\n'
+            '    _P = ParamSpec("_P")\n'
         ]
-        o += [f'    _{b} = TypeVar("_{b}", bound={b})\n' for b in sums]
+        leaves: list[tuple[str, str]] = []  # (class, pandoc type)
+        bases: list[tuple[str, str]] = []
+        for t in self.schema["types"]:
+            if t["kind"] == "sum":
+                leaves += [(c["name"], t["name"]) for c in t["constructors"]]
+                bases.append((self.cls_name[t["name"]], t["name"]))
+            elif t["kind"] == "product":
+                leaves.append((t["name"], t["name"]))
+        for name in dict.fromkeys(ty for _, ty in leaves):
+            o.append(f"    _{name}Result: TypeAlias = {self.result(name)!r}\n")
+        for cls, ty in leaves + bases:
+            r = f"_{ty}Result"
+            o.append(
+                f'    _F{cls} = TypeVar("_F{cls}", '
+                f'bound="Callable[[{cls}], {r}] | Callable[[{cls}, Context], {r}]")\n'
+            )
+        for cls, ty in bases:
+            o.append(f'    _N{cls} = TypeVar("_N{cls}", bound={cls})\n')
+            o.append(f'    _R{cls} = TypeVar("_R{cls}", bound="_{ty}Result")\n')
         o.append("\n")
-
-        def overload(var: str, result: str) -> str:
-            fn = f"Callable[[{var}], {result}] | Callable[[{var}, Context], {result}]"
-            return (
+        for cls, _ in leaves + bases:
+            o.append(
+                "    @overload\n"
+                f"    def _typed_on(self: Any, type: type[{cls}], /) -> "
+                f"Callable[[_F{cls}], _F{cls}]: ...\n\n"
+            )
+        for cls, _ in bases:
+            n, r = f"_N{cls}", f"_R{cls}"
+            fn = f"Callable[Concatenate[{n}, _P], {r}]"
+            o.append(
                 "    @overload\n"
                 f"    def _typed_on(\n"
-                f"        self: Any, type: type[{var}], /, *types: type[{var}]\n"
-                f"    ) -> Callable[[{fn}], Callable[..., Any]]: ...\n\n"
+                f"        self: Any, type: type[{n}], /, *types: type[{n}]\n"
+                f"    ) -> Callable[[{fn}], {fn}]: ...\n\n"
             )
-
-        for b in sums:
-            o.append(overload(f"_{b}", f"{b} | Sequence[{b}] | None"))
-        o.append(overload("_Node", "_Node | Sequence[_Node] | None"))
         o.append(
             "    @overload\n"
             "    def _typed_on(self: Any, *types: type[Node]) -> Callable[[_F], _F]: ...\n\n"
@@ -201,8 +300,19 @@ class Gen:
         doc = f"pandoc's ``{name}``, a {sum_name}." if sum_name else f"pandoc's ``{name}``."
         lines = [f"class {name}({base}):", f'    """{doc}"""', ""]
         slots = "(" + "".join(f"{n!r}, " for n in fnames).rstrip(" ") + ")"
-        lines.append(f"    __slots__ = {slots}")
-        lines.append("    __match_args__ = __slots__")
+        # (type checkers see the fields as descriptors, below, which slots
+        # would conflict with)
+        lines.append("    if not TYPE_CHECKING:")
+        lines.append(f"        __slots__ = {slots}")
+        init = self.init(c, fnames) if fields else []
+        positional = self.positional if fields else []
+        # in the constructor's order: its positional parameters, the
+        # variadic one, then the others in field order
+        match_args = [*positional]
+        if c.get("variadic"):
+            match_args.append(self.pyname(c["variadic"]))
+        match_args += [n for n in fnames if n not in match_args]
+        lines.append(f"    __match_args__ = {tuple(match_args)!r}")
         if product_encoding:
             lines.append('    _kind = "product"')
             lines.append(f"    _encoding = {product_encoding!r}")
@@ -216,19 +326,41 @@ class Gen:
         flatten = tuple(self.pyname(f["name"]) for f in fields if f.get("flatten"))
         if flatten:
             lines.append(f"    _flatten = {flatten!r}")
+            # a flattened product's fields, read and set through the node
+            # (``el.identifier``, ``el.attributes``), as in pandoc's Lua
+            parts = {}
+            for f in fields:
+                if f.get("flatten"):
+                    for g in self.types[f["type"]["ref"]]["fields"]:
+                        parts[self.pyname(g["name"])] = self.pyname(f["name"])
+            lines.append(f"    _parts = {parts!r}")
         defaults = {self.pyname(f["name"]): f["default"] for f in fields if "default" in f}
         if defaults:
             lines.append(f"    _defaults = {py_literal(defaults)}")
-        init = self.init(c, fnames) if fields else []
-        if self.positional and fields:
-            lines.append(f"    _positional = {tuple(self.positional)!r}")
-        lines.append("")
-        for n, f in zip(fnames, fields):
-            lines.append(f"    {n}: {self.field_type(f['type'])}")
+        if positional:
+            lines.append(f"    _positional = {tuple(positional)!r}")
         if fields:
+            lines.append("")
+            lines.append("    if TYPE_CHECKING:")
+            for n, f in zip(fnames, fields):
+                field = f"_Field[{self.get_type(f['type'])}, {self.set_type(f['type'])}]"
+                lines.append(f"        {n}: {field} = _Field()")
+            for f in fields:
+                if f.get("flatten"):
+                    for g in self.types[f["type"]["ref"]]["fields"]:
+                        field = f"_Field[{self.get_type(g['type'])}, {self.set_type(g['type'])}]"
+                        lines.append(f"        {self.pyname(g['name'])}: {field} = _Field()")
+            lines.append("    else:")
+            for n, f in zip(fnames, fields):
+                lines.append(f"        {n}: {self.field_type(f['type'])}")
             lines.append("")
             lines += init
         return "\n".join(lines) + "\n\n\n"
+
+    def set_type(self, ty: dict) -> str:
+        """What a field may be set to."""
+        r = self.resolve(ty)
+        return self.in_list(r) if "list" in r else self.in_one(r)
 
     def init(self, c: dict, fnames: list[str]) -> list[str]:
         """``__init__`` and ``_positional``, in pandoc-types' field order.
@@ -250,10 +382,10 @@ class Gen:
         positional = True
         after_default = False
         for n, f in zip(fnames, fields):
-            ptype = self.param_type(f["type"])
+            ptype = self.set_type(f["type"])
             values.append(f"{n!r}: {n}")
             if f["name"] == variadic:
-                star = f"*{n}: {self.param_type(self.resolve(f['type'])['list'])}"
+                star = f"*{n}: {self.in_one(self.resolve(f['type'])['list'])}"
                 positional = False
                 continue
             if f.get("flatten"):
@@ -262,7 +394,7 @@ class Gen:
                 kwonly.append(f"{n}: {ptype} | None = None")
                 for g in prod["fields"]:
                     gn = self.pyname(g["name"])
-                    gtype = self.param_type(g["type"])
+                    gtype = self.set_type(g["type"])
                     if "default" in g:
                         kwonly.append(
                             f"{gn}: {gtype} = {self.default_literal(g['type'], g['default'])}"
@@ -318,6 +450,24 @@ class Gen:
         return out
 
 
+# The sum types whose values convert from others, as in pandoc's Lua: a
+# string is a Str where one inline goes; where one block goes, a string is
+# Plain text, an inline or a list of inlines a Plain of them; metadata
+# converts from plain Python values (``from_python``).
+CONVERTED = {
+    "Inline": "Inline | str",
+    "Block": "Block | Inline | str | Sequence[Inline | str]",
+    "MetaValue": "MetaValue | str | bool | int | float"
+    " | Mapping[str, _MetaValueIn] | Sequence[_MetaValueIn]",
+}
+
+# What filter functions for inlines and blocks may return (pandoc's Lua
+# converts these): one, or a list to splice; strings convert.
+RESULTS = {
+    "Inline": "Inline | str | Sequence[Inline | str] | None",
+    "Block": f"Block | Inline | str | Sequence[{CONVERTED['Block']}] | None",
+}
+
 HEADER = '''\
 # GENERATED by tools/gen_python.py from schema/pandoc-ast.json
 # (pandoc-api-version {api}). Do not edit; regenerate instead.
@@ -330,10 +480,11 @@ in pandoc-types' order. How the classes behave is in ``_core``.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, TypeAlias
+from collections.abc import Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from ._core import Enum, Node, finalize
+from ._core import Attributes, Enum, Node, NodeDict, NodeList, finalize
+from ._core import Field as _Field
 from ._core import flat as _flat
 from ._core import init as _init
 
