@@ -127,30 +127,12 @@ def fn_name(fn: Any) -> str:
     return getattr(fn, "__qualname__", None) or repr(fn)
 
 
-def _filters_own(e: BaseException) -> bool:
-    """Whether a ``RecursionError`` is a filter function's own, not the
-    document's depth: it came out of a filter function (the walk noted
-    which), and most of the calls it unwound are that function's and what
-    it called, not panir's above it. Counted on the way out only."""
-    if not getattr(e, "_panir_noted", False):
-        return False
-    above = below = 0
-    tb = e.__traceback__
-    while tb is not None:
-        if below or tb.tb_frame.f_globals.get("__name__", "").partition(".")[0] != "panir":
-            below += 1
-        else:
-            above += 1
-        tb = tb.tb_next
-    return below > above
-
-
 def too_deep(what: str) -> Callable[[Callable[_P, _T]], Callable[_P, _T]]:
-    """For panir's entry points: a ``RecursionError`` in what it does (a
-    document nested too deep) is ``ASTDecodeError`` when it reads (``what``
-    is "read"), ``ASTDepthError`` otherwise; its notes (a walk's: which
-    filter function, where) are kept. A filter function's own (one that
-    calls itself without end) is left as it is (``_filters_own``)."""
+    """For panir's entry points: a ``RecursionError`` in what it does is
+    ``ASTDecodeError`` when it reads (``what`` is "read"), ``ASTDepthError``
+    otherwise; its notes (a walk's: which filter function, where) are kept.
+    When a filter function was running, the message names the other cause
+    too: a function that calls itself without end."""
 
     def wrap(fn: Callable[_P, _T]) -> Callable[_P, _T]:
         @functools.wraps(fn)
@@ -158,13 +140,15 @@ def too_deep(what: str) -> Callable[[Callable[_P, _T]], Callable[_P, _T]]:
             try:
                 return fn(*args, **kwargs)
             except RecursionError as e:
-                # (an inner entry point's; or a filter function's own)
-                if isinstance(e, ASTError) or _filters_own(e):
+                if isinstance(e, ASTError):  # (an inner entry point's)
                     raise
+                wanted = "a document nested less deeply"
+                if getattr(e, "_panir_noted", False):
+                    wanted += ", or a filter function that doesn't call itself without end"
                 error: ASTError = (
                     ASTDecodeError((), "JSON nested less deeply", _limit())
                     if what == "read"
-                    else ASTDepthError(what, "a document nested less deeply", _limit())
+                    else ASTDepthError(what, wanted, _limit())
                 )
                 for note in getattr(e, "__notes__", ()):
                     error.add_note(note)

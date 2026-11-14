@@ -259,11 +259,9 @@ through `pandoc -f html`) and 121 (a manual page whose list pandoc's man
 reader nests item in item); both work. Deeper, reading raises `ASTDecodeError` and
 anything else `ASTDepthError` (an `ASTError` and a `RecursionError`);
 `sys.setrecursionlimit` goes deeper. panir never changes the limit.
-Comparing doesn't recurse. A filter function's own runaway recursion (most
-of the stack its own calls, below panir's) stays the `RecursionError` it
-is, with a note of which function; one that goes through panir (a function
-that walks a node with itself, without end) is told from a deep document
-only by its note.
+Comparing doesn't recurse. A filter function that calls itself without
+end gets the same error: its message names that cause too, and its note
+which function.
 
 ## Also
 
