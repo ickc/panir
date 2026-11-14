@@ -99,14 +99,16 @@ impl Conversion {
 /// [`VisitMut`] keeping its own.)
 pub struct Ctx<'a> {
     conversion: &'a Conversion,
+    meta: Option<&'a Meta>,
     skip: bool,
     error: Option<Box<dyn Error + Send + Sync>>,
 }
 
 impl<'a> Ctx<'a> {
-    fn new(conversion: &'a Conversion) -> Self {
+    fn new(conversion: &'a Conversion, meta: Option<&'a Meta>) -> Self {
         Ctx {
             conversion,
+            meta,
             skip: false,
             error: None,
         }
@@ -120,6 +122,15 @@ impl<'a> Ctx<'a> {
     /// The conversion the filter runs in.
     pub fn conversion(&self) -> &'a Conversion {
         self.conversion
+    }
+
+    /// The document's metadata, while its blocks are walked (as Lua filters
+    /// read it from a global their `Meta` function set, and panir's other
+    /// languages from `ctx.doc`). `None` while the metadata itself is walked
+    /// (its own functions change it), for `meta` and `pandoc`, which have
+    /// it, and in a fragment.
+    pub fn meta(&self) -> Option<&'a Meta> {
+        self.meta
     }
 
     /// Don't walk the node's children, or its replacement's (Lua's `return
@@ -313,6 +324,8 @@ struct Driver<'f, 'a, F: Filter + ?Sized> {
     conversion: &'a Conversion,
     pass: Pass,
     topdown: bool,
+    /// The document's metadata, for the blocks' functions.
+    meta: Option<&'a Meta>,
     /// Set when a function failed: nothing more is walked.
     failure: Option<Failure>,
 }
@@ -322,10 +335,17 @@ type ElemFn<F, T> = fn(&mut F, &mut T, &mut Ctx) -> Option<Vec<T>>;
 type ListFn<F, T> = fn(&mut F, &mut Vec<T>, &mut Ctx);
 
 impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
-    fn new(f: &'f mut F, conversion: &'a Conversion, pass: Pass, topdown: bool) -> Self {
+    fn new(
+        f: &'f mut F,
+        conversion: &'a Conversion,
+        meta: Option<&'a Meta>,
+        pass: Pass,
+        topdown: bool,
+    ) -> Self {
         Driver {
             f,
             conversion,
+            meta,
             pass,
             topdown,
             failure: None,
@@ -353,7 +373,7 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
 
     /// The function on a list, its error noted; whether to skip its nodes.
     fn on_list<T: Walked>(&mut self, xs: &mut Vec<T>, list: ListFn<F, T>) -> bool {
-        let mut ctx = Ctx::new(self.conversion);
+        let mut ctx = Ctx::new(self.conversion, self.meta);
         list(self.f, xs, &mut ctx);
         if let Some(e) = ctx.error {
             self.fail(T::LIST_FUNCTION, T::LIST, e, Target::list(xs));
@@ -401,7 +421,7 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
                     break;
                 }
             }
-            let mut ctx = Ctx::new(self.conversion);
+            let mut ctx = Ctx::new(self.conversion, self.meta);
             let result = if on_elem {
                 elem(self.f, &mut xs[i], &mut ctx)
             } else {
@@ -487,7 +507,7 @@ fn walks<F: Filter + ?Sized, T: ?Sized>(
         Order::Topdown | Order::Bottomup => &[Pass::All],
     };
     for &pass in passes {
-        let mut d = Driver::new(&mut *f, conversion, pass, order == Order::Topdown);
+        let mut d = Driver::new(&mut *f, conversion, None, pass, order == Order::Topdown);
         walk(&mut d, x);
         if d.failure.is_some() {
             return d.failure;
@@ -524,7 +544,7 @@ fn whole<T>(
     conversion: &Conversion,
     call: impl FnOnce(&mut T, &mut Ctx),
 ) -> (Option<Failure>, bool) {
-    let mut ctx = Ctx::new(conversion);
+    let mut ctx = Ctx::new(conversion, None);
     call(x, &mut ctx);
     let failure = ctx.error.map(|error| Failure {
         error: FilterError {
@@ -648,70 +668,70 @@ fn walk_document<F: Filter + ?Sized>(
     f: &mut F,
     conversion: &Conversion,
 ) -> Option<Failure> {
-    let driver = |f, pass, topdown| Driver::new(f, conversion, pass, topdown);
-    match f.order() {
-        Order::Topdown => {
-            let (failure, skip) = whole("pandoc", "Pandoc", doc, conversion, |doc, c| {
-                f.pandoc(doc, c)
-            });
-            if failure.is_some() || skip {
-                return failure;
-            }
-            let (failure, skip) = whole("meta", "Meta", &mut doc.meta, conversion, |m, c| {
-                f.meta(m, c)
-            });
-            if failure.is_some() {
-                return failure;
-            }
-            let mut d = driver(f, Pass::All, true);
-            if !skip {
-                for v in doc.meta.values_mut() {
-                    d.visit_meta_value(v);
-                }
-            }
-            d.visit_blocks(&mut doc.blocks);
-            d.failure
+    let order = f.order();
+    let passes: &[Pass] = match order {
+        Order::Typewise => &[Pass::Inline, Pass::Inlines, Pass::Block, Pass::Blocks],
+        Order::Topdown | Order::Bottomup => &[Pass::All],
+    };
+    let topdown = order == Order::Topdown;
+    if topdown {
+        let (failure, skip) = whole("pandoc", "Pandoc", doc, conversion, |doc, c| {
+            f.pandoc(doc, c)
+        });
+        if failure.is_some() || skip {
+            return failure;
         }
-        Order::Bottomup => {
-            let mut d = driver(&mut *f, Pass::All, false);
-            for v in doc.meta.values_mut() {
+    }
+    // the metadata's function: first top-down, else after what is in it
+    let mut skip_meta = false;
+    if topdown {
+        let (failure, skip) = whole("meta", "Meta", &mut doc.meta, conversion, |m, c| {
+            f.meta(m, c)
+        });
+        if failure.is_some() {
+            return failure;
+        }
+        skip_meta = skip;
+    }
+    for &pass in passes {
+        // (the metadata, then the blocks, which are lent the metadata)
+        let Pandoc { meta, blocks, .. } = &mut *doc;
+        if !skip_meta {
+            let mut d = Driver::new(&mut *f, conversion, None, pass, topdown);
+            for v in meta.values_mut() {
                 d.visit_meta_value(v);
             }
             if d.failure.is_some() {
                 return d.failure;
             }
-            let (failure, _) = whole("meta", "Meta", &mut doc.meta, conversion, |m, c| {
-                d.f.meta(m, c)
-            });
-            if failure.is_some() {
-                return failure;
-            }
-            d.visit_blocks(&mut doc.blocks);
-            if d.failure.is_some() {
-                return d.failure;
-            }
-            whole("pandoc", "Pandoc", doc, conversion, |doc, c| {
-                f.pandoc(doc, c)
-            })
-            .0
         }
-        Order::Typewise => {
-            let failure = walks(doc, f, conversion, |d, doc| d.visit_pandoc(doc));
+        if order == Order::Bottomup {
+            let (failure, _) = whole("meta", "Meta", meta, conversion, |m, c| f.meta(m, c));
             if failure.is_some() {
                 return failure;
             }
-            let (failure, _) = whole("meta", "Meta", &mut doc.meta, conversion, |m, c| {
-                f.meta(m, c)
-            });
-            if failure.is_some() {
-                return failure;
-            }
-            whole("pandoc", "Pandoc", doc, conversion, |doc, c| {
-                f.pandoc(doc, c)
-            })
-            .0
+        }
+        let mut d = Driver::new(&mut *f, conversion, Some(&*meta), pass, topdown);
+        d.visit_blocks(blocks);
+        if d.failure.is_some() {
+            return d.failure;
         }
     }
+    if topdown {
+        return None;
+    }
+    if order == Order::Typewise {
+        let (failure, _) = whole("meta", "Meta", &mut doc.meta, conversion, |m, c| {
+            f.meta(m, c)
+        });
+        if failure.is_some() {
+            return failure;
+        }
+    }
+    whole("pandoc", "Pandoc", doc, conversion, |doc, c| {
+        f.pandoc(doc, c)
+    })
+    .0
 }
 
 /// Apply a filter to a document, as pandoc applies a Lua filter, in the

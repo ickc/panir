@@ -55,3 +55,38 @@ fn trailing_characters() {
         .unwrap_err();
     assert!(e.to_string().contains("trailing"), "{e}");
 }
+
+/// Notes, for each Str, whether its context had the metadata (its `title`).
+struct MetaSeen(panir::Order, Vec<String>);
+
+impl Filter for MetaSeen {
+    fn order(&self) -> panir::Order {
+        self.0
+    }
+    fn inline(&mut self, x: &mut panir::Inline, ctx: &mut Ctx) -> Option<Vec<panir::Inline>> {
+        if let panir::Inline::Str(s) = x {
+            let title = ctx.meta().map(|m| panir::stringify(&m["title"]));
+            self.1
+                .push(format!("{s}:{}", title.as_deref().unwrap_or("-")));
+        }
+        None
+    }
+}
+
+#[test]
+fn the_metadata_while_the_blocks_are_walked() {
+    use panir::{MetaValue, Order};
+    for order in [Order::Typewise, Order::Topdown, Order::Bottomup] {
+        let mut d = Pandoc::new(vec![Block::Para(inlines("a b"))]);
+        d.meta
+            .insert("title".into(), MetaValue::MetaInlines(inlines("T")));
+        let mut seen = MetaSeen(order, vec![]);
+        apply(&mut d, &mut seen, None).unwrap();
+        // the metadata's own Strs: none (it is being walked)
+        assert_eq!(seen.1, ["T:-", "a:T", "b:T"], "{order:?}");
+        // a fragment has no document
+        let mut seen = MetaSeen(order, vec![]);
+        apply(&mut d.blocks, &mut seen, None).unwrap();
+        assert_eq!(seen.1, ["a:-", "b:-"]);
+    }
+}

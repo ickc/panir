@@ -101,12 +101,14 @@ assert_eq!(
 );
 ```
 
-The context (`Ctx`) has the conversion, `skip_children` and `fail`, and no more:
-not the node's parent, siblings or path, which panir's Python and
-TypeScript contexts have (pandoc's Lua functions have no context). A
-function has its node as `&mut`, and while it does nothing else may reach
-the node, its parent included. A walk that needs them is a `VisitMut`
-that keeps its own (a stack of what it is in).
+The context (`Ctx`) has the conversion, `skip_children`, `fail` and the
+metadata (`ctx.meta()`, while the blocks are walked: `None` while the
+metadata itself is, and in a fragment), and no more: not the node's
+parent, siblings or path, which panir's Python and TypeScript contexts
+have (pandoc's Lua functions have no context). A function has its node as
+`&mut`, and while it does nothing else may reach the node, its parent
+included. A walk that needs them is a `VisitMut` that keeps its own (a
+stack of what it is in).
 
 They are checked against pandoc's Lua filters, with the scenarios in
 [`corpus/filters/`](https://github.com/ickc/panir/tree/main/corpus/filters). For other nodes (`Cell`, `Attr`,
@@ -136,6 +138,8 @@ What a port of a Lua filter trips over:
 - `error(...)`: `return ctx.fail(...)`.
 - `return el, false` (top-down): `ctx.skip_children()`.
 - Lists count from 0, Lua's from 1 (`el.content[1]`).
+- The metadata a Lua filter keeps from its `Meta` function, for the
+  functions after: `ctx.meta()`.
 
 ## Types and `VisitMut`
 
