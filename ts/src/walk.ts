@@ -10,17 +10,27 @@
  * Generic over the schema, like `core.ts`.
  */
 
-import { ASTTypeError, formatPath, resolve, tables } from "./core.ts";
+import {
+  ASTDepthError, ASTTypeError, deep, describe, formatPath, isNodeOf, isStackOverflow, nameOf, productOf, returnedNodes,
+  resolve, tables, toMeta,
+} from "./core.ts";
 import type { Path, TypeExpr } from "./core.ts";
 import { Conversion } from "./conversion.ts";
-import { SCHEMA } from "./generated.ts";
-import type { Block, Inline, Meta, Nodes, Pandoc, Sums } from "./generated.ts";
+import { copy, sortedKeys } from "./util.ts";
+import { SCHEMA } from "./schema.ts";
+import type {
+  ASTNode, Block, Blocks, FilterTypes, Inline, Inlines, Meta, MetaValueInit, Pandoc,
+} from "./generated.ts";
 
 /** Whether a context's function asked to skip the node's children. */
 let skipped: (ctx: Context) => boolean;
 
-/** Where a node is: its parent, its place in it, the document, the conversion. */
-export class Context {
+/**
+ * Where a node is: its parent, its place in it, the document, the
+ * conversion. `S` is the type of the nodes beside it in a list (`next`,
+ * `prev`, `container`): `Inline` for an inline's function.
+ */
+export class Context<S = unknown> {
   /** That field's name (the field of `parent` that holds this node). */
   field: string | undefined;
   /** This node's index in `container` (or its key in the map). */
@@ -39,12 +49,13 @@ export class Context {
   #container: unknown[] | Record<string, unknown> | undefined;
   #doc: unknown;
   #walker: Walker | undefined;
+  #root: string;
 
   static {
     skipped = (ctx) => ctx.#skip;
   }
 
-  constructor(frames: Frame[], doc: unknown, conversion: Conversion, topDown = false, walker?: Walker) {
+  constructor(frames: Frame[], doc: unknown, conversion: Conversion, topDown = false, walker?: Walker, root = "") {
     const n = frames.length;
     const copy = new Array<Frame>(n);
     const indexes = new Array<number | string | undefined>(n);
@@ -56,6 +67,7 @@ export class Context {
     this.#indexes = indexes;
     this.#topDown = topDown;
     this.#walker = walker;
+    this.#root = root;
     const last = n ? frames[n - 1] : undefined;
     this.#parent = last?.parent;
     this.field = last?.field;
@@ -72,24 +84,25 @@ export class Context {
     if (this.#walker?.splicing.length) this.#walker.mend();
   }
 
-  /** The node whose field holds this one. */
-  get parent(): unknown {
+  /** The node whose field holds this one (undefined for a fragment's list's nodes, and the document). */
+  get parent(): ASTNode | undefined {
     this.#mend();
-    return this.#parent;
+    return this.#parent as ASTNode | undefined;
   }
 
   /** The list holding this node, if in one (or the map). */
-  get container(): unknown[] | Record<string, unknown> | undefined {
+  get container(): S[] | Record<string, S> | undefined {
     this.#mend();
-    return this.#container;
+    return this.#container as S[] | Record<string, S> | undefined;
   }
 
-  get doc(): unknown {
+  /** The document (undefined when the filter applies to a fragment). */
+  get doc(): Pandoc | undefined {
     this.#mend();
-    return this.#doc;
+    return this.#doc as Pandoc | undefined;
   }
 
-  /** From the document, e.g. `["blocks", 3, "content", 1]`. */
+  /** From the document (or the fragment), e.g. `["blocks", 3, "content", 1]`. */
   get path(): Path {
     const out: Path = [];
     this.#frames.forEach((f, i) => {
@@ -101,19 +114,19 @@ export class Context {
     return out;
   }
 
-  /** The path as text, e.g. `blocks[3].content[1]`. */
+  /** The path as text, e.g. `blocks[3].content[1]`; in a fragment, from it: `Para.content[1]`, `inlines[0]`. */
   get where(): string {
-    return formatPath(this.path) || "the document";
+    return whereOf(this.#root, this.path);
   }
 
-  /** The nodes above this one, the document first. */
-  get ancestors(): unknown[] {
+  /** The nodes above this one, the document (or the fragment) first. */
+  get ancestors(): ASTNode[] {
     this.#mend();
     const out: unknown[] = [];
     for (const f of this.#frames) {
-      if (out[out.length - 1] !== f.parent) out.push(f.parent);
+      if (f.parent !== undefined && out[out.length - 1] !== f.parent) out.push(f.parent);
     }
-    return out;
+    return out as ASTNode[];
   }
 
   #sibling(step: number): unknown {
@@ -132,12 +145,14 @@ export class Context {
     return container[index + step];
   }
 
-  get next(): unknown {
-    return this.#sibling(1);
+  /** The node after this one in its list, as the list is now. */
+  get next(): S | undefined {
+    return this.#sibling(1) as S | undefined;
   }
 
-  get prev(): unknown {
-    return this.#sibling(-1);
+  /** The node before this one in its list, as the list is now. */
+  get prev(): S | undefined {
+    return this.#sibling(-1) as S | undefined;
   }
 
   /**
@@ -149,6 +164,19 @@ export class Context {
     if (!this.#topDown) throw new Error("skipChildren() needs traverse: \"topdown\" (otherwise the children were walked first)");
     this.#skip = true;
   }
+}
+
+/** A path as text: from the document, or from a fragment called `root`. */
+function whereOf(root: string, path: Path): string {
+  const text = formatPath(path);
+  if (!root) return text || "the document";
+  if (!text || text.startsWith("[")) return root + text;
+  return `${root}.${text}`;
+}
+
+/** What to add to the description of a promise returned. */
+function promised(r: unknown): string {
+  return typeof (r as { then?: unknown } | null)?.then === "function" ? " (a promise: filter functions can't be async)" : "";
 }
 
 interface Frame {
@@ -235,24 +263,32 @@ function nodeAt(sp: Splice, p: number): unknown {
   return p < out.length ? out[p] : sp.list[sp.at + p - out.length];
 }
 
-/** What a filter function returns: nothing to keep the node, a node to replace it, a list to splice. */
-export type Result<T> = void | undefined | null | T | T[];
+/** The orders a filter can walk in. */
+export type Traverse = "typewise" | "topdown" | "bottomup";
 
-/** The context a function gets when it can't skip children (bottom-up, the children came first). */
-export type WalkedContext = Omit<Context, "skipChildren">;
+/** The context a function gets when it can't skip children (not top-down: the children came first). */
+export type WalkedContext<S = unknown> = Omit<Context<S>, "skipChildren">;
 
-type Fn<N, R, C> = (node: N, ctx: C) => Result<R>;
-type Straight<T, C> = (value: T, ctx: C) => T | void | undefined | null;
+/** A function's context: top-down, one that can skip children. */
+type ContextFor<S, T extends Traverse> = [T] extends ["topdown"] ? Context<S> : WalkedContext<S>;
 
-/** A filter's functions, getting contexts of type `C`. */
-type Functions<C> = {
-  [K in keyof Nodes]?: Fn<Nodes[K], OwnerOf<K>, C>;
+/** What a function may return: nothing to keep the node, or what converts to its replacement. */
+type Returned<R> = R | void | undefined | null;
+
+/**
+ * A function of a filter. (Its parameters are checked both ways, as a
+ * method's: a top-down filter, whose functions take a `Context`, is a
+ * `Filter` too.)
+ */
+type Fn<N, C, R> = { fn(node: N, ctx: C): Returned<R> }["fn"];
+
+/** A filter's functions, for the order `T`. */
+export type FilterFunctions<T extends Traverse = Traverse> = {
+  [K in keyof FilterTypes]?: Fn<FilterTypes[K]["node"], ContextFor<FilterTypes[K]["sibling"], T>, FilterTypes[K]["returns"]>;
 } & {
-  [K in keyof Sums]?: Fn<Sums[K], Sums[K], C>;
-} & {
-  Inlines?: Straight<Inline[], C>;
-  Blocks?: Straight<Block[], C>;
-  Meta?: Straight<Meta, C>;
+  Inlines?: Fn<Inline[], ContextFor<never, T>, Inlines>;
+  Blocks?: Fn<Block[], ContextFor<never, T>, Blocks>;
+  Meta?: Fn<Meta, ContextFor<never, T>, { readonly [key: string]: MetaValueInit }>;
 };
 
 /**
@@ -275,16 +311,22 @@ type Functions<C> = {
  * - `"bottomup"` (as panflute): one walk, each node after its children, a
  *   list after its elements, `Meta` after the metadata, `Pandoc` last.
  *
- * Only top-down functions get `skipChildren`: bottom-up, the children came
- * first.
+ * The type follows `traverse`: only a `Filter<"topdown">` (whose
+ * `traverse` is `"topdown"`) has functions that get `skipChildren`;
+ * `Filter` alone is one in any order, as when it is chosen at run time.
  */
-export type Filter =
-  | (Functions<WalkedContext> & { traverse?: "typewise" | "bottomup" })
-  | (Functions<Context> & { traverse: "topdown" });
+export type Filter<T extends Traverse = Traverse> =
+  FilterFunctions<T> & ([T] extends ["topdown"] ? { traverse: "topdown" } : { traverse?: T });
 
-type OwnerOf<K extends keyof Nodes> = {
-  [S in keyof Sums]: Nodes[K] extends Sums[S] ? Sums[S] : never;
-}[keyof Sums] extends infer U ? ([U] extends [never] ? Nodes[K] : U) : never;
+/**
+ * A filter written out in one of the three orders, as in a list of them
+ * written in place (`applyFilter(doc, [{ traverse: "topdown", ... }, ...])`):
+ * each one's functions get the context of its `traverse`.
+ */
+export type AnyFilter = Filter<"topdown"> | Filter<"typewise" | "bottomup">;
+
+/** What a filter applies to: a document, a node, or a list of inlines or of blocks (a fragment). */
+export type Walkable = Pandoc | ASTNode | Inline[] | Block[];
 
 /**
  * `items`, each node once: one that is there twice is copied where it comes
@@ -306,20 +348,6 @@ function distinct(items: readonly unknown[]): readonly unknown[] {
   return out ?? items;
 }
 
-/** A node (or any value of the AST) copied, with everything in it. */
-function copy<T>(v: T): T {
-  if (Array.isArray(v)) return v.map(copy) as T;
-  if (typeof v !== "object" || v === null) return v;
-  const out = Object.create(Object.getPrototypeOf(v)) as Record<string, unknown>;
-  for (const k of Object.keys(v)) {
-    const x = copy((v as Record<string, unknown>)[k]);
-    // (assigning to __proto__ would set the prototype of an object that has one)
-    if (k === "__proto__") Object.defineProperty(out, k, { value: x, writable: true, enumerable: true, configurable: true });
-    else out[k] = x;
-  }
-  return out as T;
-}
-
 /** Replace `count` elements of `list` at `start` by `items`, in place. */
 function replace(list: unknown[], start: number, count: number, items: readonly unknown[]): void {
   if (items.length < 1024) {
@@ -333,27 +361,12 @@ function replace(list: unknown[], start: number, count: number, items: readonly 
   for (const x of tail) list.push(x);
 }
 
-/** The keys of a map in the order pandoc walks its Map: by code point. */
-function sortedKeys(obj: Record<string, unknown>): string[] {
-  return Object.keys(obj).sort(byCodePoint);
-}
-
-function byCodePoint(a: string, b: string): number {
-  const n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i++) {
-    const x = a.charCodeAt(i);
-    const y = b.charCodeAt(i);
-    if (x === y) continue;
-    // UTF-16 puts the surrogates, which make the code points above U+FFFF,
-    // below U+E000..U+FFFF
-    const sx = x >= 0xd800 && x <= 0xdfff;
-    const sy = y >= 0xd800 && y <= 0xdfff;
-    return sx === sy ? x - y : sx ? 1 : -1;
-  }
-  return a.length - b.length;
-}
-
-type Action = (node: unknown, ctx: Context, type: string) => unknown;
+/**
+ * `walk`'s function: called on every node with its context and the name of
+ * its type in the schema (`"Inline"`, `"Cell"`, `"Pandoc"`); returns what
+ * a filter function may.
+ */
+export type WalkAction = (node: ASTNode, ctx: Context, type: string) => unknown;
 type Call = (x: unknown, ctx: Context) => unknown;
 
 /** A field of a node that can hold nodes; `many`: the type of its items, if a list of nodes. */
@@ -406,7 +419,25 @@ interface Calls {
   nodes: (type: string) => boolean;
   lists: (type: string) => boolean;
   /** For `walk`: one function for every node, given the node's type too. */
-  every?: Action;
+  every?: WalkAction;
+}
+
+/** Errors already noted with their function and place. */
+const noted = new WeakSet<Error>();
+
+/** Note on an error which function, and where (once). */
+function note(e: unknown, text: string): void {
+  if (!(e instanceof Error) || noted.has(e)) return;
+  noted.add(e);
+  try {
+    e.message += `\n  ${text}`;
+  } catch {
+    // an error whose message can't be changed (a DOMException, a frozen one)
+  }
+}
+
+function nameOfFunction(fn: Call): string {
+  return fn.name || "(anonymous)";
 }
 
 class Walker {
@@ -415,6 +446,8 @@ class Walker {
   topDown: boolean;
   doc: unknown;
   conversion: Conversion;
+  /** What the walk starts from, for a context's `where`: "" for a document, else the fragment's name. */
+  root: string;
   /** Whether the last function called asked to skip what is below. */
   skipped = false;
   /**
@@ -437,17 +470,17 @@ class Walker {
     this.splicing.splice(this.splicing.indexOf(sp), 1);
   }
 
-  constructor(calls: Calls, topDown: boolean, doc: unknown, conversion: Conversion, splicing: Splice[] = []) {
+  constructor(calls: Calls, topDown: boolean, doc: unknown, conversion: Conversion, splicing: Splice[] = [], root = "") {
     this.calls = calls;
     this.splicing = splicing;
     this.topDown = topDown;
     this.doc = doc;
     this.conversion = conversion;
+    this.root = root;
   }
 
-  /** Where the walk is, from the document. */
-  #where(): string {
-    return new Context(this.frames, this.doc, this.conversion).where;
+  #context(): Context {
+    return new Context(this.frames, this.doc, this.conversion, this.topDown, undefined, this.root);
   }
 
   /**
@@ -461,29 +494,49 @@ class Walker {
         this.skipped = false;
         return (fn as (this: unknown, x: unknown) => unknown).call(this.calls.self, x);
       }
-      ctx = new Context(this.frames, this.doc, this.conversion, this.topDown, this);
+      ctx = new Context(this.frames, this.doc, this.conversion, this.topDown, this, this.root);
       const r = fn.call(this.calls.self, x, ctx);
       this.skipped = skipped(ctx);
       return r;
     } catch (e) {
       // an error from it says which function it was, and where
       if (e instanceof Error && !noted.has(e)) {
-        noted.add(e);
-        try {
-          e.message += `\n  in filter function ${fn.name || "(anonymous)"}, on the ${what} at ${this.#where()}`;
-        } catch {
-          // an error whose message can't be changed (a DOMException, a frozen one)
+        const text = `in filter function ${nameOfFunction(fn)}, on the ${what} at ${this.#context().where}`;
+        if (isStackOverflow(e)) {
+          // (a document deeper than the stack: say so, and where it was)
+          const deeper = new ASTDepthError(`applyFilter, ${text}`);
+          noted.add(deeper);
+          throw deeper;
         }
+        note(e, text);
       }
       throw e;
     }
+  }
+
+  /**
+   * An error in what `fn` returned for the node `what` here (the walk's
+   * frames): of a list's node, `k` places after it.
+   */
+  #wrong(fn: Call, what: string, expected: string, r: unknown, k?: number): ASTTypeError {
+    const ctx = this.#context();
+    const path = ctx.path;
+    if (k !== undefined) {
+      const last = path[path.length - 1];
+      if (typeof last === "number") path[path.length - 1] = last + k;
+      else path.push(k);
+    }
+    const e = new ASTTypeError(whereOf(this.root, path), expected, describe(r) + promised(r), path);
+    note(e, `returned by filter function ${nameOfFunction(fn)}, for the ${what} at ${ctx.where}`);
+    return e;
   }
 
   /** The function for nodes of a type, by constructor (`tag`) or else by type, if this walk calls any. */
   #find(type: string): (tag: string | undefined) => Call | undefined {
     const { fns, every, nodes } = this.calls;
     if (every) {
-      const fn: Call = (x, ctx) => every(x, ctx, type);
+      const fn: Call = (x, ctx) => every(x as ASTNode, ctx, type);
+      Object.defineProperty(fn, "name", { value: every.name });
       return () => fn;
     }
     if (!nodes(type)) return () => undefined;
@@ -491,18 +544,28 @@ class Walker {
     return (tag) => (tag === undefined ? ofType : fns.get(tag) ?? ofType);
   }
 
-  /** What a function returned for a position that holds one node: the node there now. */
-  #single(r: unknown, node: unknown, what: string): unknown {
-    if (r === undefined || r === null) return node;
-    if (Array.isArray(r)) throw new ASTTypeError(this.#where(), `one ${what} (this position holds one)`, "a list");
-    this.#notPromise(r, what);
-    return r;
+  /** What a function returned for a position that holds one node of `type`: the node there now. */
+  #single(r: unknown, node: unknown, type: string, fn: Call, what: string): unknown {
+    if (r === undefined || r === null || r === node) return node;
+    if (isNodeOf(type, r)) return r;
+    const expected = Array.isArray(r) ? `one ${type} (this position holds one)` : nameOf(type);
+    throw this.#wrong(fn, what, expected, r);
   }
 
-  #notPromise(r: unknown, what: string): void {
-    if (typeof (r as { then?: unknown }).then === "function") {
-      throw new ASTTypeError(this.#where(), `a ${what}`, "a promise (filter functions can't be async)");
+  /**
+   * What a function returned for a node of a list of `type` (not nothing,
+   * nor the node): one node to put in its place, or an array of them
+   * (none or several), converted as pandoc's Lua converts and checked.
+   */
+  #replacement(r: unknown, type: string, fn: Call, what: string): unknown {
+    if (!Array.isArray(r) && isNodeOf(type, r)) return r;
+    const items = typeof (r as { then?: unknown })?.then === "function" ? undefined : returnedNodes(type, r);
+    if (items === undefined) throw this.#wrong(fn, what, `${nameOf(type)}, a list of them, or nothing`, r);
+    for (let k = 0; k < items.length; k++) {
+      if (!isNodeOf(type, items[k])) throw this.#wrong(fn, what, nameOf(type), items[k], k);
     }
+    const out = distinct(items);
+    return out.length === 1 ? out[0] : out;
   }
 
   /** A node in a position holding one node; returns it or its replacement. */
@@ -514,14 +577,14 @@ class Walker {
     if (this.topDown) {
       let skip = false;
       if (fn) {
-        node = this.#single(this.call(fn, tag ?? type, node), node, "node");
+        node = this.#single(this.call(fn, tag ?? type, node), node, type, fn, tag ?? type);
         skip = this.skipped;
       }
       if (!skip) this.children(node, kidsOf(node));
       return node;
     }
     this.children(node, kidsOf(node));
-    return fn ? this.#single(this.call(fn, tag ?? type, node), node, "node") : node;
+    return fn ? this.#single(this.call(fn, tag ?? type, node), node, type, fn, tag ?? type) : node;
   }
 
   /**
@@ -531,7 +594,7 @@ class Walker {
    * nodes may hold the old one, as `Para(xs)` did before constructors
    * copied).
    */
-  many(list: unknown[], type: string, parent: unknown, field: string, outer: (string | number)[]): unknown[] {
+  many(list: unknown[], type: string, parent: unknown, field: string | undefined, outer: (string | number)[]): unknown[] {
     const { topDown, frames } = this;
     const frame: Frame = { parent, field, outer, container: undefined, index: undefined };
     const whole = this.calls.lists(type) ? this.calls.fns.get(`${type}s`) : undefined;
@@ -575,17 +638,11 @@ class Walker {
           i++;
           continue;
         }
-        let x: unknown = r;
-        if (Array.isArray(r)) {
-          const items = distinct(r);
-          if (items.length !== 1) {
-            // none or several: the rest of the walk makes the list aside
-            this.#aside(list, type, frame, i, items, skip, sum, find, ofProduct);
-            break;
-          }
-          x = items[0];
-        } else {
-          this.#notPromise(r, type);
+        const x = this.#replacement(r, type, fn, tag ?? type);
+        if (Array.isArray(x)) {
+          // none or several: the rest of the walk makes the list aside
+          this.#aside(list, type, frame, i, x, skip, sum, find, ofProduct);
+          break;
         }
         list[i] = x;
         if (topDown && !skip) {
@@ -606,7 +663,7 @@ class Walker {
   /** Where a function's own node is in the list it changed (ctx.container), or an error. */
   #found(i: number): number {
     if (i < 0) {
-      throw new Error(`${this.#where()}: a filter function took its own node out of the list it is in ` +
+      throw new Error(`${this.#context().where}: a filter function took its own node out of the list it is in ` +
                       "(ctx.container); to delete the node, return []");
     }
     return i;
@@ -702,13 +759,12 @@ class Walker {
           }
           continue;
         }
-        let x: unknown = r;
-        if (Array.isArray(r)) {
-          items = distinct(r);
+        let x = this.#replacement(r, type, fn, tag ?? type);
+        if (Array.isArray(x)) {
+          items = x;
           n = items.length;
-          x = items[0];
         } else {
-          this.#notPromise(r, type);
+          n = 1;
         }
         if (n === 1) {
           if (out === undefined) {
@@ -736,10 +792,17 @@ class Walker {
   #wholeList(list: unknown[], type: string, frame: Frame, fn: Call): unknown[] {
     this.frames.push(frame);
     try {
-      const r = this.call(fn, `${type}s`, list);
+      const what = `${type}s`;
+      const r = this.call(fn, what, list);
       if (r === undefined || r === null || r === list) return list;
-      if (!Array.isArray(r)) throw new ASTTypeError(this.#where(), `a list of ${type}s`, typeof r);
-      return [...distinct(r)];
+      // (a new list: its nodes may hold the old one)
+      const items = typeof (r as { then?: unknown }).then === "function" ? undefined : returnedNodes(type, r);
+      if (items === undefined) throw this.#wrong(fn, what, `a list of ${what}`, r);
+      for (let k = 0; k < items.length; k++) {
+        if (!isNodeOf(type, items[k])) throw this.#wrong(fn, what, nameOf(type), items[k], k);
+      }
+      const out = distinct(items);
+      return out === items ? items : [...out];
     } finally {
       this.frames.pop();
     }
@@ -823,36 +886,22 @@ class Walker {
   }
 }
 
-/**
- * Call `action(node, ctx, type)` on `node` and everything in it, bottom-up
- * (or `topDown`). `action` returns nothing to keep the node, a node to
- * replace it, or in a list, a list to splice in its place (`[]` deletes).
- * Returns `node` or its replacement. `type` is the schema type of `node`
- * (default: a document).
- */
-export function walk(node: unknown, action: Action,
-                     opts: { type?: string; topDown?: boolean; format?: string | Conversion } = {}): unknown {
-  const calls: Calls = { fns: new Map(), self: undefined, nodes: () => true, lists: () => false, every: action };
-  const w = new Walker(calls, opts.topDown ?? false, node, toConversion(opts.format));
-  return w.one(node, opts.type ?? SCHEMA.root);
-}
-
-/** Errors already noted with their function and place. */
-const noted = new WeakSet<Error>();
-
+/** Every name a filter's function can have. */
 let namesCache: Set<string> | undefined;
 
-/** Every name a filter's function can have. */
 function names(): Set<string> {
   namesCache ??= new Set([...tables().nodes.keys(), ...tables().constructors.keys(), "Inlines", "Blocks", "Meta"]);
   return namesCache;
 }
 
 /** A filter's functions, by name. */
-function functionsOf(filter: Filter): Map<string, Call> {
+function functionsOf(filter: object): Map<string, Call> {
+  if (typeof filter !== "object" || filter === null || Array.isArray(filter)) {
+    throw new ASTTypeError("", "a filter (an object of functions)", describe(filter));
+  }
   const known = names();
   const fns = new Map<string, Call>();
-  const obj = filter as unknown as Record<string, unknown>;
+  const obj = filter as Record<string, unknown>;
   for (const name of known) {
     const f = obj[name];
     if (typeof f === "function") fns.set(name, f as Call);
@@ -870,20 +919,136 @@ const INLINE = (t: string) => t === "Inline";
 const BLOCK = (t: string) => t === "Block";
 const LISTS = (t: string) => t === "Inline" || t === "Block";
 const OTHER = (t: string) => t !== "Inline" && t !== "Block";
+const NOT_ROOT = (t: string) => t !== SCHEMA.root;
 const ALL = () => true;
 const NO = () => false;
 
-function applyOne(doc: Pandoc, filter: Filter, conversion: Conversion): Pandoc {
+/** What a filter or `walk` applies to: a document, a node of a type (or product), or a list of them. */
+type Target =
+  | { kind: "doc" }
+  | { kind: "node"; type: string; kids: string; label: string }
+  | { kind: "list"; type: string; label: string }
+  | { kind: "empty" };
+
+function targetOf(x: unknown): Target {
+  const fail = (): never => {
+    throw new ASTTypeError("", "a document, a node, or a list of inlines or of blocks", describe(x));
+  };
+  if (Array.isArray(x)) {
+    if (!x.length) return { kind: "empty" };
+    const type = tables().tagOwner.get((x[0] as { t?: string } | null)?.t as string);
+    if (type !== "Inline" && type !== "Block") return fail();
+    for (let i = 0; i < x.length; i++) {
+      if (!isNodeOf(type, x[i])) {
+        throw new ASTTypeError(`${type.toLowerCase()}s[${i}]`, type, describe(x[i]), [i]);
+      }
+    }
+    return { kind: "list", type, label: `${type.toLowerCase()}s` };
+  }
+  if (typeof x !== "object" || x === null) return fail();
+  const t = (x as { t?: unknown }).t;
+  if (typeof t === "string") {
+    const type = tables().tagOwner.get(t);
+    if (type === undefined) return fail();
+    return { kind: "node", type, kids: t, label: t };
+  }
+  const product = productOf(x as Record<string, unknown>);
+  if (product === undefined) return fail();
+  if (product === SCHEMA.root) return { kind: "doc" };
+  return { kind: "node", type: product, kids: product, label: product };
+}
+
+/**
+ * `list`'s contents replaced by `items` (what its list function made of
+ * it), in place. A node made of the list itself (`[Emph(xs)]`, written as
+ * an object literal) gets a copy of what the list held instead.
+ */
+function refill(list: unknown[], items: readonly unknown[]): void {
+  const old = list.slice();
+  const seen = new Set<unknown>();
+  const fix = (v: unknown): void => {
+    if (typeof v !== "object" || v === null || seen.has(v)) return;
+    seen.add(v);
+    if (Array.isArray(v)) {
+      for (let i = 0; i < v.length; i++) {
+        if (v[i] === list) v[i] = old;
+        else fix(v[i]);
+      }
+      return;
+    }
+    const obj = v as Record<string, unknown>;
+    for (const k of Object.keys(obj)) {
+      if (obj[k] === list) obj[k] = old;
+      else fix(obj[k]);
+    }
+  };
+  const copy = [...items];
+  copy.forEach(fix);
+  replace(list, 0, list.length, copy);
+}
+
+/**
+ * Call `action(node, ctx, type)` on `target` and every node in it,
+ * bottom-up (or `topDown`); `target` is a document, a node, or a list of
+ * inlines or of blocks (then `action` is called on each). `action` returns
+ * what a filter function may: nothing to keep the node, its replacement,
+ * or in a list, what converts to a list to splice in its place (`[]`
+ * deletes). Returns `target` (changed in place) or its replacement.
+ */
+export function walk<W extends Walkable>(target: W, action: WalkAction,
+                                         opts: { topDown?: boolean; format?: string | Conversion } = {}): W {
+  if (typeof action !== "function") throw new ASTTypeError("", "a function", describe(action));
+  const kind = targetOf(target);
+  if (kind.kind === "empty") return target;
+  const calls: Calls = { fns: new Map(), self: undefined, nodes: ALL, lists: NO, every: action };
+  const doc = kind.kind === "doc" ? target : undefined;
+  const label = kind.kind === "doc" ? "" : kind.label;
+  const w = new Walker(calls, opts.topDown ?? false, doc, toConversion(opts.format), [], label);
+  return deep("walk", () => {
+    if (kind.kind === "list") return w.many(target as unknown[], kind.type, undefined, undefined, TOP) as W;
+    return w.one(target, kind.kind === "doc" ? SCHEMA.root : kind.type) as W;
+  });
+}
+
+function applyOne(target: unknown, filter: Filter, conversion: Conversion): unknown {
   const root = SCHEMA.root;
   const traverse = filter.traverse ?? "typewise";
   if (traverse !== "typewise" && traverse !== "topdown" && traverse !== "bottomup") {
-    throw new Error(`traverse: expected "typewise", "topdown" or "bottomup", got ${JSON.stringify(traverse)}`);
+    throw new ASTTypeError("traverse", `"typewise", "topdown" or "bottomup"`, JSON.stringify(traverse), ["traverse"]);
   }
   const fns = functionsOf(filter);
+  const kind = targetOf(target);
+  if (kind.kind === "empty") return target;
   const topDown = traverse === "topdown";
   const splicing: Splice[] = []; // (every pass's: see Walker.splicing)
-  const walker = (d: Pandoc, nodes: (t: string) => boolean, lists: (t: string) => boolean) =>
-    new Walker({ fns, self: filter, nodes, lists }, topDown, d, conversion, splicing);
+  const isDoc = kind.kind === "doc";
+  const label = isDoc ? "" : kind.label;
+  const walker = (d: unknown, nodes: (t: string) => boolean, lists: (t: string) => boolean) =>
+    new Walker({ fns, self: filter, nodes, lists }, topDown, d, conversion, splicing, label);
+
+  if (!isDoc) {
+    // a fragment: as Lua's el:walk{}, what is in it (a list's own function
+    // too), not the node itself, nor Meta and Pandoc; in place
+    const all = (w: Walker) => {
+      if (kind.kind === "list") {
+        const list = target as unknown[];
+        const out = w.many(list, kind.type, undefined, undefined, TOP);
+        if (out !== list) refill(list, out);
+      } else {
+        w.children(target, kidsTable().get(kind.kids) ?? NONE);
+      }
+    };
+    deep("applyFilter", () => {
+      if (traverse !== "typewise") {
+        all(walker(undefined, NOT_ROOT, LISTS));
+        return;
+      }
+      for (const [nodes, lists, needed] of passes(fns)) if (needed) all(walker(undefined, nodes, lists));
+    });
+    return target;
+  }
+
+  let doc = target as Pandoc;
   /** A function on one value (`Meta`, `Pandoc`): its result or the value, and whether it skips. */
   const straight = (name: string, value: unknown, d: Pandoc, frames: Frame[]): [unknown, boolean] => {
     const fn = fns.get(name);
@@ -891,44 +1056,73 @@ function applyOne(doc: Pandoc, filter: Filter, conversion: Conversion): Pandoc {
     const w = walker(d, NO, NO);
     w.frames = frames;
     const r = w.call(fn, name, value);
-    if (r === undefined || r === null) return [value, w.skipped];
-    if (Array.isArray(r)) {
-      throw new ASTTypeError(formatPath(frames.map((f) => f.field!)) || "the document",
-                             `one ${name} (this position holds one)`, "a list");
+    if (r === undefined || r === null || r === value) return [value, w.skipped];
+    if (name === "Meta") {
+      // as Lua: a map of what converts to metadata
+      const meta = isPlainMap(r) ? toMeta(r) as Record<string, unknown> : undefined;
+      if (meta === undefined) throw wrongStraight(fn, "metadata (an object of MetaValues)", r, ["meta"]);
+      for (const k of Object.keys(meta)) {
+        if (!isNodeOf("MetaValue", meta[k])) throw wrongStraight(fn, "MetaValue", meta[k], ["meta", k]);
+      }
+      return [meta, w.skipped];
+    }
+    if (!isNodeOf(root, r)) {
+      throw wrongStraight(fn, Array.isArray(r) ? `one ${root} (this position holds one)` : `a ${root}`, r, []);
     }
     return [r, w.skipped];
   };
   const meta = (d: Pandoc): [unknown, boolean] => straight(
     "Meta", d.meta, d, [{ parent: d, field: "meta", outer: [], container: undefined, index: undefined }]);
-  if (topDown) {
-    const [d, skip] = straight(root, doc, doc, []);
-    doc = d as Pandoc; // the function's document, if it returned one, is the one walked
-    if (skip) return doc;
-    const [m, skipMeta] = meta(doc);
-    doc.meta = m as Meta;
-    walker(doc, ALL, LISTS).fields(doc, root, (field) => !(skipMeta && field === "meta"));
-    return doc;
-  }
-  if (traverse === "bottomup") {
-    const w = walker(doc, ALL, LISTS);
-    for (const kid of kidsTable().get(root) ?? NONE) {
-      w.children(doc, [kid]);
-      if (kid.name === "meta") doc.meta = meta(doc)[0] as Meta;
+  return deep("applyFilter", () => {
+    if (topDown) {
+      const [d, skip] = straight(root, doc, doc, []);
+      doc = d as Pandoc; // the function's document, if it returned one, is the one walked
+      if (skip) return doc;
+      const [m, skipMeta] = meta(doc);
+      doc.meta = m as Meta;
+      walker(doc, NOT_ROOT, LISTS).fields(doc, root, (field) => !(skipMeta && field === "meta"));
+      return doc;
     }
+    if (traverse === "bottomup") {
+      const w = walker(doc, NOT_ROOT, LISTS);
+      for (const kid of kidsTable().get(root) ?? NONE) {
+        w.children(doc, [kid]);
+        if (kid.name === "meta") doc.meta = meta(doc)[0] as Meta;
+      }
+      return straight(root, doc, doc, [])[0] as Pandoc;
+    }
+    for (const [nodes, lists, needed] of passes(fns)) {
+      if (needed) walker(doc, nodes, lists).fields(doc, root);
+    }
+    doc.meta = meta(doc)[0] as Meta;
     return straight(root, doc, doc, [])[0] as Pandoc;
-  }
-  const passes: [(t: string) => boolean, (t: string) => boolean, boolean][] = [
+  });
+}
+
+/** An error in what a Meta or Pandoc function returned. */
+function wrongStraight(fn: Call, expected: string, r: unknown, path: Path): ASTTypeError {
+  const e = new ASTTypeError(formatPath(path) || "the document", expected, describe(r) + promised(r), path);
+  note(e, `returned by filter function ${nameOfFunction(fn)}, for the ${path[0] === "meta" ? "Meta" : "Pandoc"} at ${
+    path[0] === "meta" ? "meta" : "the document"}`);
+  return e;
+}
+
+/** An object that may be a map (not an array, nor a node). */
+function isPlainMap(v: unknown): boolean {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return (proto === Object.prototype || proto === null) && typeof (v as { t?: unknown }).t !== "string";
+}
+
+/** The typewise passes: which nodes, which lists, and whether the filter has a function for them. */
+function passes(fns: Map<string, Call>): [(t: string) => boolean, (t: string) => boolean, boolean][] {
+  return [
     [INLINE, NO, has(fns, "Inline")],
     [NO, INLINE, fns.has("Inlines")],
     [BLOCK, NO, has(fns, "Block")],
     [NO, BLOCK, fns.has("Blocks")],
     [OTHER, NO, hasOther(fns)],
   ];
-  for (const [nodes, lists, needed] of passes) {
-    if (needed) walker(doc, nodes, lists).fields(doc, root);
-  }
-  doc.meta = meta(doc)[0] as Meta;
-  return straight(root, doc, doc, [])[0] as Pandoc;
 }
 
 /** Whether `fns` has a function for the sum `sum` or one of its constructors. */
@@ -949,22 +1143,32 @@ function hasOther(fns: Map<string, Call>): boolean {
 
 /**
  * Apply a filter to a document, in place, as pandoc applies a Lua filter;
- * returns it (or its replacement). A list of filters is applied one after
- * the other, as a Lua filter file returning a list. `format` is the output
- * format's name, or the whole `Conversion` (then in `ctx.conversion`).
+ * returns it (or the document its `Pandoc` function returned). A list of
+ * filters is applied one after the other, as a Lua filter file returning a
+ * list. `format` is the output format's name, or the whole `Conversion`
+ * (then in `ctx.conversion`).
+ *
+ * Or to a fragment: a node, or a list of inlines or of blocks, as Lua's
+ * `el:walk{...}`: the functions apply to what is in a node, not to the node
+ * itself (a list's function to the list itself too), and `Meta` and
+ * `Pandoc` only to a document. Unlike Lua, in place: returns the fragment.
  */
-export function applyFilter(doc: Pandoc, filter: Filter, format?: string | Conversion): Pandoc;
-export function applyFilter(doc: Pandoc, filters: readonly Filter[], format?: string | Conversion): Pandoc;
-export function applyFilter(doc: Pandoc, filter: Filter | readonly Filter[], format?: string | Conversion): Pandoc {
+export function applyFilter<W extends Walkable, T extends Traverse = "typewise">(
+  target: W, filter: FilterFunctions<T> & { traverse?: T }, format?: string | Conversion): W;
+export function applyFilter<W extends Walkable>(target: W, filters: readonly AnyFilter[], format?: string | Conversion): W;
+export function applyFilter<W extends Walkable>(target: W, filters: readonly Filter[], format?: string | Conversion): W;
+export function applyFilter(target: Walkable, filter: object | readonly object[],
+                            format?: string | Conversion): Walkable {
   const conversion = toConversion(format);
-  for (const f of isFilterList(filter) ? filter : [filter]) doc = applyOne(doc, f, conversion);
-  return doc;
+  let out: unknown = target;
+  for (const f of isFilterList(filter) ? filter : [filter as Filter]) out = applyOne(out, f, conversion);
+  return out as Walkable;
 }
 
 function toConversion(format: string | Conversion | undefined): Conversion {
   return format instanceof Conversion ? format : new Conversion({ format });
 }
 
-function isFilterList(f: Filter | readonly Filter[]): f is readonly Filter[] {
+function isFilterList(f: object | readonly object[]): f is readonly Filter[] {
   return Array.isArray(f);
 }

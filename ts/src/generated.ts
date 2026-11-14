@@ -2,7 +2,6 @@
 // (pandoc-api-version 1.23.1.2). Do not edit; regenerate instead.
 
 import { make } from "./core.ts";
-import type { Schema } from "./core.ts";
 
 export const PANDOC_API_VERSION = [1, 23, 1, 2] as const;
 
@@ -379,13 +378,58 @@ export type RowSpan = number;
 
 export type ColSpan = number;
 
-/** Inlines as constructors take them: a string is its words and spaces,
- * and a string in the list a Str, as in pandoc's Lua. */
-export type Inlines = (Inline | string)[] | string;
+/**
+ * Inlines as constructors take them, and filter functions return them, as
+ * pandoc's Lua converts them: a string is its words and spaces, one inline
+ * a list of it, and a string in a list a `Str`.
+ */
+export type Inlines = string | Inline | readonly (Inline | string)[];
 
-/** Blocks as constructors take them: a string is Plain text, as in
- * pandoc's Lua. */
-export type Blocks = (Block | string)[] | string;
+/**
+ * Blocks as constructors take them, and filter functions return them, as
+ * pandoc's Lua converts them: a string is `Plain` text, one block a list of
+ * it; in a list, a string is `Plain` text, and an inline, or a list of
+ * inlines (strings: a `Str` each), a `Plain` of them.
+ */
+export type Blocks =
+  | string
+  | Block
+  | Inline
+  | readonly (Block | Inline | string | readonly (Inline | string)[])[];
+
+/** Attributes as constructors take them: (key, value) pairs, or a record. */
+export type Attributes = readonly (readonly [string, string])[] | { readonly [key: string]: string };
+
+/**
+ * Metadata as constructors take it, as pandoc's Lua converts it: a string
+ * is a `MetaString`, a boolean a `MetaBool`, a number a `MetaString` of it,
+ * an inline or a list of inlines `MetaInlines`, a block or a list of blocks
+ * `MetaBlocks`, another list a `MetaList`, and an object a `MetaMap`.
+ */
+export type MetaValueInit =
+  | MetaValue
+  | string
+  | boolean
+  | number
+  | Inline
+  | Block
+  | readonly MetaValueInit[]
+  | { readonly [key: string]: MetaValueInit };
+
+/** An Attr given whole (`attr`), or by its fields. */
+export type AttrOptions =
+  | { attr?: Attr; identifier?: never; classes?: never; attributes?: never }
+  | { attr?: never; identifier?: string; classes?: readonly string[]; attributes?: Attributes };
+
+/** A ListAttributes given whole (`listAttributes`), or by its fields. */
+export type ListAttributesOptions =
+  | { listAttributes?: ListAttributes; start?: never; style?: never; delimiter?: never }
+  | { listAttributes?: never; start?: number; style?: ListNumberStyle; delimiter?: ListNumberDelim };
+
+/** A Target given whole (`target`), or by its fields. */
+export type TargetOptions =
+  | { target: Target; url?: never; title?: never }
+  | { target?: never; url: string; title?: string };
 
 /** Every constructor and product, by name. */
 export interface Nodes {
@@ -445,6 +489,9 @@ export interface Nodes {
   Cell: Cell;
 }
 
+/** Any node: a constructor's or a product's (`Attr`, `Cell`, `Pandoc`...). */
+export type ASTNode = Nodes[keyof Nodes];
+
 /** Each sum type, by name. */
 export interface Sums {
   Block: Block;
@@ -453,11 +500,105 @@ export interface Sums {
   ColWidth: ColWidthBase;
 }
 
-/** The schema the runtime reads: schema/pandoc-ast.json, camelCase. */
-export const SCHEMA: Schema = {"pandoc-api-version":[1,23,1,2],"root":"Pandoc","types":[{"name":"Pandoc","kind":"product","encoding":"root","fields":[{"name":"meta","type":{"ref":"Meta"},"key":"meta","default":{}},{"name":"blocks","type":{"list":{"ref":"Block"}},"key":"blocks","default":[]}],"variadic":"blocks"},{"name":"Meta","kind":"alias","type":{"map":[{"prim":"string"},{"ref":"MetaValue"}]}},{"name":"Block","kind":"sum","constructors":[{"name":"Plain","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"Para","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"LineBlock","encoding":"value","fields":[{"name":"content","type":{"list":{"list":{"ref":"Inline"}}},"default":[],"key":"content"}],"variadic":"content"},{"name":"CodeBlock","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"text","type":{"prim":"string"},"key":"text"}]},{"name":"RawBlock","encoding":"array","fields":[{"name":"format","type":{"ref":"Format"},"key":"format"},{"name":"text","type":{"prim":"string"},"key":"text"}]},{"name":"BlockQuote","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Block"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"OrderedList","encoding":"array","fields":[{"name":"listAttributes","type":{"ref":"ListAttributes"},"default":[1,{"t":"DefaultStyle"},{"t":"DefaultDelim"}],"flatten":true,"key":"list_attributes"},{"name":"content","type":{"list":{"list":{"ref":"Block"}}},"default":[],"key":"content"}],"variadic":"content"},{"name":"BulletList","encoding":"value","fields":[{"name":"content","type":{"list":{"list":{"ref":"Block"}}},"default":[],"key":"content"}],"variadic":"content"},{"name":"DefinitionList","encoding":"value","fields":[{"name":"content","type":{"list":{"tuple":[{"list":{"ref":"Inline"}},{"list":{"list":{"ref":"Block"}}}]}},"default":[],"key":"content"}],"variadic":"content"},{"name":"Header","encoding":"array","fields":[{"name":"level","type":{"prim":"int"},"key":"level"},{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"HorizontalRule","encoding":"none","fields":[]},{"name":"Table","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"caption","type":{"ref":"Caption"},"default":[null,[]],"key":"caption"},{"name":"colSpecs","type":{"list":{"ref":"ColSpec"}},"default":[],"key":"col_specs"},{"name":"head","type":{"ref":"TableHead"},"default":[["",[],[]],[]],"key":"head"},{"name":"bodies","type":{"list":{"ref":"TableBody"}},"default":[],"key":"bodies"},{"name":"foot","type":{"ref":"TableFoot"},"default":[["",[],[]],[]],"key":"foot"}]},{"name":"Figure","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"caption","type":{"ref":"Caption"},"default":[null,[]],"key":"caption"},{"name":"content","type":{"list":{"ref":"Block"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"Div","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"content","type":{"list":{"ref":"Block"}},"default":[],"key":"content"}],"variadic":"content"}]},{"name":"MetaValue","kind":"sum","constructors":[{"name":"MetaMap","encoding":"value","fields":[{"name":"content","type":{"map":[{"prim":"string"},{"ref":"MetaValue"}]},"default":{},"key":"content"}]},{"name":"MetaList","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"MetaValue"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"MetaBool","encoding":"value","fields":[{"name":"value","type":{"prim":"bool"},"key":"value"}]},{"name":"MetaString","encoding":"value","fields":[{"name":"text","type":{"prim":"string"},"key":"text"}]},{"name":"MetaInlines","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"MetaBlocks","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Block"}},"default":[],"key":"content"}],"variadic":"content"}]},{"name":"Inline","kind":"sum","constructors":[{"name":"Str","encoding":"value","fields":[{"name":"text","type":{"prim":"string"},"key":"text"}]},{"name":"Emph","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"Underline","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"Strong","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"Strikeout","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"Superscript","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"Subscript","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"SmallCaps","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"Quoted","encoding":"array","fields":[{"name":"quoteType","type":{"ref":"QuoteType"},"key":"quote_type"},{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"Cite","encoding":"array","fields":[{"name":"citations","type":{"list":{"ref":"Citation"}},"default":[],"key":"citations"},{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}]},{"name":"Code","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"text","type":{"prim":"string"},"key":"text"}]},{"name":"Space","encoding":"none","fields":[]},{"name":"SoftBreak","encoding":"none","fields":[]},{"name":"LineBreak","encoding":"none","fields":[]},{"name":"Math","encoding":"array","fields":[{"name":"mathType","type":{"ref":"MathType"},"key":"math_type"},{"name":"text","type":{"prim":"string"},"key":"text"}]},{"name":"RawInline","encoding":"array","fields":[{"name":"format","type":{"ref":"Format"},"key":"format"},{"name":"text","type":{"prim":"string"},"key":"text"}]},{"name":"Link","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"},{"name":"target","type":{"ref":"Target"},"flatten":true,"key":"target"}],"variadic":"content"},{"name":"Image","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"},{"name":"target","type":{"ref":"Target"},"flatten":true,"key":"target"}],"variadic":"content"},{"name":"Note","encoding":"value","fields":[{"name":"content","type":{"list":{"ref":"Block"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"Span","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"content","type":{"list":{"ref":"Inline"}},"default":[],"key":"content"}],"variadic":"content"}]},{"name":"Attr","kind":"product","encoding":"array","fields":[{"name":"identifier","type":{"prim":"string"},"default":"","key":"identifier"},{"name":"classes","type":{"list":{"prim":"string"}},"default":[],"key":"classes"},{"name":"attributes","type":{"list":{"tuple":[{"prim":"string"},{"prim":"string"}]}},"default":[],"key":"attributes"}]},{"name":"Format","kind":"alias","type":{"prim":"string"}},{"name":"ListAttributes","kind":"product","encoding":"array","fields":[{"name":"start","type":{"prim":"int"},"default":1,"key":"start"},{"name":"style","type":{"ref":"ListNumberStyle"},"default":{"t":"DefaultStyle"},"key":"style"},{"name":"delimiter","type":{"ref":"ListNumberDelim"},"default":{"t":"DefaultDelim"},"key":"delimiter"}]},{"name":"Caption","kind":"product","encoding":"array","fields":[{"name":"short","type":{"maybe":{"ref":"ShortCaption"}},"default":null,"key":"short"},{"name":"content","type":{"list":{"ref":"Block"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"ColSpec","kind":"product","encoding":"array","fields":[{"name":"alignment","type":{"ref":"Alignment"},"default":{"t":"AlignDefault"},"key":"alignment"},{"name":"width","type":{"ref":"ColWidth"},"default":{"t":"ColWidthDefault"},"key":"width"}]},{"name":"TableHead","kind":"product","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"rows","type":{"list":{"ref":"Row"}},"default":[],"key":"rows"}],"variadic":"rows"},{"name":"TableBody","kind":"product","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"rowHeadColumns","type":{"ref":"RowHeadColumns"},"default":0,"key":"row_head_columns"},{"name":"head","type":{"list":{"ref":"Row"}},"default":[],"key":"head"},{"name":"body","type":{"list":{"ref":"Row"}},"default":[],"key":"body"}]},{"name":"TableFoot","kind":"product","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"rows","type":{"list":{"ref":"Row"}},"default":[],"key":"rows"}],"variadic":"rows"},{"name":"QuoteType","kind":"enum","values":["SingleQuote","DoubleQuote"]},{"name":"Citation","kind":"product","encoding":"object","fields":[{"name":"id","type":{"prim":"string"},"key":"citationId"},{"name":"prefix","type":{"list":{"ref":"Inline"}},"key":"citationPrefix","default":[]},{"name":"suffix","type":{"list":{"ref":"Inline"}},"key":"citationSuffix","default":[]},{"name":"mode","type":{"ref":"CitationMode"},"key":"citationMode","default":{"t":"NormalCitation"}},{"name":"noteNum","type":{"prim":"int"},"key":"citationNoteNum","default":0},{"name":"hash","type":{"prim":"int"},"key":"citationHash","default":0}]},{"name":"MathType","kind":"enum","values":["DisplayMath","InlineMath"]},{"name":"Target","kind":"product","encoding":"array","fields":[{"name":"url","type":{"prim":"string"},"key":"url"},{"name":"title","type":{"prim":"string"},"default":"","key":"title"}]},{"name":"ListNumberStyle","kind":"enum","values":["DefaultStyle","Example","Decimal","LowerRoman","UpperRoman","LowerAlpha","UpperAlpha"]},{"name":"ListNumberDelim","kind":"enum","values":["DefaultDelim","Period","OneParen","TwoParens"]},{"name":"ShortCaption","kind":"alias","type":{"list":{"ref":"Inline"}}},{"name":"Alignment","kind":"enum","values":["AlignLeft","AlignRight","AlignCenter","AlignDefault"]},{"name":"ColWidth","kind":"sum","constructors":[{"name":"ColWidth","encoding":"value","fields":[{"name":"width","type":{"prim":"double"},"key":"width"}]},{"name":"ColWidthDefault","encoding":"none","fields":[]}]},{"name":"Row","kind":"product","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"cells","type":{"list":{"ref":"Cell"}},"default":[],"key":"cells"}],"variadic":"cells"},{"name":"RowHeadColumns","kind":"alias","type":{"prim":"int"}},{"name":"CitationMode","kind":"enum","values":["AuthorInText","SuppressAuthor","NormalCitation"]},{"name":"Cell","kind":"product","encoding":"array","fields":[{"name":"attr","type":{"ref":"Attr"},"default":["",[],[]],"flatten":true,"key":"attr"},{"name":"alignment","type":{"ref":"Alignment"},"default":{"t":"AlignDefault"},"key":"alignment"},{"name":"rowSpan","type":{"ref":"RowSpan"},"default":1,"key":"row_span"},{"name":"colSpan","type":{"ref":"ColSpan"},"default":1,"key":"col_span"},{"name":"content","type":{"list":{"ref":"Block"}},"default":[],"key":"content"}],"variadic":"content"},{"name":"RowSpan","kind":"alias","type":{"prim":"int"}},{"name":"ColSpan","kind":"alias","type":{"prim":"int"}}]};
+/** Every type of the schema, by its name there (`fromJSON(j, "Inline")`). */
+export interface Types {
+  Pandoc: Pandoc;
+  Meta: Meta;
+  Block: Block;
+  MetaValue: MetaValue;
+  Inline: Inline;
+  Attr: Attr;
+  Format: Format;
+  ListAttributes: ListAttributes;
+  Caption: Caption;
+  ColSpec: ColSpec;
+  TableHead: TableHead;
+  TableBody: TableBody;
+  TableFoot: TableFoot;
+  QuoteType: QuoteType;
+  Citation: Citation;
+  MathType: MathType;
+  Target: Target;
+  ListNumberStyle: ListNumberStyle;
+  ListNumberDelim: ListNumberDelim;
+  ShortCaption: ShortCaption;
+  Alignment: Alignment;
+  ColWidth: ColWidthBase;
+  Row: Row;
+  RowHeadColumns: RowHeadColumns;
+  CitationMode: CitationMode;
+  Cell: Cell;
+  RowSpan: RowSpan;
+  ColSpan: ColSpan;
+}
+
+/**
+ * The functions a filter can have, by name: the node each gets, what is
+ * beside it in a list (`never`: it is never in one), and what it may
+ * return besides nothing (converted as pandoc's Lua converts it).
+ */
+export interface FilterTypes {
+  Pandoc: { node: Pandoc; sibling: never; returns: Pandoc };
+  Block: { node: Block; sibling: Block; returns: Blocks };
+  Plain: { node: Plain; sibling: Block; returns: Blocks };
+  Para: { node: Para; sibling: Block; returns: Blocks };
+  LineBlock: { node: LineBlock; sibling: Block; returns: Blocks };
+  CodeBlock: { node: CodeBlock; sibling: Block; returns: Blocks };
+  RawBlock: { node: RawBlock; sibling: Block; returns: Blocks };
+  BlockQuote: { node: BlockQuote; sibling: Block; returns: Blocks };
+  OrderedList: { node: OrderedList; sibling: Block; returns: Blocks };
+  BulletList: { node: BulletList; sibling: Block; returns: Blocks };
+  DefinitionList: { node: DefinitionList; sibling: Block; returns: Blocks };
+  Header: { node: Header; sibling: Block; returns: Blocks };
+  HorizontalRule: { node: HorizontalRule; sibling: Block; returns: Blocks };
+  Table: { node: Table; sibling: Block; returns: Blocks };
+  Figure: { node: Figure; sibling: Block; returns: Blocks };
+  Div: { node: Div; sibling: Block; returns: Blocks };
+  MetaValue: { node: MetaValue; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
+  MetaMap: { node: MetaMap; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
+  MetaList: { node: MetaList; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
+  MetaBool: { node: MetaBool; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
+  MetaString: { node: MetaString; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
+  MetaInlines: { node: MetaInlines; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
+  MetaBlocks: { node: MetaBlocks; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
+  Inline: { node: Inline; sibling: Inline; returns: Inlines };
+  Str: { node: Str; sibling: Inline; returns: Inlines };
+  Emph: { node: Emph; sibling: Inline; returns: Inlines };
+  Underline: { node: Underline; sibling: Inline; returns: Inlines };
+  Strong: { node: Strong; sibling: Inline; returns: Inlines };
+  Strikeout: { node: Strikeout; sibling: Inline; returns: Inlines };
+  Superscript: { node: Superscript; sibling: Inline; returns: Inlines };
+  Subscript: { node: Subscript; sibling: Inline; returns: Inlines };
+  SmallCaps: { node: SmallCaps; sibling: Inline; returns: Inlines };
+  Quoted: { node: Quoted; sibling: Inline; returns: Inlines };
+  Cite: { node: Cite; sibling: Inline; returns: Inlines };
+  Code: { node: Code; sibling: Inline; returns: Inlines };
+  Space: { node: Space; sibling: Inline; returns: Inlines };
+  SoftBreak: { node: SoftBreak; sibling: Inline; returns: Inlines };
+  LineBreak: { node: LineBreak; sibling: Inline; returns: Inlines };
+  Math: { node: Math; sibling: Inline; returns: Inlines };
+  RawInline: { node: RawInline; sibling: Inline; returns: Inlines };
+  Link: { node: Link; sibling: Inline; returns: Inlines };
+  Image: { node: Image; sibling: Inline; returns: Inlines };
+  Note: { node: Note; sibling: Inline; returns: Inlines };
+  Span: { node: Span; sibling: Inline; returns: Inlines };
+  Attr: { node: Attr; sibling: never; returns: Attr };
+  ListAttributes: { node: ListAttributes; sibling: never; returns: ListAttributes };
+  Caption: { node: Caption; sibling: never; returns: Caption };
+  ColSpec: { node: ColSpec; sibling: ColSpec; returns: ColSpec | readonly ColSpec[] };
+  TableHead: { node: TableHead; sibling: never; returns: TableHead };
+  TableBody: { node: TableBody; sibling: TableBody; returns: TableBody | readonly TableBody[] };
+  TableFoot: { node: TableFoot; sibling: never; returns: TableFoot };
+  Citation: { node: Citation; sibling: Citation; returns: Citation | readonly Citation[] };
+  Target: { node: Target; sibling: never; returns: Target };
+  ColWidth: { node: ColWidthBase; sibling: never; returns: ColWidthBase };
+  ColWidthDefault: { node: ColWidthDefault; sibling: never; returns: ColWidthBase };
+  Row: { node: Row; sibling: Row; returns: Row | readonly Row[] };
+  Cell: { node: Cell; sibling: Cell; returns: Cell | readonly Cell[] };
+}
 
 /** pandoc's `Pandoc`. */
-export function Pandoc(blocks?: Blocks, opts: { meta?: Meta } = {}): Pandoc {
+export function Pandoc(blocks?: Blocks, opts: { meta?: { readonly [key: string]: MetaValueInit } } = {}): Pandoc {
   return make<Pandoc>("Pandoc", { blocks }, opts);
 }
 
@@ -472,12 +613,12 @@ export function Para(content?: Inlines): Para {
 }
 
 /** pandoc's `LineBlock`. */
-export function LineBlock(content?: Inlines[]): LineBlock {
+export function LineBlock(content?: readonly Inlines[] | string | Inline): LineBlock {
   return make<LineBlock>("LineBlock", { content }, {});
 }
 
 /** pandoc's `CodeBlock`. */
-export function CodeBlock(text: string, opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string> } = {}): CodeBlock {
+export function CodeBlock(text: string, opts: AttrOptions = {}): CodeBlock {
   return make<CodeBlock>("CodeBlock", { text }, opts);
 }
 
@@ -492,22 +633,22 @@ export function BlockQuote(content?: Blocks): BlockQuote {
 }
 
 /** pandoc's `OrderedList`. */
-export function OrderedList(content?: Blocks[], opts: { listAttributes?: ListAttributes; start?: number; style?: ListNumberStyle; delimiter?: ListNumberDelim } = {}): OrderedList {
+export function OrderedList(content?: readonly Blocks[] | string | Block | Inline, opts: ListAttributesOptions = {}): OrderedList {
   return make<OrderedList>("OrderedList", { content }, opts);
 }
 
 /** pandoc's `BulletList`. */
-export function BulletList(content?: Blocks[]): BulletList {
+export function BulletList(content?: readonly Blocks[] | string | Block | Inline): BulletList {
   return make<BulletList>("BulletList", { content }, {});
 }
 
 /** pandoc's `DefinitionList`. */
-export function DefinitionList(content?: [Inlines, Blocks[]][]): DefinitionList {
+export function DefinitionList(content?: readonly (readonly [Inlines, readonly Blocks[] | string | Block | Inline])[]): DefinitionList {
   return make<DefinitionList>("DefinitionList", { content }, {});
 }
 
 /** pandoc's `Header`. */
-export function Header(level: number, content?: Inlines, opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string> } = {}): Header {
+export function Header(level: number, content?: Inlines, opts: AttrOptions = {}): Header {
   return make<Header>("Header", { level, content }, opts);
 }
 
@@ -516,28 +657,28 @@ export function HorizontalRule(): HorizontalRule {
   return make<HorizontalRule>("HorizontalRule", {  }, {});
 }
 
-/** pandoc's `Table`. */
-export function Table(opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string>; caption?: Caption; colSpecs?: ColSpec[]; head?: TableHead; bodies?: TableBody[]; foot?: TableFoot } = {}): Table {
-  return make<Table>("Table", {  }, opts);
+/** pandoc's `Table`, as Lua's `pandoc.Table(caption, col_specs, head, bodies, foot, attr)`. */
+export function Table(caption?: Caption, colSpecs?: readonly ColSpec[], head?: TableHead, bodies?: readonly TableBody[], foot?: TableFoot, opts: AttrOptions = {}): Table {
+  return make<Table>("Table", { caption, colSpecs, head, bodies, foot }, opts);
 }
 
 /** pandoc's `Figure`. */
-export function Figure(content?: Blocks, opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string>; caption?: Caption } = {}): Figure {
+export function Figure(content?: Blocks, opts: { caption?: Caption } & AttrOptions = {}): Figure {
   return make<Figure>("Figure", { content }, opts);
 }
 
 /** pandoc's `Div`. */
-export function Div(content?: Blocks, opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string> } = {}): Div {
+export function Div(content?: Blocks, opts: AttrOptions = {}): Div {
   return make<Div>("Div", { content }, opts);
 }
 
 /** pandoc's `MetaMap`. */
-export function MetaMap(content?: Record<string, MetaValue>): MetaMap {
+export function MetaMap(content?: { readonly [key: string]: MetaValueInit }): MetaMap {
   return make<MetaMap>("MetaMap", { content }, {});
 }
 
 /** pandoc's `MetaList`. */
-export function MetaList(content?: MetaValue[]): MetaList {
+export function MetaList(content?: readonly MetaValueInit[]): MetaList {
   return make<MetaList>("MetaList", { content }, {});
 }
 
@@ -606,13 +747,13 @@ export function Quoted(quoteType: QuoteType, content?: Inlines): Quoted {
   return make<Quoted>("Quoted", { quoteType, content }, {});
 }
 
-/** pandoc's `Cite`. */
-export function Cite(opts: { citations?: Citation[]; content?: Inlines } = {}): Cite {
-  return make<Cite>("Cite", {  }, opts);
+/** pandoc's `Cite`, as Lua's `pandoc.Cite(content, citations)`. */
+export function Cite(content?: Inlines, citations?: readonly Citation[]): Cite {
+  return make<Cite>("Cite", { content, citations }, {});
 }
 
 /** pandoc's `Code`. */
-export function Code(text: string, opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string> } = {}): Code {
+export function Code(text: string, opts: AttrOptions = {}): Code {
   return make<Code>("Code", { text }, opts);
 }
 
@@ -642,12 +783,12 @@ export function RawInline(format: Format, text: string): RawInline {
 }
 
 /** pandoc's `Link`. */
-export function Link(content?: Inlines, opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string>; target?: Target; url?: string; title?: string } = {}): Link {
+export function Link(content: Inlines, opts: AttrOptions & TargetOptions): Link {
   return make<Link>("Link", { content }, opts);
 }
 
 /** pandoc's `Image`. */
-export function Image(content?: Inlines, opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string>; target?: Target; url?: string; title?: string } = {}): Image {
+export function Image(content: Inlines, opts: AttrOptions & TargetOptions): Image {
   return make<Image>("Image", { content }, opts);
 }
 
@@ -657,12 +798,12 @@ export function Note(content?: Blocks): Note {
 }
 
 /** pandoc's `Span`. */
-export function Span(content?: Inlines, opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string> } = {}): Span {
+export function Span(content?: Inlines, opts: AttrOptions = {}): Span {
   return make<Span>("Span", { content }, opts);
 }
 
 /** pandoc's `Attr`. */
-export function Attr(identifier?: string, classes?: string[], attributes?: [string, string][] | Record<string, string>): Attr {
+export function Attr(identifier?: string, classes?: readonly string[], attributes?: Attributes): Attr {
   return make<Attr>("Attr", { identifier, classes, attributes }, {});
 }
 
@@ -672,7 +813,7 @@ export function ListAttributes(start?: number, style?: ListNumberStyle, delimite
 }
 
 /** pandoc's `Caption`. */
-export function Caption(content?: Blocks, opts: { short?: ShortCaption | null } = {}): Caption {
+export function Caption(content?: Blocks, opts: { short?: Inlines | null } = {}): Caption {
   return make<Caption>("Caption", { content }, opts);
 }
 
@@ -682,23 +823,23 @@ export function ColSpec(alignment?: Alignment, width?: ColWidthBase): ColSpec {
 }
 
 /** pandoc's `TableHead`. */
-export function TableHead(rows?: Row[], opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string> } = {}): TableHead {
+export function TableHead(rows?: readonly Row[], opts: AttrOptions = {}): TableHead {
   return make<TableHead>("TableHead", { rows }, opts);
 }
 
-/** pandoc's `TableBody`. */
-export function TableBody(rowHeadColumns?: RowHeadColumns, head?: Row[], body?: Row[], opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string> } = {}): TableBody {
-  return make<TableBody>("TableBody", { rowHeadColumns, head, body }, opts);
+/** pandoc's `TableBody`, as Lua's `pandoc.TableBody(body, head, row_head_columns, attr)`. */
+export function TableBody(body?: readonly Row[], head?: readonly Row[], rowHeadColumns?: RowHeadColumns, opts: AttrOptions = {}): TableBody {
+  return make<TableBody>("TableBody", { body, head, rowHeadColumns }, opts);
 }
 
 /** pandoc's `TableFoot`. */
-export function TableFoot(rows?: Row[], opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string> } = {}): TableFoot {
+export function TableFoot(rows?: readonly Row[], opts: AttrOptions = {}): TableFoot {
   return make<TableFoot>("TableFoot", { rows }, opts);
 }
 
-/** pandoc's `Citation`. */
-export function Citation(id: string, opts: { prefix?: Inlines; suffix?: Inlines; mode?: CitationMode; noteNum?: number; hash?: number } = {}): Citation {
-  return make<Citation>("Citation", { id }, opts);
+/** pandoc's `Citation`, as Lua's `pandoc.Citation(id, mode, prefix, suffix, note_num, hash)`. */
+export function Citation(id: string, mode?: CitationMode, prefix?: Inlines, suffix?: Inlines, noteNum?: number, hash?: number): Citation {
+  return make<Citation>("Citation", { id, mode, prefix, suffix, noteNum, hash }, {});
 }
 
 /** pandoc's `Target`. */
@@ -717,12 +858,12 @@ export function ColWidthDefault(): ColWidthDefault {
 }
 
 /** pandoc's `Row`. */
-export function Row(cells?: Cell[], opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string> } = {}): Row {
+export function Row(cells?: readonly Cell[], opts: AttrOptions = {}): Row {
   return make<Row>("Row", { cells }, opts);
 }
 
 /** pandoc's `Cell`. */
-export function Cell(content?: Blocks, opts: { attr?: Attr; identifier?: string; classes?: string[]; attributes?: [string, string][] | Record<string, string>; alignment?: Alignment; rowSpan?: RowSpan; colSpan?: ColSpan } = {}): Cell {
+export function Cell(content?: Blocks, opts: { alignment?: Alignment; rowSpan?: RowSpan; colSpan?: ColSpan } & AttrOptions = {}): Cell {
   return make<Cell>("Cell", { content }, opts);
 }
 

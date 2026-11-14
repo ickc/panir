@@ -6,10 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyFilter, ASTTypeError, Attr, blocks, Conversion, BulletList, Cell, Cite, Code, DefinitionList, Div, Emph,
-  Header, inlines, LineBlock, Link, Math, Note, OrderedList, Pandoc, Para, Plain, Quoted, SoftBreak,
+  Header, inlines, LineBlock, Link, Math, MetaBool, Note, OrderedList, Pandoc, Para, Plain, Quoted, SoftBreak,
   Space, Str, Table, fromPlain, parse, serialize, stringify, toPlain,
 } from "../src/index.ts";
 import type { Filter, Inline } from "../src/index.ts";
+import { pandoc } from "./pandoc.ts";
 
 test("constructors fill defaults and flatten attributes", () => {
   assert.deepEqual(Header(1, [Str("Hi")], { identifier: "hi", classes: ["x"] }), {
@@ -54,17 +55,29 @@ test("strings convert as in pandoc's Lua", () => {
 test("constructors check their arguments, and say where", () => {
   const cases: [() => unknown, RegExp][] = [
     [() => Para([Para() as unknown as Inline]), /^Para\.content\[0\]: expected Inline, got Para \(a Block\)$/],
-    [() => Cite({ citations: "x" as never }), /Cite\.citations: expected a list, got "x" \(a string; give a list of nodes\)/],
+    [() => Cite([], "x" as never), /^Cite\.citations: expected a list, got "x"$/],
     [() => Math("Bogus" as "InlineMath", "x"), /Math\.mathType: expected a MathType, got "Bogus"/],
-    [() => BulletList([[Str("x") as never]]), /BulletList\.content\[0\]\[0\]: expected Block, got Str \(an Inline\)/],
+    [() => BulletList([[Para("x"), MetaBool(true) as never]]), /BulletList\.content\[0\]\[1\]: expected Block, got MetaBool \(a MetaValue\)/],
     [() => Header(1.5, []), /Header\.level: expected an integer, got 1\.5/],
   ];
   for (const [f, message] of cases) {
     assert.throws(f, (e: unknown) => e instanceof ASTTypeError && message.test(e.message));
   }
-  assert.throws(() => Link([Str("x")]), /Link\(\) needs url \(or target\)/);
-  assert.throws(() => Code("x", { attr: Attr(), identifier: "y" }), /give either attr or identifier, not both/);
-  assert.throws(() => Code("x", { bogus: 1 } as never), /Code\(\) has no option bogus/);
+  // options too
+  const options: [() => unknown, RegExp][] = [
+    // @ts-expect-error: a link needs a url
+    [() => Link([Str("x")]), /^ASTTypeError: Link\.url: expected a string \(or target\), got undefined$/],
+    // @ts-expect-error: a url, not a target, is the option
+    [() => Link([Str("x")], {}), /^ASTTypeError: Link\.url: expected a string \(or target\), got undefined$/],
+    // @ts-expect-error: attributes whole or by their fields, not both
+    [() => Code("x", { attr: Attr(), identifier: "y" }), /^ASTTypeError: Code: expected either attr or identifier, got both$/],
+    // @ts-expect-error: no such option
+    [() => Code("x", { bogus: 1 }), /^ASTTypeError: Code: expected an option of Code's \(attr, identifier, classes, attributes\), got "bogus"$/],
+    [() => Header(1, "x", 42 as never), /^ASTTypeError: Header: expected an object of options, got 42$/],
+  ];
+  for (const [f, message] of options) {
+    assert.throws(f, (e: unknown) => e instanceof ASTTypeError && e instanceof TypeError && message.test(String(e)));
+  }
 });
 
 function doc() {
@@ -151,7 +164,8 @@ test("the conversion", () => {
 });
 
 test("runFilter tells the filter the conversion, under pandoc", (t) => {
-  try { execFileSync("pandoc", ["--version"]); } catch { return t.skip("no pandoc on PATH"); }
+  const exe = pandoc(t);
+  if (!exe) return;
   const dir = mkdtempSync(join(tmpdir(), "panir-"));
   writeFileSync(join(dir, "package.json"), '{"type": "module"}');
   const node = new URL("../src/node.ts", import.meta.url).href;
@@ -164,7 +178,7 @@ await runFilter({ Pandoc: (d, ctx) => {
   return d;
 } });
 `);
-  const out = execFileSync("pandoc", ["-f", "markdown", "-t", "plain", "--columns=60", "--filter", join(dir, "f.js")],
+  const out = execFileSync(exe, ["-f", "markdown", "-t", "plain", "--columns=60", "--filter", join(dir, "f.js")],
                            { input: "hi" }).toString();
   assert.equal(out, "hi\n\nplain,plain,60\n");
 });
@@ -181,7 +195,7 @@ test("misused filters say so", () => {
     assert.throws(() => applyFilter(doc(), { traverse, Str: (_s, ctx) => { ctx.skipChildren(); } }),
                   /skipChildren\(\) needs traverse: "topdown"[^]*on the Str at blocks\[0\]\.content\[0\]/);
   }
-  assert.throws(() => applyFilter(doc(), { Inlines: () => Str("x") as never }),
+  assert.throws(() => applyFilter(doc(), { Inlines: () => 42 as never }),
                 (e: unknown) => e instanceof ASTTypeError && /a list of Inlines/.test(e.message));
   assert.throws(() => applyFilter(doc(), { traverse: "inside-out" as never }),
                 /traverse: expected "typewise", "topdown" or "bottomup"/);
@@ -198,7 +212,7 @@ test("JSON text round trip, and serialize checks", () => {
   const d = doc();
   assert.deepEqual(parse(serialize(d)), d);
   (d.blocks[1] as { content: unknown[] }).content.push(Para());
-  assert.throws(() => serialize(d), /Pandoc\.blocks\[1\]\.content\[4\]: expected Inline, got Para \(a Block\)/);
+  assert.throws(() => serialize(d), /^ASTTypeError: blocks\[1\]\.content\[4\]: expected Inline, got Para \(a Block\)$/);
 });
 
 test("stringify and metadata", () => {

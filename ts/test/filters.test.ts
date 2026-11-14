@@ -8,7 +8,7 @@ import {
   applyFilter, Div, Emph, fromJSON, HorizontalRule, MetaBool, MetaInlines, MetaList, MetaString, Para, Str,
   Strong, toJSON,
 } from "../src/index.ts";
-import type { Block, Filter, Pandoc, WalkedContext } from "../src/index.ts";
+import type { AnyFilter, Block, Filter, Pandoc, WalkedContext } from "../src/index.ts";
 
 const FORMAT = "json";
 
@@ -40,7 +40,7 @@ const listing = (seen: string[]): Filter => ({
 });
 
 /** Each scenario as TypeScript filters, run one after the other. */
-const SCENARIOS: Record<string, () => Filter[]> = {
+const SCENARIOS: Record<string, () => AnyFilter[]> = {
   upper: () => [{
     Str: (s) => Str(s.text.toUpperCase()),
   }],
