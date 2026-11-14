@@ -255,6 +255,29 @@ impl crate::Json for Block {
     }
 }
 
+impl Block {
+    /// The constructor's name, as in pandoc's JSON (`"t"`) and Lua
+    /// (`el.tag`, `el.t`).
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Block::Plain { .. } => "Plain",
+            Block::Para { .. } => "Para",
+            Block::LineBlock { .. } => "LineBlock",
+            Block::CodeBlock { .. } => "CodeBlock",
+            Block::RawBlock { .. } => "RawBlock",
+            Block::BlockQuote { .. } => "BlockQuote",
+            Block::OrderedList { .. } => "OrderedList",
+            Block::BulletList { .. } => "BulletList",
+            Block::DefinitionList { .. } => "DefinitionList",
+            Block::Header { .. } => "Header",
+            Block::HorizontalRule { .. } => "HorizontalRule",
+            Block::Table { .. } => "Table",
+            Block::Figure { .. } => "Figure",
+            Block::Div { .. } => "Div",
+        }
+    }
+}
+
 impl From<CodeBlock> for Block {
     fn from(x: CodeBlock) -> Self {
         Block::CodeBlock(Box::new(x))
@@ -737,6 +760,21 @@ impl crate::Json for MetaValue {
     }
 }
 
+impl MetaValue {
+    /// The constructor's name, as in pandoc's JSON (`"t"`) and Lua
+    /// (`el.tag`, `el.t`).
+    pub fn tag(&self) -> &'static str {
+        match self {
+            MetaValue::MetaMap { .. } => "MetaMap",
+            MetaValue::MetaList { .. } => "MetaList",
+            MetaValue::MetaBool { .. } => "MetaBool",
+            MetaValue::MetaString { .. } => "MetaString",
+            MetaValue::MetaInlines { .. } => "MetaInlines",
+            MetaValue::MetaBlocks { .. } => "MetaBlocks",
+        }
+    }
+}
+
 /// pandoc's `Inline`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "t", content = "c")]
@@ -1004,6 +1042,35 @@ impl crate::Json for Inline {
                 x.json(out);
                 out.push('}');
             }
+        }
+    }
+}
+
+impl Inline {
+    /// The constructor's name, as in pandoc's JSON (`"t"`) and Lua
+    /// (`el.tag`, `el.t`).
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Inline::Str { .. } => "Str",
+            Inline::Emph { .. } => "Emph",
+            Inline::Underline { .. } => "Underline",
+            Inline::Strong { .. } => "Strong",
+            Inline::Strikeout { .. } => "Strikeout",
+            Inline::Superscript { .. } => "Superscript",
+            Inline::Subscript { .. } => "Subscript",
+            Inline::SmallCaps { .. } => "SmallCaps",
+            Inline::Quoted { .. } => "Quoted",
+            Inline::Cite { .. } => "Cite",
+            Inline::Code { .. } => "Code",
+            Inline::Space { .. } => "Space",
+            Inline::SoftBreak { .. } => "SoftBreak",
+            Inline::LineBreak { .. } => "LineBreak",
+            Inline::Math { .. } => "Math",
+            Inline::RawInline { .. } => "RawInline",
+            Inline::Link { .. } => "Link",
+            Inline::Image { .. } => "Image",
+            Inline::Note { .. } => "Note",
+            Inline::Span { .. } => "Span",
         }
     }
 }
@@ -2003,6 +2070,17 @@ impl crate::Json for ColWidth {
                 out.push('}');
             }
             ColWidth::ColWidthDefault => out.push_str("{\"t\":\"ColWidthDefault\"}"),
+        }
+    }
+}
+
+impl ColWidth {
+    /// The constructor's name, as in pandoc's JSON (`"t"`) and Lua
+    /// (`el.tag`, `el.t`).
+    pub fn tag(&self) -> &'static str {
+        match self {
+            ColWidth::ColWidth { .. } => "ColWidth",
+            ColWidth::ColWidthDefault { .. } => "ColWidthDefault",
         }
     }
 }

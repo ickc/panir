@@ -213,6 +213,18 @@ class Gen:
                 f" {write}; out.push('}}'); }}\n"
             )
         self.json_impl(t["name"], "match self {\n" + "".join(arms) + "}")
+        name = t["name"]
+        tags = "".join(
+            f'            {name}::{c["name"]} {{ .. }} => "{c["name"]}",\n'
+            for c in t["constructors"]
+        )
+        o.append(
+            f"impl {name} {{\n"
+            f"    /// The constructor's name, as in pandoc's JSON (`\"t\"`) and Lua\n"
+            f"    /// (`el.tag`, `el.t`).\n"
+            f"    pub fn tag(&self) -> &'static str {{\n"
+            f"        match self {{\n{tags}        }}\n    }}\n}}\n\n"
+        )
         for c in structs:
             o.append(
                 f"impl From<{c['name']}> for {t['name']} {{\n"

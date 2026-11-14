@@ -92,7 +92,8 @@ They are checked against pandoc's Lua filters, with the scenarios in
   `Inline` or a `Block` is 32 bytes, not the size of the biggest variant
   (152 and 360): less memory and faster walks on big documents. Fields read
   and change through the box as they are (`Inline::Link(l) => l.target.url
-  = ...`); the JSON is the same.
+  = ...`); the JSON is the same. `x.tag()` is the constructor's name
+  (`"Para"`), as Lua's `el.tag` and the JSON's `"t"`.
 - Every string is a `Text`: up to 22 bytes kept in place (no heap
   allocation; 99.7% of the words of a real document), longer ones a heap
   `String`, in the 24 bytes a `String` takes. It reads as a `&str`; make one
