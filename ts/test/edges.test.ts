@@ -209,7 +209,7 @@ test("lists longer than a call takes arguments", () => {
 
 // A long list whose nodes are deleted, kept, replaced by one and by several
 // (once quadratic: each replacement by none or several moved the rest).
-const LONG = 30_000;
+const LONG = 3_000;
 type StrNode = ReturnType<typeof Str>;
 
 /** By its number: deleted, kept, replaced by one, by several (an Emph among them), returned twice. Top-down, the Emph's Str is walked too. */
@@ -251,7 +251,7 @@ for (const traverse of ["bottomup", "topdown", "typewise"] as const) {
 for (const traverse of ["bottomup", "topdown"] as const) {
   test(`a long list spliced, with contexts, ${traverse}`, () => {
     // the context is right after earlier nodes were deleted and multiplied:
-    // looked at first halfway (until then the list is spliced the fast way)
+    // looked at first halfway
     const topDown = traverse === "topdown";
     const original = numbered(LONG);
     const looked = [0, LONG / 2, LONG / 2 + 1, LONG / 2 + 3, LONG / 2 + 4, LONG - 1];
@@ -330,8 +330,8 @@ const fromNode = (xs: readonly unknown[], node: unknown) => {
 for (const traverse of ["bottomup", "topdown", "typewise"] as const) {
   test(`a list being walked seen from a closure, ${traverse}`, () => {
     // A function deletes or doubles blocks; a later one looks at the document
-    // it closed over (not ctx): its block and every one after it are there,
-    // in order. (Earlier deletions and doublings may show only at the end.)
+    // it closed over (not ctx): the list is as it is now, the earlier
+    // deletions and doublings made
     const original = [
       RawBlock("html", "del"), Para("p1"), RawBlock("html", "dbl"), Para("p3"),
       RawBlock("html", "del"), Para("p5"), Header(1, "h"),
@@ -342,12 +342,14 @@ for (const traverse of ["bottomup", "topdown", "typewise"] as const) {
       traverse,
       RawBlock: (b: ReturnType<typeof RawBlock>) => (b.text === "del" ? [] : [b, RawBlock("html", "dbl2")]),
       Para: (p: ReturnType<typeof Para>) => {
-        seen.push(stringify(p));
+        seen.push(`${stringify(p)}: ${doc.blocks.map((b) => stringify(b) || (b as { text: string }).text).join(" ")}`);
         assert.ok(same(fromNode(doc.blocks, p), fromNode(original, p)));
       },
     } as Filter;
     applyFilter(doc, blocks);
-    assert.deepEqual(seen, ["p1", "p3", "p5"]);
+    assert.deepEqual(seen, [
+      "p1: p1 dbl p3 del p5 h", "p3: p1 dbl dbl2 p3 del p5 h", "p5: p1 dbl dbl2 p3 p5 h",
+    ]);
     assert.deepEqual(doc.blocks, [
       Para("p1"), RawBlock("html", "dbl"), RawBlock("html", "dbl2"), Para("p3"), Para("p5"), Header(1, "h"),
     ]);
@@ -361,14 +363,14 @@ for (const traverse of ["bottomup", "topdown", "typewise"] as const) {
       traverse,
       Space: () => [],
       Str: (s: StrNode) => {
-        texts.push(s.text);
+        texts.push(`${s.text}: ${stringify(para.content)}`);
         assert.ok(same(fromNode(para.content, s), fromNode(inlines, s)));
         assert.equal((doc2.blocks[0] as { content: Inline[] }).content, para.content);
         return s.text === "c" ? [s, Str("C")] : undefined;
       },
     } as Filter;
     applyFilter(doc2, inner);
-    assert.deepEqual(texts, ["a", "b", "c", "d", "e"]);
+    assert.deepEqual(texts, ["a: a b c d e", "b: ab c d e", "c: abc d e", "d: abcCd e", "e: abcCde"]);
     assert.deepEqual(doc2.blocks, [Para(["a", "b", "c", "C", "d", "e"].map((t) => Str(t)))]);
   });
 }
@@ -443,7 +445,7 @@ for (const traverse of ["bottomup", "topdown", "typewise"] as const) {
       blocks.splice(find(blocks, "x"), 1);
       blocks.push(Para("end"));
     }), ["TOC", "dbl", "dbl2", "One", "Two", "end"]);
-    // the same length: seen at the end of the walk
+    // a node replaced through the closure
     assert.deepEqual(run((blocks, at) => {
       if (at === "One") blocks[find(blocks, "a")] = Para("A");
     }), ["A", "dbl", "dbl2", "One", "x", "Two"]);

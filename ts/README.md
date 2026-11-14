@@ -195,13 +195,10 @@ The second argument is the `Context`, made only for a function declared
 with more than one parameter: `parent`, the `container` the node is in and
 its `index` there, `next`/`prev`, `path` and `where`, the `doc`,
 `ancestors`, `format`, and `conversion`. They are right after earlier
-nodes of the list were deleted or spliced, and a list reached through a
-context is as it is now. (A list being walked holds its node and every one
-after it, however it is reached; reached otherwise, as through the
-document a function closed over, the nodes deleted or spliced in it so far
-may show only once its walk is done, but a change made to it that way is
-made to it as it is.) Its types follow the function's: `ctx.next` of an
-inline is an `Inline`.
+nodes of the list were deleted or spliced: a node replaced by none or
+several is spliced in place, so a list is as it is now however it is
+reached. Its types follow the function's: `ctx.next` of an inline is an
+`Inline`.
 
 ```ts
 const shout: Filter = {

@@ -48,14 +48,13 @@ export class Context<S = unknown> {
   #parent: unknown;
   #container: unknown[] | Record<string, unknown> | undefined;
   #doc: unknown;
-  #walker: Walker | undefined;
   #root: string;
 
   static {
     skipped = (ctx) => ctx.#skip;
   }
 
-  constructor(frames: Frame[], doc: unknown, conversion: Conversion, topDown = false, walker?: Walker, root = "") {
+  constructor(frames: Frame[], doc: unknown, conversion: Conversion, topDown = false, root = "") {
     const n = frames.length;
     const copy = new Array<Frame>(n);
     const indexes = new Array<number | string | undefined>(n);
@@ -66,7 +65,6 @@ export class Context<S = unknown> {
     this.#frames = copy;
     this.#indexes = indexes;
     this.#topDown = topDown;
-    this.#walker = walker;
     this.#root = root;
     const last = n ? frames[n - 1] : undefined;
     this.#parent = last?.parent;
@@ -78,27 +76,18 @@ export class Context<S = unknown> {
     this.format = conversion.format;
   }
 
-  // the lists being walked made what they are now before any is looked at
-  // (`many` makes a list's result aside: Splice)
-  #mend(): void {
-    if (this.#walker?.splicing.length) this.#walker.mend();
-  }
-
   /** The node whose field holds this one (undefined for a fragment's list's nodes, and the document). */
   get parent(): ASTNode | undefined {
-    this.#mend();
     return this.#parent as ASTNode | undefined;
   }
 
   /** The list holding this node, if in one (or the map). */
   get container(): S[] | Record<string, S> | undefined {
-    this.#mend();
     return this.#container as S[] | Record<string, S> | undefined;
   }
 
   /** The document (undefined when the filter applies to a fragment). */
   get doc(): Pandoc | undefined {
-    this.#mend();
     return this.#doc as Pandoc | undefined;
   }
 
@@ -121,7 +110,6 @@ export class Context<S = unknown> {
 
   /** The nodes above this one, the document (or the fragment) first. */
   get ancestors(): ASTNode[] {
-    this.#mend();
     const out: unknown[] = [];
     for (const f of this.#frames) {
       if (f.parent !== undefined && out[out.length - 1] !== f.parent) out.push(f.parent);
@@ -133,24 +121,15 @@ export class Context<S = unknown> {
     const container = this.#container;
     const index = this.index;
     if (!Array.isArray(container) || typeof index !== "number" || index + step < 0) return undefined;
-    const w = this.#walker;
-    for (const sp of w?.splicing ?? NO_SPLICES) {
-      if (sp.list !== container) continue;
-      if (container.length !== sp.was.length) {
-        w!.mend(); // changed from elsewhere
-        break;
-      }
-      return nodeAt(sp, index + step); // the list as it is now, without making it so
-    }
     return container[index + step];
   }
 
-  /** The node after this one in its list, as the list is now. */
+  /** The node after this one in its list. */
   get next(): S | undefined {
     return this.#sibling(1) as S | undefined;
   }
 
-  /** The node before this one in its list, as the list is now. */
+  /** The node before this one in its list. */
   get prev(): S | undefined {
     return this.#sibling(-1) as S | undefined;
   }
@@ -185,82 +164,6 @@ interface Frame {
   outer: (string | number)[];
   container: unknown[] | Record<string, unknown> | undefined;
   index: number | string | undefined;
-}
-
-/**
- * The walk of a list once one of its nodes was replaced by none or several
- * (`Walker.#aside`): the list keeps its nodes (but for those replaced by
- * one) while the result is made aside, in `out`; from `at` on, the list's
- * nodes are those not in it yet, the first perhaps being walked. The list as
- * it is now is `out` and then those: it becomes that (`mend`) at the end of
- * its walk, or when anything reaches it through a Context; `out` is then
- * undefined.
- *
- * `was` is what the list holds as the walk left it, and the nodes it went
- * through: something else may have changed it meanwhile (a function, through
- * the document it closed over). `marks`, in pairs: from the k-th of those
- * nodes on, the results of each begin `off` after its own place, from where
- * that changes.
- */
-interface Splice {
-  list: unknown[];
-  out: unknown[] | undefined;
-  at: number;
-  was: unknown[];
-  marks: number[];
-}
-
-const NO_SPLICES: Splice[] = [];
-
-/** Make the list what it is now: `out`, then its nodes from `at`. */
-function mend(sp: Splice): void {
-  const { list, out, at, was } = sp;
-  if (out === undefined) return;
-  sp.out = undefined;
-  let same = list.length === was.length;
-  for (let k = 0; same && k < list.length; k++) same = list[k] === was[k];
-  if (!same) {
-    const merged = mergedList(sp, out);
-    list.length = 0;
-    for (const x of merged) list.push(x);
-    return;
-  }
-  const m = out.length;
-  const tail = list.length - at;
-  if (m <= at) {
-    for (let k = 0; k < tail; k++) list[m + k] = list[at + k];
-    list.length = m + tail;
-  } else {
-    for (let k = at; k < m; k++) list.push(undefined);
-    for (let k = tail - 1; k >= 0; k--) list[m + k] = list[at + k];
-  }
-  for (let k = 0; k < m; k++) list[k] = out[k];
-}
-
-/** The list as changed from elsewhere, each node the walk went through replaced by what it made of it. */
-function mergedList(sp: Splice, out: unknown[]): unknown[] {
-  const { at, was, marks } = sp;
-  const starts: number[] = [];
-  let off = 0;
-  for (let k = 0, m = 0; k <= at; k++) {
-    for (; m < marks.length && marks[m] <= k; m += 2) off = marks[m + 1];
-    starts.push(k + off);
-  }
-  const walked = new Map<unknown, number>();
-  for (let k = 0; k < at; k++) walked.set(was[k], k);
-  const merged: unknown[] = [];
-  for (const x of sp.list) {
-    const k = walked.get(x);
-    if (k === undefined) merged.push(x);
-    else for (let j = starts[k]; j < starts[k + 1]; j++) merged.push(out[j]);
-  }
-  return merged;
-}
-
-/** The node at `p` in the list as it is now (`out` being made). */
-function nodeAt(sp: Splice, p: number): unknown {
-  const out = sp.out!;
-  return p < out.length ? out[p] : sp.list[sp.at + p - out.length];
 }
 
 /** The orders a filter can walk in. */
@@ -450,31 +353,12 @@ class Walker {
   root: string;
   /** Whether the last function called asked to skip what is below. */
   skipped = false;
-  /**
-   * The lists being walked whose result is made aside (`#aside`): those of
-   * every pass of a filter's walk (a context may be kept from one to the next).
-   */
-  splicing: Splice[];
   #kids = kidsTable();
   /** Each sum's constructors, by name. */
   #sums = tables().constructors;
 
-  /** Make every list being walked what it is now. */
-  mend(): void {
-    for (const sp of this.splicing) mend(sp);
-    this.splicing.length = 0;
-  }
-
-  /** Make the list `sp` is of what it is now; its walk goes on in place. */
-  #unsplice(sp: Splice): void {
-    if (sp.out === undefined) return;
-    mend(sp);
-    this.splicing.splice(this.splicing.indexOf(sp), 1);
-  }
-
-  constructor(calls: Calls, topDown: boolean, doc: unknown, conversion: Conversion, splicing: Splice[] = [], root = "") {
+  constructor(calls: Calls, topDown: boolean, doc: unknown, conversion: Conversion, root = "") {
     this.calls = calls;
-    this.splicing = splicing;
     this.topDown = topDown;
     this.doc = doc;
     this.conversion = conversion;
@@ -482,7 +366,7 @@ class Walker {
   }
 
   #context(): Context {
-    return new Context(this.frames, this.doc, this.conversion, this.topDown, undefined, this.root);
+    return new Context(this.frames, this.doc, this.conversion, this.topDown, this.root);
   }
 
   /**
@@ -496,7 +380,7 @@ class Walker {
         this.skipped = false;
         return (fn as (this: unknown, x: unknown) => unknown).call(this.calls.self, x);
       }
-      ctx = new Context(this.frames, this.doc, this.conversion, this.topDown, this, this.root);
+      ctx = new Context(this.frames, this.doc, this.conversion, this.topDown, this.root);
       const r = fn.call(this.calls.self, x, ctx);
       this.skipped = skipped(ctx);
       return r;
@@ -641,17 +525,24 @@ class Walker {
           continue;
         }
         const x = this.#replacement(r, type, fn, tag ?? type);
+        let n = 1;
         if (Array.isArray(x)) {
-          // none or several: the rest of the walk makes the list aside
-          this.#aside(list, type, frame, i, x, skip, sum, find, ofProduct);
-          break;
+          // none or several, in place
+          replace(list, i, 1, x);
+          n = x.length;
+        } else {
+          list[i] = x;
         }
-        list[i] = x;
         if (topDown && !skip) {
-          const xs = sum ? kids.get((x as { t: string }).t) ?? NONE : ofProduct;
-          if (xs !== NONE) this.children(x, xs);
+          for (const end = i + n; i < end; i++) {
+            frame.index = i;
+            const y = list[i];
+            const ys = sum ? kids.get((y as { t: string }).t) ?? NONE : ofProduct;
+            if (ys !== NONE) this.children(y, ys);
+          }
+        } else {
+          i += n;
         }
-        i++;
       }
     } finally {
       frames.pop();
@@ -669,125 +560,6 @@ class Walker {
                       "(ctx.container); to delete the node, return []");
     }
     return i;
-  }
-
-  /**
-   * The rest of `many`'s walk once `list[i]` was replaced by `items` (none
-   * or several nodes): the result is made aside, in `out`.
-   *
-   * Replacing in place moved all that follows, every time (quadratic).
-   * Meanwhile the list keeps the nodes still to walk, whoever looks at it,
-   * and it becomes `out` and then those at the end, after an error too.
-   * Anything that reaches it through a Context makes it that first (mend:
-   * `sp.out` is then undefined), as does a change to it from elsewhere (seen
-   * by its length, or the node's place), and the walk goes on in place
-   * (`out` undefined), as before. `i` is the node's place in the result; aside, the
-   * node is `list[sp.at]`, and `i === out.length` until it is in `out`.
-   */
-  #aside(list: unknown[], type: string, frame: Frame, i: number, items: readonly unknown[], skip: boolean,
-         sum: boolean, find: (tag: string | undefined) => Call | undefined, ofProduct: Kid[]): void {
-    const { topDown } = this;
-    const kids = this.#kids;
-    let out: unknown[] | undefined = list.slice(0, i);
-    for (const x of items) out.push(x);
-    const sp: Splice = { list, out, at: i + 1, was: list.slice(), marks: [i + 1, out.length - i - 1] };
-    this.splicing.push(sp);
-    const n0 = list.length; // (as long as nothing else changes it)
-    try {
-      let n = items.length;
-      for (;;) {
-        // (here the node's n replacements are in the result, from i)
-        if (topDown && !skip) {
-          for (const end = i + n; i < end; i++) {
-            frame.index = i;
-            const x = out === undefined ? list[i] : out[i];
-            const xs = sum ? kids.get((x as { t: string }).t) ?? NONE : ofProduct;
-            if (xs !== NONE) {
-              this.children(x, xs);
-              if (out !== undefined && (sp.out === undefined || list.length !== n0)) {
-                this.#unsplice(sp);
-                out = undefined; // mended: in place
-              }
-            }
-          }
-        } else {
-          i += n;
-        }
-        // the next node
-        let node: unknown;
-        if (out === undefined) {
-          if (i >= list.length) break;
-          node = list[i];
-        } else {
-          if (sp.at >= list.length) break;
-          node = sp.was[sp.at] = list[sp.at]; // (another may have put it there)
-        }
-        const tag = sum ? (node as { t?: string } | null | undefined)?.t : undefined;
-        const below = sum ? kids.get(tag as string) ?? NONE : ofProduct;
-        const fn = find(tag);
-        frame.index = i;
-        n = 1;
-        if (!fn) {
-          if (below !== NONE) {
-            this.children(node, below);
-            if (out !== undefined && (sp.out === undefined || list.length !== n0 || list[sp.at] !== node)) {
-              this.#unsplice(sp);
-              out = undefined; // mended: in place, the node at i
-            }
-          }
-          if (out !== undefined) {
-            out.push(node);
-            sp.at++;
-          }
-          skip = true;
-          continue;
-        }
-        if (!topDown && below !== NONE) this.children(node, below);
-        const r = this.call(fn, tag ?? type, node);
-        skip = this.skipped;
-        if (out !== undefined && (sp.out === undefined || list.length !== n0 || list[sp.at] !== node)) {
-          this.#unsplice(sp);
-          out = undefined; // mended (below, or by the function): in place
-        }
-        if (out === undefined && list[i] !== node) {
-          // the function changed the list itself (ctx.container)
-          i = this.#found(list.indexOf(node));
-          frame.index = i;
-        }
-        if (r === undefined || r === null || r === node) {
-          if (out !== undefined) {
-            out.push(node);
-            sp.at++;
-          }
-          continue;
-        }
-        let x = this.#replacement(r, type, fn, tag ?? type);
-        if (Array.isArray(x)) {
-          items = x;
-          n = items.length;
-        } else {
-          n = 1;
-        }
-        if (n === 1) {
-          if (out === undefined) {
-            list[i] = x;
-          } else {
-            list[sp.at] = sp.was[sp.at] = x; // in the list too
-            sp.at++;
-            out.push(x);
-          }
-        } else if (out === undefined) {
-          replace(list, i, 1, items);
-        } else {
-          for (const y of items) out.push(y);
-          sp.at++;
-          sp.marks.push(sp.at, out.length - sp.at);
-        }
-      }
-    } finally {
-      // (all walked, or an error: the list whole either way)
-      this.#unsplice(sp);
-    }
   }
 
   /** The list function on `list`: the list, or a new one of what it returned. Sets `skipped`. */
@@ -1005,7 +777,7 @@ export function walk<W extends Walkable>(target: W, action: WalkAction,
   const calls: Calls = { fns: new Map(), self: undefined, nodes: ALL, lists: NO, every: action };
   const doc = kind.kind === "doc" ? target : undefined;
   const label = kind.kind === "doc" ? "" : kind.label;
-  const w = new Walker(calls, opts.topDown ?? false, doc, toConversion(opts.format), [], label);
+  const w = new Walker(calls, opts.topDown ?? false, doc, toConversion(opts.format), label);
   return deep("walk", () => {
     if (kind.kind === "list") return w.many(target as unknown[], kind.type, undefined, undefined, TOP) as W;
     return w.one(target, kind.kind === "doc" ? SCHEMA.root : kind.type) as W;
@@ -1022,11 +794,10 @@ function applyOne(target: unknown, filter: Filter, conversion: Conversion): unkn
   const kind = targetOf(target);
   if (kind.kind === "empty") return target;
   const topDown = traverse === "topdown";
-  const splicing: Splice[] = []; // (every pass's: see Walker.splicing)
   const isDoc = kind.kind === "doc";
   const label = isDoc ? "" : kind.label;
   const walker = (d: unknown, nodes: (t: string) => boolean, lists: (t: string) => boolean) =>
-    new Walker({ fns, self: filter, nodes, lists }, topDown, d, conversion, splicing, label);
+    new Walker({ fns, self: filter, nodes, lists }, topDown, d, conversion, label);
 
   if (!isDoc) {
     // a fragment: as Lua's el:walk{}, what is in it (a list's own function
