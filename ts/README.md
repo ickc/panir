@@ -273,6 +273,36 @@ is a Lua filter, and its TypeScript version must make exactly the same
 document. An array of filters runs them one after the other, as a Lua
 filter file returning a list: `applyFilter(doc, [first, second])`.
 
+### Coming from Lua
+
+What a port of a Lua filter trips over:
+
+- **`return nil` undoes a function's changes in Lua; here they stay.**
+  In pandoc's Lua a function gets a copy of its element, and what it
+  changes counts only if it returns the element: `return nil` (or no
+  `return`) leaves the element as it was, children and lists included
+  (checked with pandoc 3.14). Here the node itself is changed, and the
+  changes stay whatever the function returns. A Lua filter that changes its
+  element, then returns `nil` (pandoc-ext/list-table removes a div's class,
+  then declines an empty div) is ported by deciding first, and changing
+  after.
+- **Lua's elements are values**: `pandoc.Span(meta.title)` puts a copy in
+  the body. Here a node in a second place is a copy you make (`copy(x)`),
+  or one node in two places.
+- `el.t`, `el.tag`: `el.t`.
+- `el.attributes.k`, `= v`, `= nil`: `getAttribute(el.attr, "k")`,
+  `setAttribute(el.attr, "k", v)`, `removeAttribute(el.attr, "k")`; the
+  first pair with the key, as in Lua. A Lua table as attributes (`{id =
+  "x", class = "a b"}`) gives the identifier and classes; here
+  `attributes: { class: ... }` is a pair named `class`: pass `identifier`
+  and `classes`.
+- `error(...)`: throw; the error gets a note naming the function and the
+  place.
+- `return el, false` (top-down): `ctx.skipChildren()`.
+- Arrays count from 0, Lua's lists from 1 (`el.content[1]`).
+- The metadata a Lua filter keeps from its `Meta` function, for the
+  functions after: `ctx.doc.meta`.
+
 ### Fragments
 
 A filter also applies to any node, or a list of inlines or of blocks, as

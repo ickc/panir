@@ -195,6 +195,35 @@ document.
 [f, g])` several in turn. Under pandoc, a function's `print` goes to
 stderr: stdout is the document.
 
+### Coming from Lua
+
+What a port of a Lua filter trips over:
+
+- **`return nil` undoes a function's changes in Lua; here they stay.**
+  In pandoc's Lua a function gets a copy of its element, and what it
+  changes counts only if it returns the element: `return nil` (or no
+  `return`) leaves the element as it was, children and lists included
+  (checked with pandoc 3.14). Here the node itself is changed, and the
+  changes stay whatever the function returns. A Lua filter that changes its
+  element, then returns `nil` (pandoc-ext/list-table removes a div's class,
+  then declines an empty div) is ported by deciding first, and changing
+  after.
+- **Lua's elements are values**: `pandoc.Span(meta.title)` puts a copy in
+  the body. Here a node in a second place is a copy you make
+  (`copy.deepcopy(x)`), or one node in two places.
+- `el.t`, `el.tag`: `type(el).__name__`.
+- `el.attributes.k`, `= v`, `= nil`: `el.attributes["k"]` (or
+  `.get("k")`), `= v`, `.pop("k", None)`; the first pair with the key, as
+  in Lua. A Lua table as attributes (`{id = "x", class = "a b"}`) gives
+  the identifier and classes; here `attributes={"class": ...}` is a pair
+  named `class`: pass `identifier=` and `classes=`.
+- `error(...)`: raise; the exception gets a note naming the function and
+  the place.
+- `return el, false` (top-down): `ctx.skip_children()`.
+- Lists count from 0 here, from 1 in Lua (`el.content[1]`).
+- The metadata a Lua filter keeps from its `Meta` function, for the
+  functions after: `ctx.doc.meta`.
+
 ### Fragments
 
 A filter also applies to any node, or a list of inlines or of blocks, as

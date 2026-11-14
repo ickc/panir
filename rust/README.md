@@ -112,6 +112,31 @@ They are checked against pandoc's Lua filters, with the scenarios in
 [`corpus/filters/`](https://github.com/ickc/panir/tree/main/corpus/filters). For other nodes (`Cell`, `Attr`,
 ...) or any other walk, `VisitMut`.
 
+### Coming from Lua
+
+What a port of a Lua filter trips over:
+
+- **`return nil` undoes a function's changes in Lua; here they stay.**
+  In pandoc's Lua a function gets a copy of its element, and what it
+  changes counts only if it returns the element: `return nil` (or no
+  `return`) leaves the element as it was, children and lists included
+  (checked with pandoc 3.14). Here the node itself is changed, and the
+  changes stay whatever the function returns. A Lua filter that changes its
+  element, then returns `nil` (pandoc-ext/list-table removes a div's class,
+  then declines an empty div) is ported by deciding first, and changing
+  after.
+- **Lua's elements are values**: `pandoc.Span(meta.title)` puts a copy in
+  the body; here, `.clone()` (ownership allows nothing else).
+- `el.t`, `el.tag`: `x.tag()`.
+- `el.attributes.k`, `= v`, `= nil`: `attr.get("k")`, `attr.set("k", v)`,
+  `attr.remove("k")`; the first pair with the key, as in Lua. A Lua table
+  as attributes (`{id = "x", class = "a b"}`) gives the identifier and
+  classes: `Attr::new("x", &["a", "b"], &[])` (a pair named `class` is an
+  attribute named `class`).
+- `error(...)`: `return ctx.fail(...)`.
+- `return el, false` (top-down): `ctx.skip_children()`.
+- Lists count from 0, Lua's from 1 (`el.content[1]`).
+
 ## Types and `VisitMut`
 
 - A sum type is an enum: a constructor without fields is a unit variant
