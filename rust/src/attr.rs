@@ -1,6 +1,7 @@
-//! An element's attributes by key, as pandoc's Lua `el.attributes[key]`.
+//! An element's attributes by key, as pandoc's Lua `el.attributes[key]`;
+//! attributes and targets made as pandoc's Lua constructors make them.
 
-use crate::{Attr, Text};
+use crate::{Attr, Target, Text};
 
 /// By key, as pandoc's Lua `el.attributes[key]`: the attributes are pairs,
 /// in order, a key perhaps in two; the first pair with a key is the one
@@ -72,5 +73,29 @@ impl Attr {
     /// Whether `class` is one of the classes.
     pub fn has_class(&self, class: &str) -> bool {
         self.classes.iter().any(|c| c == class)
+    }
+}
+
+impl Target {
+    /// A link's or an image's target, in the order of pandoc's Lua
+    /// `pandoc.Link(content, target, title)` (its title `""` unless given).
+    ///
+    /// ```
+    /// use panir::{Attr, Inline, Link, Target};
+    ///
+    /// let email = "ada@example.org";
+    /// let link: Inline = Link {
+    ///     attr: Attr::default(),
+    ///     content: panir::inlines("Ada"),
+    ///     target: Target::new(&format!("mailto:{email}"), ""),
+    /// }
+    /// .into();
+    /// # let _ = link;
+    /// ```
+    pub fn new(url: &str, title: &str) -> Self {
+        Target {
+            url: url.into(),
+            title: title.into(),
+        }
     }
 }

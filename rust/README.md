@@ -235,7 +235,8 @@ What a port of a Lua filter trips over:
   constructors have one; `Table { caption, ..Default::default() }` here).
 - `Attr::new(identifier, classes, attributes)`, in the order of Lua's
   `pandoc.Attr`, takes `&str`s: `Attr::new("", &["note"], &[("lang",
-  "en")])`.
+  "en")])`; `Target::new(url, title)`, a link's or an image's, in the
+  order of Lua's `pandoc.Link(content, target, title)`.
 - An `Attr`'s attributes are pairs, in order, a key perhaps in two; by
   key, as Lua's `el.attributes[key]`: `attr.get("k")` is the value of the
   first pair with the key, `attr.set("k", v)` gives that pair the value,
