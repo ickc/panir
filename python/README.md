@@ -116,7 +116,9 @@ reports `h.level = "2"` and `Para(Header(1))`, and accepts
 
 A function per node type, which returns `None` to keep the node (changed in
 place or not), a node to replace it, or a list to splice in its place (`[]`
-deletes it). A second parameter, if the function has one (without a
+deletes it); a metadata value in a map (a field of the metadata, or of a
+`MetaMap`) is replaced by one value (`[]` there is an error: a key is
+deleted by the function of the metadata or of the `MetaMap`). A second parameter, if the function has one (without a
 default), is the node's `Context`: its `parent`, the `container` it is in
 and its `index` there, its `next`/`prev` siblings, `path`, the `doc`, and
 the output `format`. They are right after earlier nodes of the list were

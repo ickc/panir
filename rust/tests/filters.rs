@@ -536,6 +536,18 @@ impl Filter for MetaValues<'_> {
     }
 }
 
+/// Returns nothing for a map's value: an error.
+struct MetaDelete(Order);
+
+impl Filter for MetaDelete {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn meta_value(&mut self, x: &mut MetaValue, _: &mut Ctx) -> Option<Vec<MetaValue>> {
+        matches!(x, MetaValue::MetaBool(_)).then(Vec::new)
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -559,6 +571,7 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "twice" => Box::new(Twice(order)),
         "attributes" => Box::new(Attributes(order)),
         "fails" => Box::new(Fails(0)),
+        "metadelete" => Box::new(MetaDelete(order)),
         "metacount" => {
             return Some(
                 apply(doc, &mut AddKey, FORMAT).and_then(|()| apply(doc, &mut Count(0), FORMAT)),

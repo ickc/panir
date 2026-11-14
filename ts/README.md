@@ -172,9 +172,11 @@ A filter is an object of functions by constructor (`Str`, `Header`), type
 (`Inline`, `Block`, `MetaValue`) or product (`Cell`, `Pandoc`); a node gets
 its constructor's, or else its type's. A function returns nothing to keep
 the node (changed in place or not), a node to replace it, or an array to
-splice in its place (`[]` deletes it). A function under a capitalised name
-no node has (`Strr`) is an error. A function is called as a method of its
-filter (`this`).
+splice in its place (`[]` deletes it); a metadata value in a map (a field
+of `Meta`, or of a `MetaMap`) is replaced by one value (`[]` there is an
+error: a key is deleted by the function of `Meta` or of the `MetaMap`). A
+function under a capitalised name no node has (`Strr`) is an error. A
+function is called as a method of its filter (`this`).
 
 What a function returns converts as pandoc's Lua converts it: for an
 inline, a string is its words (`return "two words"`), and a list's

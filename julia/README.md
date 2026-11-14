@@ -100,7 +100,10 @@ LibPandoc.jl.
 `walk!(f, doc)` calls `f(x, ctx)` or `f(x)` wherever `f` has a method for
 `x`, so the most specific method wins, by dispatch. A method returns
 `nothing` to keep the node (changed in place or not), a node to replace
-it, or, in a list, a vector to splice in its place (empty: delete). What
+it, or, in a list, a vector to splice in its place (empty: delete); a
+metadata value in a map (a field of the metadata, or of a `MetaMap`) is
+replaced by one value (an empty vector there is an error: a key is deleted
+by the method for the metadata or the `MetaMap`). What
 it returns converts as pandoc's Lua converts it: for an inline, a string
 is its words (`s::Str -> "two words"`), and a vector's strings a `Str`
 each; for a block, a string is `Plain` text, an inline a `Plain` of it,

@@ -431,11 +431,18 @@ class Walker {
     return (tag) => (tag === undefined ? ofType : fns.get(tag) ?? ofType);
   }
 
-  /** What a function returned for a position that holds one node of `type`: the node there now. */
-  #single(r: unknown, node: unknown, type: string, fn: Call, what: string): unknown {
+  /**
+   * What a function returned for a position that holds one node of `type`
+   * (a map's value, if `inMap`): the node there now.
+   */
+  #single(r: unknown, node: unknown, type: string, fn: Call, what: string, inMap: boolean): unknown {
     if (r === undefined || r === null || r === node) return node;
     if (isNodeOf(type, r)) return r;
-    const expected = Array.isArray(r) ? `one ${type} (this position holds one)` : nameOf(type);
+    const expected = !Array.isArray(r)
+      ? nameOf(type)
+      : inMap
+        ? `one ${type} (a map's value: to delete its key, remove it in the function of the Meta or MetaMap holding it)`
+        : `one ${type} (this position holds one)`;
     throw this.#wrong(fn, what, expected, r);
   }
 
@@ -461,8 +468,8 @@ class Walker {
     return out.length === 1 ? out[0] : out;
   }
 
-  /** A node in a position holding one node; returns it or its replacement. */
-  one(node: unknown, type: string): unknown {
+  /** A node in a position holding one node (a map's value, if `inMap`); returns it or its replacement. */
+  one(node: unknown, type: string, inMap = false): unknown {
     const sum = tables().types.get(type)!.kind === "sum";
     const tag = sum ? (node as { t?: string }).t : undefined;
     const fn = this.#find(type)(tag);
@@ -470,14 +477,14 @@ class Walker {
     if (this.topDown) {
       let skip = false;
       if (fn) {
-        node = this.#single(this.call(fn, tag ?? type, node), node, type, fn, tag ?? type);
+        node = this.#single(this.call(fn, tag ?? type, node), node, type, fn, tag ?? type, inMap);
         skip = this.skipped;
       }
       if (!skip) this.children(node, kidsOf(node));
       return node;
     }
     this.children(node, kidsOf(node));
-    return fn ? this.#single(this.call(fn, tag ?? type, node), node, type, fn, tag ?? type) : node;
+    return fn ? this.#single(this.call(fn, tag ?? type, node), node, type, fn, tag ?? type, inMap) : node;
   }
 
   /**
@@ -627,7 +634,7 @@ class Walker {
           // a node in a map: the map is its container, the key its index
           this.frames.push({ parent, field, outer, container: obj, index: k });
           try {
-            y = this.one(obj[k], (item as { ref: string }).ref);
+            y = this.one(obj[k], (item as { ref: string }).ref, true);
           } finally {
             this.frames.pop();
           }

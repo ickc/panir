@@ -228,6 +228,10 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
     return [functions, { traverse: "topdown", ...functions }, listing(seen)];
   },
 
+  metadelete: () => [{
+    MetaBool: () => [],
+  }],
+
   attributes: () => [{
     Span: (s) => {
       const k = getAttribute(s.attr, "k");

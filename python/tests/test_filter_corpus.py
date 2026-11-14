@@ -458,10 +458,21 @@ def metavalues() -> list[Filter]:
     return [functions(Filter()), functions(Filter(traverse="topdown")), listing(seen)]
 
 
+def metadelete() -> list[Filter]:
+    f = Filter()
+
+    @f.on(MetaBool)
+    def delete(b):
+        return []
+
+    return [f]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
-    + (once, lists, meta, newdoc, twice, metacount, attributes, fails, replaced, metavalues)
+    + (once, lists, meta, newdoc, twice, metacount, attributes, fails)
+    + (replaced, metavalues, metadelete)
 }
 
 

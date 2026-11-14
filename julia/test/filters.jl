@@ -207,6 +207,11 @@ function scenario_metavalues()
     Filters([(f, :typewise), (f, :topdown), (listing(seen), :typewise)])
 end
 
+function scenario_metadelete()
+    f(::MetaBool) = MetaValue[]
+    Filters([(f, :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
@@ -214,7 +219,7 @@ const SCENARIOS = Dict(
     "once" => scenario_once, "lists" => scenario_lists, "meta" => scenario_meta,
     "newdoc" => scenario_newdoc, "twice" => scenario_twice, "metacount" => scenario_metacount,
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
-    "metavalues" => scenario_metavalues,
+    "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete,
 )
 
 @testset "filters as pandoc's Lua" begin

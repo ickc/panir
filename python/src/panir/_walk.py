@@ -206,6 +206,11 @@ def _find(lst: list, node: Node, label: str) -> int:
 
 
 Action = Callable[[Node, Context], Any]
+# What a map's value (a metadata field, a MetaMap's entry) is replaced by
+MAP_VALUE = (
+    "one MetaValue (a map's value: to delete its key, remove it in the "
+    "function of the Meta or MetaMap holding it)"
+)
 # A function and whether it takes the context, for a class of nodes or for
 # lists of a class's nodes.
 Handler = tuple[Callable[..., Any], bool]
@@ -289,12 +294,19 @@ class _Walker:
                 node = self.single(result, where, fn, type(node).__name__)
         return node
 
-    def single(self, result: Any, where: str, fn: Callable[..., Any], what: str) -> Node:
+    def single(
+        self,
+        result: Any,
+        where: str,
+        fn: Callable[..., Any],
+        what: str,
+        expected: str = "one node (this position holds one)",
+    ) -> Node:
         """What a function returned for a node in a position that holds one
         (pandoc's Lua has no functions for these: no conversions)."""
         if isinstance(result, Node):
             return result
-        e = ASTTypeError(where, "one node (this position holds one)", _describe(result))
+        e = ASTTypeError(where, expected, _describe(result))
         self.returned(e, fn, what)
         raise e
 
@@ -451,11 +463,9 @@ class _Walker:
                         result, skip = None, False
                         if fn is not None:
                             result, skip = self.call(fn, wants_ctx, x, type(x).__name__)
-                        if isinstance(result, list) and not result:
-                            del value[k]
-                            continue
                         if result is not None and result is not x:
-                            x = self.single(result, f"{spec.label}[{k!r}]", fn, type(x).__name__)  # type: ignore[arg-type]
+                            where = f"{spec.label}[{k!r}]"
+                            x = self.single(result, where, fn, type(x).__name__, MAP_VALUE)  # type: ignore[arg-type]
                             value[k] = x
                             kids = (self.plans.get(type(x)) or self.plan(type(x)))[0]
                         if self.top_down and kids and not skip:
