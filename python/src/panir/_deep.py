@@ -90,24 +90,26 @@ def run(fn: Callable[..., T], *args: Any) -> T:
             out.append((False, e))
 
     with _lock:
-        if _users == 0:
-            _saved = sys.getrecursionlimit()
-            sys.setrecursionlimit(max(_saved, LIMIT))
-        _users += 1
+        old = threading.stack_size()
         try:
-            old = threading.stack_size()
-            try:
-                threading.stack_size(STACK)
-            except (ValueError, RuntimeError):  # (a platform that won't)
-                pass
+            threading.stack_size(STACK)
+        except (ValueError, RuntimeError):  # (a platform that won't: no deeper)
+            raise TooDeep from None
+        try:
+            if _users == 0:
+                _saved = sys.getrecursionlimit()
+                sys.setrecursionlimit(max(_saved, LIMIT))
+            _users += 1
             try:
                 thread = threading.Thread(target=target, name="panir-deep", daemon=True)
                 thread.start()
-            finally:
-                threading.stack_size(old)
-        except BaseException:
-            _release()
-            raise
+            except BaseException as e:
+                _release()
+                if isinstance(e, RuntimeError):  # (no threads: Pyodide's)
+                    raise TooDeep from None
+                raise
+        finally:
+            threading.stack_size(old)
     try:
         thread.join()
     finally:

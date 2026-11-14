@@ -221,3 +221,21 @@ def test_equality_without_recursion():
 
     w = ColWidth(nan)
     assert w == w and ColWidth(float("nan")) != ColWidth(float("nan"))  # (as [nan] == [nan])
+
+
+def test_where_no_thread_can_be_had(monkeypatch):
+    # (a platform that won't give the stack, or has no threads: Pyodide)
+    deep = Pandoc(Para(nested(3000)))
+    monkeypatch.setattr(_deep, "STACK", 1 << 62)
+    with pytest.raises(ASTDepthError):
+        copy.deepcopy(deep)
+    monkeypatch.undo()
+
+    def no_threads(self):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", no_threads)
+    limit = sys.getrecursionlimit()
+    with pytest.raises(ASTDepthError):
+        copy.deepcopy(deep)
+    assert sys.getrecursionlimit() == limit
