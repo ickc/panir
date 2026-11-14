@@ -147,7 +147,11 @@ blocks[0].content[0]`; an exception raised in a function gets the same.
 As in Lua, what a function returns are values: `return [el, el]` puts two
 nodes in the document, the second a copy. Elsewhere a node belongs in one
 place: to put it in a second, copy it (`copy.deepcopy(el)`), or whatever
-changes one later changes both.
+changes one later changes both. That is the filter's author's to get
+right, as anything a program does; for tests and debugging,
+`check_unique(doc)` raises a `ValueError` naming a node it finds in two
+places, and both (by identity: equal nodes are fine; a list in two places
+by what is in it).
 
 ```python
 @f.on(Str)

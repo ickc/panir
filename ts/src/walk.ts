@@ -809,6 +809,36 @@ export function walk<W extends Walkable>(target: W, action: WalkAction,
   });
 }
 
+/**
+ * Check that no node is in two places of `target` (a document, a node, or
+ * an array of them): an error naming the first such node and both places.
+ * A node put in a second place must be a copy (`copy`), or whatever changes
+ * one later changes both; that is the filter's to get right, and this is
+ * for its tests and for debugging (nothing in panir calls it).
+ *
+ * By identity: two equal nodes are fine. An array in two places is found
+ * by the nodes in it; an empty one, holding none, is not. Strings and
+ * numbers can't be changed in place, nor can nodes without fields
+ * (`Space`): they don't count.
+ */
+export function checkUnique(target: Walkable): void {
+  const seen = new Map<object, string>();
+  // (top-down: a node in itself is found before the walk goes round it)
+  walk(target, (node, ctx, type) => {
+    if (Object.keys(node).length <= 1 && "t" in node) return; // (a Space: nothing in it to change)
+    const here = ctx.where;
+    const first = seen.get(node);
+    if (first === undefined) {
+      seen.set(node, here);
+      return;
+    }
+    const e = new Error(`the ${"t" in node ? node.t : type} at ${first} is also at ${here}: ` +
+                        "copy it before putting it in a second place");
+    noted.add(e); // (it says where)
+    throw e;
+  }, { topDown: true });
+}
+
 function applyOne(target: unknown, filter: Filter, conversion: Conversion): unknown {
   const root = SCHEMA.root;
   const traverse = filter.traverse ?? "typewise";

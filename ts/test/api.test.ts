@@ -13,7 +13,7 @@ import {
   applyFilter, ASTDecodeError, ASTDepthError, ASTError, ASTTypeError, Attr, BulletList, Caption, Cell, check, Cite,
   Citation, Code, CodeBlock, Div, Emph, fromJSON, Header, LineBlock, Link, MetaBool, MetaInlines, MetaList,
   MetaString, Note, Pandoc, Para, parse, Plain, Row, Space, Str, Strong, Table, TableBody, TableHead,
-  toJSON, walk,
+  toJSON, walk, checkUnique,
 } from "../src/index.ts";
 import type {
   ASTNode, Block, Context, Filter, Inline, JSONValue, Meta, MetaValue, Traverse, WalkedContext,
@@ -376,4 +376,27 @@ test("walk: every node, the target itself too", () => {
     "TableHead",
   ].filter((t) => t !== "ColWidth"));
   void Note;
+});
+
+test("checkUnique finds a node in two places", () => {
+  const s = Str("x");
+  const d = Pandoc([Para([s, Space(), Str("y")])], { meta: { title: MetaInlines([Str("t")]) } });
+  checkUnique(d); // (nothing to say)
+  checkUnique(Pandoc([Para([Str("a")]), Para([Str("a")])])); // equal, not the same
+  (d.meta.title as MetaInlines).content.push(s);
+  assert.throws(() => checkUnique(d), {
+    message: "the Str at meta.title.content[1] is also at blocks[0].content[0]: copy it before putting it in a second place",
+  });
+  // a node in itself, before the walk goes round it
+  const em = Emph([Str("a")]);
+  em.content.push(em);
+  assert.throws(() => checkUnique(Para([em])), /^Error: the Emph at Para\.content\[0\] is also at Para\.content\[0\]\.content\[1\]/);
+  // an array in two places, by what is in it; a fragment's paths from it
+  const p = Para([Str("a")]);
+  const q = Plain([]);
+  q.content = p.content;
+  assert.throws(() => checkUnique([p, q]), /^Error: the Str at blocks\[0\]\.content\[0\] is also at blocks\[1\]\.content\[0\]/);
+  // a node with nothing in it can't change: one Space in two places is fine
+  const sp = Space();
+  checkUnique(Para([Str("a"), sp, Str("b"), sp]));
 });

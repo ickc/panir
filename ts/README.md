@@ -200,7 +200,10 @@ An error thrown in a function gets the same note (`in filter function
 As in Lua, what a function returns are values: `[el, el]` puts two nodes
 in the document, the second a copy. Elsewhere a node belongs in one place:
 to put it in a second, copy it (`copy(el)`), or whatever changes one later
-changes both.
+changes both. That is the filter's author's to get right, as anything a
+program does; for tests and debugging, `checkUnique(doc)` throws an error
+naming a node it finds in two places, and both (by identity: equal nodes
+are fine; an array in two places by what is in it).
 
 As in Lua, `Inlines` and `Blocks` get every list of them, and `Meta` the
 metadata; each returns a replacement, or nothing (converted as Lua does: a

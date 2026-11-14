@@ -525,6 +525,36 @@ end
 # The task's walker calling methods now, if any.
 const _WALKER = :panir_walker
 
+"""
+    check_unique(x)
+
+Check that no node is in two places of `x` (a document, a node, or a
+vector of them): an `ArgumentError` naming the first such node and both
+places. A node put in a second place must be a copy (`deepcopy`), or
+whatever changes one later changes both; that is the filter's to get
+right, and this is for its tests and for debugging (nothing in Panir calls
+it).
+
+By identity (`===`): two equal nodes are fine. A vector in two places is
+found by the nodes in it; an empty one, holding none, is not. Strings and
+numbers can't be changed in place, nor can nodes without fields (`Space`):
+they don't count.
+"""
+function check_unique(x::Union{Node, Vector{Inline}, Vector{Block}})
+    seen = IdDict{Node, String}()
+    function check(node::Node, ctx)
+        fieldcount(typeof(node)) == 0 && return nothing  # (a Space: nothing in it to change)
+        here = _format_path(ctx.path)
+        first = get!(seen, node, here)
+        first == here || throw(ArgumentError("the $(nameof(typeof(node))) at $first is also at $here: " *
+                                             "copy it before putting it in a second place"))
+        nothing
+    end
+    # (top-down: a node in itself is found before the walk goes round it)
+    walk!(check, x; traverse = :topdown)
+    nothing
+end
+
 function _walk!(@nospecialize(f), node, traverse::Symbol, conversion::Conversion, base::Int)
     # Nothing here is compiled again for each filter (what calls it is
     # dynamic anyway): no closure holds `f`, whose type it would take.

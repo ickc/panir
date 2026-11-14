@@ -33,6 +33,7 @@ from panir import (
     Inline,
     Link,
     MetaBool,
+    MetaInlines,
     MetaList,
     MetaMap,
     MetaString,
@@ -666,3 +667,29 @@ def test_walk_on_a_list():
 
 def test_types_of_fragments():
     assert isinstance(Para(), Block) and isinstance(Str(""), Inline)
+
+
+def test_check_unique_finds_a_node_in_two_places():
+    s = Str("x")
+    d = Pandoc(Para(s, Space(), Str("y")), meta={"title": MetaInlines("t")})
+    panir.check_unique(d)  # (nothing to say)
+    panir.check_unique(Pandoc(Para("a"), Para("a")))  # equal, not the same
+    d.meta["title"].content.append(s)
+    with pytest.raises(ValueError) as e:
+        panir.check_unique(d)
+    assert str(e.value) == (
+        "the Str at meta.title.content[1] is also at blocks[0].content[0]: "
+        "copy it before putting it in a second place"
+    )
+    # a node in itself, before the walk goes round it
+    em = Emph("a")
+    em.content.append(em)
+    with pytest.raises(ValueError, match=r"the Emph at Para.content\[0\] is also at Para"):
+        panir.check_unique(Para(em))
+    # a list in two places, by what is in it; a fragment's paths from it
+    p = Para("a")
+    with pytest.raises(ValueError, match=r"Str at blocks\[0\].content\[0\] is also at blocks\[1\]"):
+        panir.check_unique([p, Plain(*p.content)])
+    # a node with nothing in it can't change: one Space in two places is fine
+    sp = Space()
+    panir.check_unique(Para("a", sp, "b", sp, "c"))
