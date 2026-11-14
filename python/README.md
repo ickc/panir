@@ -258,7 +258,11 @@ divs in one another, or 48 tables in tables, four levels each; on 3.14,
 through `pandoc -f html`). Deeper, reading raises `ASTDecodeError` and
 anything else `ASTDepthError` (an `ASTError` and a `RecursionError`);
 `sys.setrecursionlimit` goes deeper. panir never changes the limit.
-Comparing doesn't recurse.
+Comparing doesn't recurse. A filter function's own runaway recursion (most
+of the stack its own calls, below panir's) stays the `RecursionError` it
+is, with a note of which function; one that goes through panir (a function
+that walks a node with itself, without end) is told from a deep document
+only by its note.
 
 ## Also
 

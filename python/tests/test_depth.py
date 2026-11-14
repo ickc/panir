@@ -136,16 +136,34 @@ def _nested_json(count: int) -> dict:
     return {"pandoc-api-version": [1, 23, 1, 2], "meta": {}, "blocks": [j]}
 
 
-def test_a_filter_functions_own_recursion_says_which_function():
-    f = Filter()
+@pytest.mark.parametrize("traverse", ["typewise", "topdown", "bottomup"])
+def test_a_filter_functions_own_recursion_is_its_own(traverse):
+    """A filter function that calls itself without end: its RecursionError as
+    it is, which says which function; not the document's depth."""
+    f = Filter(traverse=traverse)
 
     @f.on(Str)
     def endless(s):
         return endless(s)
 
-    with pytest.raises(ASTDepthError) as e:
+    with pytest.raises(RecursionError) as e:
         f(Pandoc(Para("x")))
+    assert not isinstance(e.value, ASTError)
     assert "in filter function" in e.value.__notes__[0]
+    assert "endless" in e.value.__notes__[0]
+
+    def endless_too(x, ctx):
+        return endless_too(x, ctx)
+
+    with pytest.raises(RecursionError) as e:
+        walk(Pandoc(Para("x")), endless_too, top_down=traverse == "topdown")
+    assert not isinstance(e.value, ASTError)
+    assert "endless_too" in e.value.__notes__[0]
+    # a deep document, with a filter function at each level, is still too deep
+    g = Filter(traverse=traverse)
+    g.on(Div)(lambda d: None)
+    with pytest.raises(ASTDepthError):
+        g(nested(3000))
 
 
 def test_a_higher_recursion_limit_goes_deeper():
