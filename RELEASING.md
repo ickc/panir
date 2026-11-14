@@ -4,7 +4,7 @@ One version for every language, SemVer (`0.1.0`, `0.1.0-alpha.1`); Python
 spells it as PEP 440 (`0.1.0a1`). `scripts/version.py` prints it, fails if
 the packages disagree, and sets it everywhere.
 
-CI's `package` job builds every package on every push, as it would be
+CI's `package` job builds every package on every change, as it would be
 published, without publishing: `twine check` on the Python sdist and wheel,
 the npm tarball installed and imported, `cargo publish --dry-run`.
 

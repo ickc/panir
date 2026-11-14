@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -224,7 +225,7 @@ jobs:
           name: fuzz-failures
           path: fuzz/failures
 
-  # What the registries would get, on every push: one version everywhere,
+  # What the registries would get, on every change: one version everywhere,
   # and each package as it would be published (nothing is published here;
   # see release.yml and RELEASING.md)
   package:
