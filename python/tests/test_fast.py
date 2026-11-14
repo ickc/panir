@@ -24,7 +24,7 @@ def test_as_the_slow_way(j):
     text = json.dumps(j, **JSON)
     slow = Pandoc.from_json(j)
     # the fast reader and writer themselves, not their fallback
-    fast = _fast._root(json.loads(text, object_hook=_fast._hook))
+    fast = _fast._product_reader(Pandoc)(json.loads(text, object_hook=_fast._hook))
     assert fast == slow
     assert type(fast.blocks) is NodeList and type(fast.meta) is NodeDict
     assert _fast._encoder.encode(slow) == json.dumps(slow.to_json(), **JSON) == text

@@ -27,6 +27,8 @@ from collections.abc import Iterable, Mapping
 from operator import length_hint
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
+from . import _deep
+
 if TYPE_CHECKING:
     from typing_extensions import Self
 
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ASTDecodeError",
+    "ASTDepthError",
     "ASTError",
     "ASTTypeError",
     "Attributes",
@@ -106,6 +109,28 @@ class ASTDecodeError(ASTError, ValueError):
 
     def __reduce__(self) -> tuple:
         return (type(self), (self.path, self.expected, self.got))
+
+
+class ASTDepthError(ASTError, RecursionError):
+    """A document nested deeper than panir can go, even in a thread of its
+    own with a large stack (see ``_deep``): ``where`` is what it was doing."""
+
+
+def too_deep(where: str) -> ASTDepthError:
+    return ASTDepthError(
+        where,
+        "a document nested less deeply",
+        f"one deeper than {_deep.LIMIT:,} Python calls in a thread of panir's own can go",
+    )
+
+
+def too_deep_to_read() -> ASTDecodeError:
+    return ASTDecodeError(
+        (),
+        "JSON nested less deeply",
+        "JSON deeper than Python's json module, or panir's reader, can go "
+        "in a thread of panir's own",
+    )
 
 
 def format_path(path: Iterable) -> str:
@@ -225,12 +250,19 @@ class Node:
     def __eq__(self, other: object) -> bool:
         if type(other) is not type(self):
             return NotImplemented
-        return all(getattr(self, f) == getattr(other, f) for f in self._fields)
+        return _equal(self, other)
 
     __hash__ = None  # type: ignore[assignment]  # mutable
 
     def __repr__(self) -> str:
         """Constructor syntax, omitting defaults: ``Header(1, Str('Hi'))``."""
+        # (the repr of what is in it is this function's, through repr(list))
+        what = lambda: too_deep(f"repr of {type(self).__name__}")  # noqa: E731
+        if _deep.risky():  # (and what is in it, in panir's thread too)
+            return _deep.retry(self._repr, what)
+        return _deep.deep(self._repr, what)
+
+    def _repr(self) -> str:
         cls = type(self)
         args = [getattr(self, f) for f in cls._positional]
         while (
@@ -239,9 +271,9 @@ class Node:
             and args[-1] == cls._default_of(cls, cls._positional[len(args) - 1])
         ):
             args.pop()
-        out = [repr(v) for v in args]
+        out = [_repr(v) for v in args]
         if cls._variadic is not None:
-            out += [repr(x) for x in getattr(self, cls._variadic)]
+            out += [_repr(x) for x in getattr(self, cls._variadic)]
         for f in cls._fields:
             if f in cls._positional or f == cls._variadic:
                 continue
@@ -251,9 +283,9 @@ class Node:
                 for g in inner._fields:
                     v = getattr(value, g)
                     if g not in inner._defaults or v != cls._default_of(inner, g):
-                        out.append(f"{g}={v!r}")
+                        out.append(f"{g}={_repr(v)}")
             elif f not in cls._defaults or value != cls._default_of(cls, f):
-                out.append(f"{f}={value!r}")
+                out.append(f"{f}={_repr(value)}")
         return f"{cls.__name__}({', '.join(out)})"
 
     @staticmethod
@@ -261,15 +293,22 @@ class Node:
         return owner._specs[field].decode(owner._defaults[field])
 
     def __reduce__(self) -> tuple:
-        return (_restore, (type(self), tuple(getattr(self, f) for f in self._fields)))
+        # as pandoc's JSON, read back as loads reads it (checked): faster
+        # than field by field, and as deep as reading goes
+        from ._fast import node_text
+
+        text = node_text(self)
+        if text is None:  # (a subclass's node, a number that isn't finite)
+            return (_restore, (type(self), tuple(getattr(self, f) for f in self._fields)))
+        return (_from_text, (type(self), text))
 
     def __copy__(self) -> Node:
         return _make(type(self), [getattr(self, f) for f in self._fields])
 
-    def __deepcopy__(self, memo: dict) -> Node:
+    def __deepcopy__(self, memo: dict) -> Self:
         from ._fast import clone  # (it reads this module's declarations)
 
-        return clone(self)
+        return _deep.deep(clone, lambda: too_deep(f"copy of {type(self).__name__}"), self)  # type: ignore[return-value]
 
     def walk(self, filter: Filter, format: str | None = None, **kwargs: Any) -> Self:
         """Apply a filter to what is in this node (in place), as pandoc's
@@ -280,6 +319,9 @@ class Node:
 
     def to_json(self) -> Any:
         """This value as pandoc's JSON (lists, dicts, str, ...; for json.dumps)."""
+        return _deep.deep(self._to_json, lambda: too_deep(f"JSON of {type(self).__name__}"))
+
+    def _to_json(self) -> Any:
         try:
             return _SPEC_OF[_sum_of(type(self)) or type(self)].encode(self)
         except _Bad as e:
@@ -293,20 +335,79 @@ class Node:
         spec = _SPEC_OF.get(_sum_of(cls) or cls)
         if spec is None:
             raise TypeError(f"{cls.__name__} is not a pandoc type")
-        try:
-            value = spec.decode(j)
-        except _Bad as e:
-            raise ASTDecodeError(
-                tuple(reversed(e.path)), e.expected, e.got_text or _describe_json(e.got)
-            ) from None
+        value = _deep.deep(_decode, too_deep_to_read, spec, j)
         if not isinstance(value, cls):
             raise ASTDecodeError((), cls.__name__, _describe(value))
         return value
 
 
+def _repr(v: Any) -> str:
+    """``repr(v)``, the nodes in it by ``Node._repr``: recursion in Python
+    only (``repr`` of a list recurses in C, which 3.12 and 3.13 stop at
+    10,000 levels, whatever the stack)."""
+    if isinstance(v, Node):
+        return v._repr()
+    if isinstance(v, list):
+        return "[" + ", ".join([_repr(x) for x in v]) + "]"
+    if type(v) is tuple:
+        inner = [_repr(x) for x in v]
+        return "(" + ", ".join(inner) + ("," if len(inner) == 1 else "") + ")"
+    if isinstance(v, dict):
+        return "{" + ", ".join([f"{k!r}: {_repr(x)}" for k, x in v.items()]) + "}"
+    return repr(v)
+
+
+def _decode(spec: Any, j: Any) -> Any:
+    try:
+        return spec.decode(j)
+    except _Bad as e:
+        raise ASTDecodeError(
+            tuple(reversed(e.path)), e.expected, e.got_text or _describe_json(e.got)
+        ) from None
+
+
+def _equal(a: Node, b: Node) -> bool:
+    """Whether two nodes of one class are equal: their fields, and what is
+    in them. Without recursion, so as deep as a document goes; as ``==`` of
+    lists, an element is equal to itself (a NaN too)."""
+    todo: list = [(a, b)]
+    pop, push = todo.pop, todo.append
+    while todo:
+        x, y = pop()
+        if x is y:
+            continue
+        tx = type(x)
+        if tx is not type(y):
+            if isinstance(x, Node) or isinstance(y, Node) or x != y:
+                return False
+            continue
+        if isinstance(x, Node):
+            for f in tx._fields:
+                push((getattr(x, f), getattr(y, f)))
+        elif isinstance(x, (list, tuple)):
+            if len(x) != len(y):
+                return False
+            for pair in zip(x, y):
+                push(pair)
+        elif isinstance(x, dict):
+            if x.keys() != y.keys():
+                return False
+            for k, v in x.items():
+                push((v, y[k]))
+        elif x != y:
+            return False
+    return True
+
+
 def format_path_suffix(path: list) -> str:
     s = format_path(reversed(path))
     return s if s.startswith("[") or not s else "." + s
+
+
+def _from_text(cls: type[Node], text: str) -> Node:
+    from ._fast import loads
+
+    return loads(text, cls)
 
 
 def _restore(cls: type[Node], values: tuple) -> Node:

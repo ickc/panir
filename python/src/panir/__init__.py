@@ -17,6 +17,7 @@ from typing import IO, Any
 from . import _fast, _types
 from ._core import (
     ASTDecodeError,
+    ASTDepthError,
     ASTError,
     ASTTypeError,
     Attributes,
@@ -58,6 +59,7 @@ def dump(doc: Pandoc, fp: IO[str]) -> None:
 
 __all__ = [
     "ASTDecodeError",
+    "ASTDepthError",
     "ASTError",
     "ASTTypeError",
     "Attributes",

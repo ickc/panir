@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ._core import Node, NodeList, text_inlines
+from . import _deep
+from ._core import Node, NodeList, text_inlines, too_deep
 from ._types import (
     Block,
     Cite,
@@ -60,6 +61,10 @@ def stringify(value: Any) -> str:
     curly quotes, notes and citations' data are dropped, code and math keep
     their text.
     """
+    return _deep.deep(_stringify, lambda: too_deep("stringify"), value)
+
+
+def _stringify(value: Any) -> str:
     out: list[str] = []
     _text(value, out)
     return "".join(out)
@@ -106,12 +111,16 @@ def to_python(value: MetaValue | Mapping[str, MetaValue]) -> Any:
 
     ``MetaInlines`` and ``MetaBlocks`` become their text (``stringify``).
     """
+    return _deep.deep(_to_python, lambda: too_deep("to_python"), value)
+
+
+def _to_python(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return {k: to_python(v) for k, v in value.items()}
+        return {k: _to_python(v) for k, v in value.items()}
     if isinstance(value, MetaMap):
-        return {k: to_python(v) for k, v in value.content.items()}
+        return {k: _to_python(v) for k, v in value.content.items()}
     if isinstance(value, MetaList):
-        return [to_python(v) for v in value.content]
+        return [_to_python(v) for v in value.content]
     if isinstance(value, MetaBool):
         return value.value
     if isinstance(value, MetaString):
@@ -128,6 +137,10 @@ def from_python(value: Any) -> MetaValue | None:
     int and float -> MetaString (YAML numbers read by pandoc are strings too).
     Setting metadata converts with this: ``doc.meta["draft"] = True``.
     """
+    return _deep.deep(_from_python, lambda: too_deep("from_python"), value)
+
+
+def _from_python(value: Any) -> MetaValue | None:
     if isinstance(value, MetaValue):
         return value
     if isinstance(value, bool):
@@ -144,7 +157,7 @@ def from_python(value: Any) -> MetaValue | None:
 
 
 def _meta(value: Any) -> Any:
-    converted = from_python(value)
+    converted = _from_python(value)
     return value if converted is None else converted
 
 

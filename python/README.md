@@ -244,10 +244,33 @@ and that depends on who runs it:
   format yet (proposed: jgm/pandoc#11016), so reading assumes markdown
   unless given one: `libpandoc.read_many(texts, "rst")`.
 
+## Deep documents
+
+Reading, writing, walking, copying, comparing and pickling work on
+documents nested at least 256 levels deep (blocks and inlines in each
+other; the Rust crate's `MAX_DEPTH`), on Python 3.10 to 3.14, in any
+thread, without touching the recursion limit: 300 nested divs is a 9 kB
+web page. What goes deeper than the calling thread allows goes on in a
+thread of panir's own, with a 256 MB stack (address space, used as
+touched) and a recursion limit of 50,000 (Python has one limit for all
+threads: it is raised meanwhile). Comparing doesn't recurse at all.
+
+Deeper still, it works as far as that thread goes: about 1,100 tables in
+tables or 3,300 divs on 3.12 and 3.13, whose `json` stops at 10,000 levels
+whatever the stack; on 3.10, 3.11 and 3.14, about 5,500 tables or 16,000
+divs to read (more on 3.14), 2,500 tables or 10,000 divs to read or write
+the slow way (`from_json`, `to_json`, or a number that isn't finite).
+Beyond, reading raises `ASTDecodeError`, and anything else `ASTDepthError`
+(an `ASTError` and a `RecursionError`): never a bare `RecursionError`, nor
+a crash in panir. (CPython 3.13 itself crashes freeing any object nested
+a few thousand levels deep, plain lists too, in a thread with a stack of
+512 kB.)
+
 ## Also
 
 `loads`/`dumps`/`load`/`dump` for pandoc's JSON, `stringify` (as pandoc's
-`pandoc.utils.stringify`), `to_python`/`from_python` for metadata. Python's
-cyclic garbage collector is paused while a document is read or written,
-and for the whole of `f.main()`: it went through the new nodes again and
-again, half of the time.
+`pandoc.utils.stringify`), `to_python`/`from_python` for metadata. A node
+pickles as its JSON, read back as `loads` reads it. Python's cyclic
+garbage collector is paused while a document is read or written, and for
+the whole of `f.main()`: it went through the new nodes again and again,
+half of the time.
