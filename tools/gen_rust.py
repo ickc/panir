@@ -35,6 +35,8 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "rust/src/generated.rs"
 
 PRIM = {"string": "Text", "int": "i64", "double": "f64", "bool": "bool"}
+# lists read through a stack (lib.rs, ``List``), to their length
+STACKED = {"Vec<Inline>": "crate::List<Inline>", "Vec<Block>": "crate::List<Block>"}
 KEYWORDS = {
     "type",
     "match",
@@ -307,8 +309,14 @@ class Gen:
             else:
                 if len(c["fields"]) == 1:
                     self.no_double(c["fields"][0]["type"], cn)
-                stream.append(f'{" " * 24}"{cn}" => {name}::{cn}(map.next_value()?),\n')
-                early.append(f'                "{cn}" => {name}::{cn}(crate::contents(c)?),\n')
+                ty = self.rust(c["fields"][0]["type"]) if len(c["fields"]) == 1 else ""
+                if ty in STACKED:
+                    read = f"map.next_value::<{STACKED[ty]}>()?.0"
+                    later = f"crate::contents::<{STACKED[ty]}, E>(c)?.0"
+                else:
+                    read, later = "map.next_value()?", "crate::contents(c)?"
+                stream.append(f'{" " * 24}"{cn}" => {name}::{cn}({read}),\n')
+                early.append(f'                "{cn}" => {name}::{cn}({later}),\n')
         unit_arms = "".join(f'                    "{u}" => Some({name}::{u}),\n' for u in units)
         # a type that holds itself is read level by level: count them
         guard = "let _level = crate::Level::enter()?;\n                " if self.nests(name) else ""
@@ -354,8 +362,13 @@ class Gen:
                 "    pub(crate) api_version: Vec<i64>,\n"
             )
         for f in fields:
+            serde = []
             if "key" in f and f["key"] != f["name"]:
-                o.append(f'    #[serde(rename = "{f["key"]}")]\n')
+                serde.append(f'rename = "{f["key"]}"')
+            if derive_serde and self.rust(f["type"]) in STACKED:
+                serde.append('deserialize_with = "crate::list"')
+            if serde:
+                o.append(f"    #[serde({', '.join(serde)})]\n")
             o.append(f"    pub {ident(f['name'])}: {self.rust(f['type'])},\n")
         o.append("}\n\n")
         if self.has_default(t):
@@ -387,8 +400,16 @@ class Gen:
             self.json_impl(name, f"self.{ident(fields[0]['name'])}.json(out);")
         if encoding == "array":
             refs = ", ".join(f"&self.{ident(f['name'])}" for f in fields)
-            types = ", ".join(self.rust(f["type"]) for f in fields)
+            types = ", ".join(
+                STACKED.get(self.rust(f["type"]), self.rust(f["type"])) for f in fields
+            )
             names = ", ".join(ident(f["name"]) for f in fields)
+            inits = ", ".join(
+                f"{ident(f['name'])}: {ident(f['name'])}.0"
+                if self.rust(f["type"]) in STACKED
+                else ident(f["name"])
+                for f in fields
+            )
             o.append(
                 f"impl Serialize for {name} {{\n"
                 f"    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {{\n"
@@ -399,7 +420,7 @@ class Gen:
                 f"    fn deserialize<D: Deserializer<'de>>(d: D)"
                 f" -> Result<Self, D::Error> {{\n"
                 f"        let ({names}) = <({types})>::deserialize(d)?;\n"
-                f"        Ok({name} {{ {names} }})\n    }}\n}}\n\n"
+                f"        Ok({name} {{ {inits} }})\n    }}\n}}\n\n"
             )
 
     # -- the visitor ----------------------------------------------------------

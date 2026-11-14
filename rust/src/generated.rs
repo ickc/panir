@@ -21,6 +21,7 @@ pub struct Pandoc {
     #[serde(rename = "pandoc-api-version", deserialize_with = "crate::api_version")]
     pub(crate) api_version: Vec<i64>,
     pub meta: Meta,
+    #[serde(deserialize_with = "crate::list")]
     pub blocks: Vec<Block>,
 }
 
@@ -112,12 +113,18 @@ impl<'de> Deserialize<'de> for Block {
                             None => early = Some(map.next_value()?),
                             Some(t) => {
                                 value = Some(match t {
-                                    "Plain" => Block::Plain(map.next_value()?),
-                                    "Para" => Block::Para(map.next_value()?),
+                                    "Plain" => {
+                                        Block::Plain(map.next_value::<crate::List<Inline>>()?.0)
+                                    }
+                                    "Para" => {
+                                        Block::Para(map.next_value::<crate::List<Inline>>()?.0)
+                                    }
                                     "LineBlock" => Block::LineBlock(map.next_value()?),
                                     "CodeBlock" => Block::CodeBlock(map.next_value()?),
                                     "RawBlock" => Block::RawBlock(map.next_value()?),
-                                    "BlockQuote" => Block::BlockQuote(map.next_value()?),
+                                    "BlockQuote" => {
+                                        Block::BlockQuote(map.next_value::<crate::List<Block>>()?.0)
+                                    }
                                     "OrderedList" => Block::OrderedList(map.next_value()?),
                                     "BulletList" => Block::BulletList(map.next_value()?),
                                     "DefinitionList" => Block::DefinitionList(map.next_value()?),
@@ -148,12 +155,12 @@ impl<'de> Deserialize<'de> for Block {
         // once "t" is known
         fn later<E: de::Error>(t: &str, c: &serde_json::value::RawValue) -> Result<Block, E> {
             Ok(match t {
-                "Plain" => Block::Plain(crate::contents(c)?),
-                "Para" => Block::Para(crate::contents(c)?),
+                "Plain" => Block::Plain(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "Para" => Block::Para(crate::contents::<crate::List<Inline>, E>(c)?.0),
                 "LineBlock" => Block::LineBlock(crate::contents(c)?),
                 "CodeBlock" => Block::CodeBlock(crate::contents(c)?),
                 "RawBlock" => Block::RawBlock(crate::contents(c)?),
-                "BlockQuote" => Block::BlockQuote(crate::contents(c)?),
+                "BlockQuote" => Block::BlockQuote(crate::contents::<crate::List<Block>, E>(c)?.0),
                 "OrderedList" => Block::OrderedList(crate::contents(c)?),
                 "BulletList" => Block::BulletList(crate::contents(c)?),
                 "DefinitionList" => Block::DefinitionList(crate::contents(c)?),
@@ -420,11 +427,11 @@ impl Serialize for Header {
 
 impl<'de> Deserialize<'de> for Header {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (level, attr, content) = <(i64, Attr, Vec<Inline>)>::deserialize(d)?;
+        let (level, attr, content) = <(i64, Attr, crate::List<Inline>)>::deserialize(d)?;
         Ok(Header {
             level,
             attr,
-            content,
+            content: content.0,
         })
     }
 }
@@ -544,11 +551,11 @@ impl Serialize for Figure {
 
 impl<'de> Deserialize<'de> for Figure {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (attr, caption, content) = <(Attr, Caption, Vec<Block>)>::deserialize(d)?;
+        let (attr, caption, content) = <(Attr, Caption, crate::List<Block>)>::deserialize(d)?;
         Ok(Figure {
             attr,
             caption,
-            content,
+            content: content.0,
         })
     }
 }
@@ -587,8 +594,11 @@ impl Serialize for Div {
 
 impl<'de> Deserialize<'de> for Div {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (attr, content) = <(Attr, Vec<Block>)>::deserialize(d)?;
-        Ok(Div { attr, content })
+        let (attr, content) = <(Attr, crate::List<Block>)>::deserialize(d)?;
+        Ok(Div {
+            attr,
+            content: content.0,
+        })
     }
 }
 
@@ -643,8 +653,12 @@ impl<'de> Deserialize<'de> for MetaValue {
                                     "MetaList" => MetaValue::MetaList(map.next_value()?),
                                     "MetaBool" => MetaValue::MetaBool(map.next_value()?),
                                     "MetaString" => MetaValue::MetaString(map.next_value()?),
-                                    "MetaInlines" => MetaValue::MetaInlines(map.next_value()?),
-                                    "MetaBlocks" => MetaValue::MetaBlocks(map.next_value()?),
+                                    "MetaInlines" => MetaValue::MetaInlines(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
+                                    "MetaBlocks" => MetaValue::MetaBlocks(
+                                        map.next_value::<crate::List<Block>>()?.0,
+                                    ),
                                     _ => unreachable!(),
                                 })
                             }
@@ -668,8 +682,12 @@ impl<'de> Deserialize<'de> for MetaValue {
                 "MetaList" => MetaValue::MetaList(crate::contents(c)?),
                 "MetaBool" => MetaValue::MetaBool(crate::contents(c)?),
                 "MetaString" => MetaValue::MetaString(crate::contents(c)?),
-                "MetaInlines" => MetaValue::MetaInlines(crate::contents(c)?),
-                "MetaBlocks" => MetaValue::MetaBlocks(crate::contents(c)?),
+                "MetaInlines" => {
+                    MetaValue::MetaInlines(crate::contents::<crate::List<Inline>, E>(c)?.0)
+                }
+                "MetaBlocks" => {
+                    MetaValue::MetaBlocks(crate::contents::<crate::List<Block>, E>(c)?.0)
+                }
                 _ => unreachable!(),
             })
         }
@@ -795,13 +813,27 @@ impl<'de> Deserialize<'de> for Inline {
                             Some(t) => {
                                 value = Some(match t {
                                     "Str" => Inline::Str(map.next_value()?),
-                                    "Emph" => Inline::Emph(map.next_value()?),
-                                    "Underline" => Inline::Underline(map.next_value()?),
-                                    "Strong" => Inline::Strong(map.next_value()?),
-                                    "Strikeout" => Inline::Strikeout(map.next_value()?),
-                                    "Superscript" => Inline::Superscript(map.next_value()?),
-                                    "Subscript" => Inline::Subscript(map.next_value()?),
-                                    "SmallCaps" => Inline::SmallCaps(map.next_value()?),
+                                    "Emph" => {
+                                        Inline::Emph(map.next_value::<crate::List<Inline>>()?.0)
+                                    }
+                                    "Underline" => Inline::Underline(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
+                                    "Strong" => {
+                                        Inline::Strong(map.next_value::<crate::List<Inline>>()?.0)
+                                    }
+                                    "Strikeout" => Inline::Strikeout(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
+                                    "Superscript" => Inline::Superscript(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
+                                    "Subscript" => Inline::Subscript(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
+                                    "SmallCaps" => Inline::SmallCaps(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
                                     "Quoted" => Inline::Quoted(map.next_value()?),
                                     "Cite" => Inline::Cite(map.next_value()?),
                                     "Code" => Inline::Code(map.next_value()?),
@@ -821,7 +853,9 @@ impl<'de> Deserialize<'de> for Inline {
                                     "RawInline" => Inline::RawInline(map.next_value()?),
                                     "Link" => Inline::Link(map.next_value()?),
                                     "Image" => Inline::Image(map.next_value()?),
-                                    "Note" => Inline::Note(map.next_value()?),
+                                    "Note" => {
+                                        Inline::Note(map.next_value::<crate::List<Block>>()?.0)
+                                    }
                                     "Span" => Inline::Span(map.next_value()?),
                                     _ => unreachable!(),
                                 })
@@ -843,13 +877,15 @@ impl<'de> Deserialize<'de> for Inline {
         fn later<E: de::Error>(t: &str, c: &serde_json::value::RawValue) -> Result<Inline, E> {
             Ok(match t {
                 "Str" => Inline::Str(crate::contents(c)?),
-                "Emph" => Inline::Emph(crate::contents(c)?),
-                "Underline" => Inline::Underline(crate::contents(c)?),
-                "Strong" => Inline::Strong(crate::contents(c)?),
-                "Strikeout" => Inline::Strikeout(crate::contents(c)?),
-                "Superscript" => Inline::Superscript(crate::contents(c)?),
-                "Subscript" => Inline::Subscript(crate::contents(c)?),
-                "SmallCaps" => Inline::SmallCaps(crate::contents(c)?),
+                "Emph" => Inline::Emph(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "Underline" => Inline::Underline(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "Strong" => Inline::Strong(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "Strikeout" => Inline::Strikeout(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "Superscript" => {
+                    Inline::Superscript(crate::contents::<crate::List<Inline>, E>(c)?.0)
+                }
+                "Subscript" => Inline::Subscript(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "SmallCaps" => Inline::SmallCaps(crate::contents::<crate::List<Inline>, E>(c)?.0),
                 "Quoted" => Inline::Quoted(crate::contents(c)?),
                 "Cite" => Inline::Cite(crate::contents(c)?),
                 "Code" => Inline::Code(crate::contents(c)?),
@@ -860,7 +896,7 @@ impl<'de> Deserialize<'de> for Inline {
                 "RawInline" => Inline::RawInline(crate::contents(c)?),
                 "Link" => Inline::Link(crate::contents(c)?),
                 "Image" => Inline::Image(crate::contents(c)?),
-                "Note" => Inline::Note(crate::contents(c)?),
+                "Note" => Inline::Note(crate::contents::<crate::List<Block>, E>(c)?.0),
                 "Span" => Inline::Span(crate::contents(c)?),
                 _ => unreachable!(),
             })
@@ -1045,10 +1081,10 @@ impl Serialize for Quoted {
 
 impl<'de> Deserialize<'de> for Quoted {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (quote_type, content) = <(QuoteType, Vec<Inline>)>::deserialize(d)?;
+        let (quote_type, content) = <(QuoteType, crate::List<Inline>)>::deserialize(d)?;
         Ok(Quoted {
             quote_type,
-            content,
+            content: content.0,
         })
     }
 }
@@ -1087,8 +1123,11 @@ impl Serialize for Cite {
 
 impl<'de> Deserialize<'de> for Cite {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (citations, content) = <(Vec<Citation>, Vec<Inline>)>::deserialize(d)?;
-        Ok(Cite { citations, content })
+        let (citations, content) = <(Vec<Citation>, crate::List<Inline>)>::deserialize(d)?;
+        Ok(Cite {
+            citations,
+            content: content.0,
+        })
     }
 }
 
@@ -1210,10 +1249,10 @@ impl Serialize for Link {
 
 impl<'de> Deserialize<'de> for Link {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (attr, content, target) = <(Attr, Vec<Inline>, Target)>::deserialize(d)?;
+        let (attr, content, target) = <(Attr, crate::List<Inline>, Target)>::deserialize(d)?;
         Ok(Link {
             attr,
-            content,
+            content: content.0,
             target,
         })
     }
@@ -1247,10 +1286,10 @@ impl Serialize for Image {
 
 impl<'de> Deserialize<'de> for Image {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (attr, content, target) = <(Attr, Vec<Inline>, Target)>::deserialize(d)?;
+        let (attr, content, target) = <(Attr, crate::List<Inline>, Target)>::deserialize(d)?;
         Ok(Image {
             attr,
-            content,
+            content: content.0,
             target,
         })
     }
@@ -1290,8 +1329,11 @@ impl Serialize for Span {
 
 impl<'de> Deserialize<'de> for Span {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (attr, content) = <(Attr, Vec<Inline>)>::deserialize(d)?;
-        Ok(Span { attr, content })
+        let (attr, content) = <(Attr, crate::List<Inline>)>::deserialize(d)?;
+        Ok(Span {
+            attr,
+            content: content.0,
+        })
     }
 }
 
@@ -1427,8 +1469,11 @@ impl Serialize for Caption {
 
 impl<'de> Deserialize<'de> for Caption {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (short, content) = <(Option<ShortCaption>, Vec<Block>)>::deserialize(d)?;
-        Ok(Caption { short, content })
+        let (short, content) = <(Option<ShortCaption>, crate::List<Block>)>::deserialize(d)?;
+        Ok(Caption {
+            short,
+            content: content.0,
+        })
     }
 }
 
@@ -1636,9 +1681,9 @@ impl crate::Json for QuoteType {
 pub struct Citation {
     #[serde(rename = "citationId")]
     pub id: Text,
-    #[serde(rename = "citationPrefix")]
+    #[serde(rename = "citationPrefix", deserialize_with = "crate::list")]
     pub prefix: Vec<Inline>,
-    #[serde(rename = "citationSuffix")]
+    #[serde(rename = "citationSuffix", deserialize_with = "crate::list")]
     pub suffix: Vec<Inline>,
     #[serde(rename = "citationMode")]
     pub mode: CitationMode,
@@ -2090,13 +2135,13 @@ impl Serialize for Cell {
 impl<'de> Deserialize<'de> for Cell {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let (attr, alignment, row_span, col_span, content) =
-            <(Attr, Alignment, RowSpan, ColSpan, Vec<Block>)>::deserialize(d)?;
+            <(Attr, Alignment, RowSpan, ColSpan, crate::List<Block>)>::deserialize(d)?;
         Ok(Cell {
             attr,
             alignment,
             row_span,
             col_span,
-            content,
+            content: content.0,
         })
     }
 }

@@ -98,11 +98,15 @@ They are checked against pandoc's Lua filters, with the scenarios in
   `String`, in the 24 bytes a `String` takes. It reads as a `&str`; make one
   with `.into()` from `&str`, `String` or `Cow<str>` (`*s =
   s.to_uppercase().into()`); `push_str`, `extend` and `write!` append to
-  one, `make_mut` changes it in place. Against `String`, reading
-  and writing JSON is 15–24% faster and a whole document's AST 16% smaller.
+  one, `edit(|s| ...)` changes it as a `String` (a short one stays in
+  the value). Against `String`, reading and writing JSON is 15–24% faster
+  and a whole document's AST 16% smaller.
 - `from_str` reads without tracking where it is (another 25% faster); the
   path of an error is found from its position in the text, which is gone
-  through up to there, not by reading the document again.
+  through up to there, not by reading the document again. Lists of inlines
+  and of blocks are read to their length, through a stack each kind
+  shares, not grown by doubling: a document read takes 5% more memory
+  than its clone, where it took 43% more.
 - `to_string` writes each type's JSON straight into a string (generated,
   the same text as serde's `Serialize` gives, twice as fast), and
   `to_writer` hands it over block by block.

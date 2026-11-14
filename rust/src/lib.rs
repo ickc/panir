@@ -391,6 +391,76 @@ pub(crate) fn contents<'a, T: serde::Deserialize<'a>, E: serde::de::Error>(
     })
 }
 
+/// A list of inlines or of blocks, read to its length (what the reader
+/// gives a `Vec<Inline>` or `Vec<Block>`). Read straight into a `Vec`, a
+/// list grows by doubling, and keeps what it didn't use: 29% of a document
+/// read. Its elements go on a stack of their type that every list being
+/// read shares (a list in an element goes on above them, and is taken off
+/// when read), then are moved out into a `Vec` of their number. A thread
+/// keeps its stacks for the next document: what the most elements of lists
+/// being read at once took (256 kB for pandoc's manual four times over;
+/// freeing them after each document made reading it 5% slower).
+pub(crate) struct List<T>(pub Vec<T>);
+
+pub(crate) trait Stacked: Sized + 'static {
+    fn stack() -> &'static std::thread::LocalKey<std::cell::RefCell<Vec<Self>>>;
+}
+
+thread_local! {
+    static INLINES: std::cell::RefCell<Vec<Inline>> = const { std::cell::RefCell::new(Vec::new()) };
+    static BLOCKS: std::cell::RefCell<Vec<Block>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl Stacked for Inline {
+    fn stack() -> &'static std::thread::LocalKey<std::cell::RefCell<Vec<Self>>> {
+        &INLINES
+    }
+}
+
+impl Stacked for Block {
+    fn stack() -> &'static std::thread::LocalKey<std::cell::RefCell<Vec<Self>>> {
+        &BLOCKS
+    }
+}
+
+impl<'de, T: Stacked + serde::Deserialize<'de>> serde::Deserialize<'de> for List<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V<T>(std::marker::PhantomData<T>);
+        impl<'de, T: Stacked + serde::Deserialize<'de>> serde::de::Visitor<'de> for V<T> {
+            type Value = List<T>;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a sequence")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<List<T>, A::Error> {
+                let stack = T::stack();
+                let start = stack.with(|s| s.borrow().len());
+                let mut read = || {
+                    while let Some(x) = seq.next_element()? {
+                        stack.with(|s| s.borrow_mut().push(x));
+                    }
+                    Ok(())
+                };
+                let read = read();
+                // (on an error too: the stack is as it was)
+                let xs = stack.with(|s| s.borrow_mut().drain(start..).collect());
+                read.map(|()| List(xs))
+            }
+        }
+        d.deserialize_seq(V(std::marker::PhantomData))
+    }
+}
+
+/// A `Vec<Inline>` or `Vec<Block>` field of a type whose `Deserialize` is
+/// derived, read as a [`List`].
+pub(crate) fn list<'de, D: serde::Deserializer<'de>, T: Stacked + serde::Deserialize<'de>>(
+    d: D,
+) -> Result<Vec<T>, D::Error> {
+    <List<T> as serde::Deserialize>::deserialize(d).map(|l| l.0)
+}
+
 /// A finite `Double` as pandoc's JSON (aeson) writes it, as Haskell shows
 /// it: `0.5`, `1.0`, and outside 0.1 to 10^7 with an exponent, `5.0e-2`.
 fn haskell_double(x: f64) -> String {

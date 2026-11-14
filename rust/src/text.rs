@@ -19,7 +19,7 @@ const INLINE: usize = 22;
 /// It reads as a `&str` (`Deref`), and is made from `&str`, `String`,
 /// `char` or an iterator of them: `*s = s.to_uppercase().into()`. In place,
 /// [`push_str`](Text::push_str) appends (amortized O(1), as a `String`'s),
-/// and [`make_mut`](Text::make_mut) gives a `&mut String`.
+/// and [`edit`](Text::edit) changes it as a `&mut String`.
 ///
 /// Up to 22 bytes (99.7% of the words of pandoc's changelog) are kept in
 /// the value itself, without a heap allocation; longer strings are a
@@ -124,15 +124,32 @@ impl Text {
         self.push_str(c.encode_utf8(&mut [0; 4]));
     }
 
-    /// The string as a `String`, to change in place (moved to the heap if it
-    /// was short).
-    pub fn make_mut(&mut self) -> &mut String {
-        if let Repr::Inline { .. } = self.0 {
-            self.0 = Repr::Heap(Box::new(self.as_str().to_owned()));
-        }
+    /// Change the string as a `String`, and return what `f` returns. One
+    /// that is short when `f` is done is kept in the value, as `Text::from`
+    /// keeps it (a short one is a `String` while `f` runs only); a long one
+    /// is changed where it is.
+    ///
+    /// ```
+    /// let mut t = panir::Text::from("word");
+    /// t.edit(|s| s.insert(0, '#'));
+    /// assert_eq!(t, "#word");
+    /// ```
+    pub fn edit<R>(&mut self, f: impl FnOnce(&mut String) -> R) -> R {
         match &mut self.0 {
-            Repr::Heap(h) => h,
-            Repr::Inline { .. } => unreachable!("just moved to the heap"),
+            Repr::Heap(h) => {
+                let result = f(h);
+                if h.len() <= INLINE {
+                    let short = Text::from(h.as_str());
+                    *self = short;
+                }
+                result
+            }
+            Repr::Inline { .. } => {
+                let mut s = self.as_str().to_owned();
+                let result = f(&mut s);
+                *self = Text::from(s);
+                result
+            }
         }
     }
 }
@@ -463,10 +480,27 @@ mod tests {
             assert_eq!(matches!(t.0, Repr::Inline { .. }), s.len() <= INLINE);
         }
         t.push('!');
-        t.make_mut().push('?');
+        t.edit(|s| s.push('?'));
         assert!(t.ends_with("!?"));
-        let mut short = Text::from("a");
-        short.make_mut().push('b');
-        assert_eq!(short, "ab");
+    }
+
+    #[test]
+    fn edit_keeps_short_strings_inline() {
+        let inline = |t: &Text| matches!(t.0, Repr::Inline { .. });
+        let mut t = Text::from("a");
+        assert_eq!(t.edit(|s| s.push('b')), ());
+        assert!(t == "ab" && inline(&t));
+        // a long one is changed where it is, and kept on the heap
+        t.edit(|s| s.push_str(&"c".repeat(30)));
+        assert!(t.len() == 32 && !inline(&t));
+        let at = t.as_bytes().as_ptr();
+        t.edit(|s| s.make_ascii_uppercase());
+        assert_eq!(t.as_bytes().as_ptr(), at);
+        // and comes back into the value once short
+        let n = t.edit(|s| {
+            s.truncate(3);
+            s.len()
+        });
+        assert!(n == 3 && t == "ABC" && inline(&t));
     }
 }

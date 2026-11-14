@@ -129,3 +129,32 @@ fn a_document_visited() {
     doc.visit(&mut n);
     assert_eq!(n.0, 3);
 }
+
+#[test]
+fn lists_are_read_to_their_length() {
+    let doc = format!(
+        r#"{{"pandoc-api-version":[1,23,1,2],"meta":{{}},"blocks":[{}]}}"#,
+        [r#"{"t":"Para","c":[{"t":"Str","c":"a"},{"t":"Space"},{"t":"Emph","c":[{"t":"Str","c":"b"},{"t":"Space"},{"t":"Str","c":"c"}]},{"t":"Space"},{"t":"Str","c":"d"}]}"#; 5]
+            .join(",")
+    );
+    struct Capacity(usize);
+    impl panir::VisitMut for Capacity {
+        fn visit_inlines(&mut self, xs: &mut Vec<Inline>) {
+            self.0 += xs.capacity() - xs.len();
+            panir::walk_inlines(self, xs);
+        }
+        fn visit_blocks(&mut self, xs: &mut Vec<Block>) {
+            self.0 += xs.capacity() - xs.len();
+            panir::walk_blocks(self, xs);
+        }
+    }
+    let mut read = from_str(&doc).unwrap();
+    let mut unused = Capacity(0);
+    read.visit_mut(&mut unused);
+    assert_eq!(unused.0, 0);
+    // a list whose reading failed leaves nothing behind for the next
+    let bad = doc.replacen(r#"{"t":"Str","c":"c"}"#, r#"{"t":"Str","c":7}"#, 1);
+    assert_eq!(from_str(&bad).unwrap_err().path, "blocks[0].c[2].c[2].c");
+    assert_eq!(from_str(&doc).unwrap(), read);
+    assert_eq!(to_string(&read), doc);
+}
