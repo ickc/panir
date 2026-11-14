@@ -398,7 +398,9 @@ export type Blocks =
   | readonly (Block | Inline | string | readonly (Inline | string)[])[];
 
 /** Attributes as constructors take them: (key, value) pairs, or a record. */
-export type Attributes = readonly (readonly [string, string])[] | { readonly [key: string]: string };
+export type Attributes =
+  | readonly (readonly [string, string])[]
+  | { readonly [key: string]: string };
 
 /**
  * Metadata as constructors take it, as pandoc's Lua converts it: a string

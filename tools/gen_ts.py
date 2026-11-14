@@ -133,7 +133,9 @@ class Gen:
             inner = self.param(r["list"])
             # as pandoc's Lua: one value where a list of lists of inlines or
             # blocks goes is a list of the list it converts to
-            one = {"Inlines": " | string | Inline", "Blocks": " | string | Block | Inline"}.get(inner, "")
+            one = {"Inlines": " | string | Inline", "Blocks": " | string | Block | Inline"}.get(
+                inner, ""
+            )
             return f"readonly {paren(inner)}[]{one}"
         if "maybe" in r:
             return f"{self.param(r['maybe'])} | null"
@@ -197,14 +199,18 @@ class Gen:
         out.append("export interface Nodes {\n")
         out.extend(f"  {n}: {n};\n" for n in constructors)
         out.append("}\n\n")
-        out.append("/** Any node: a constructor's or a product's (`Attr`, `Cell`, `Pandoc`...). */\n")
+        out.append(
+            "/** Any node: a constructor's or a product's (`Attr`, `Cell`, `Pandoc`...). */\n"
+        )
         out.append("export type ASTNode = Nodes[keyof Nodes];\n\n")
         sums = [t["name"] for t in self.schema["types"] if t["kind"] == "sum"]
         out.append("/** Each sum type, by name. */\n")
         out.append("export interface Sums {\n")
         out.extend(f"  {n}: {self.ts_name[n]};\n" for n in sums)
         out.append("}\n\n")
-        out.append("/** Every type of the schema, by its name there (`fromJSON(j, \"Inline\")`). */\n")
+        out.append(
+            '/** Every type of the schema, by its name there (`fromJSON(j, "Inline")`). */\n'
+        )
         out.append("export interface Types {\n")
         for t in self.schema["types"]:
             out.append(f"  {t['name']}: {self.ts_name[t['name']]};\n")
@@ -237,7 +243,8 @@ class Gen:
         )
         whole = f"{key}{'' if required else '?'}: {name}"
         return (
-            f"/** {'An' if name[0] in 'AEIOU' else 'A'} {name} given whole (`{key}`), or by its fields. */\n"
+            f"/** {'An' if name[0] in 'AEIOU' else 'A'} {name} given whole (`{key}`), "
+            f"or by its fields. */\n"
             f"export type {name}Options =\n"
             f"  | {{ {whole}; {never} }}\n"
             f"  | {{ {key}?: never; {parts} }};\n\n"
@@ -272,7 +279,8 @@ class Gen:
             if t["kind"] == "sum":
                 ts = self.ts_name[name]
                 lines.append(
-                    f"  {name}: {{ node: {ts}; sibling: {sibling(name)}; returns: {returns(name)} }};\n"
+                    f"  {name}: {{ node: {ts}; sibling: {sibling(name)}; "
+                    f"returns: {returns(name)} }};\n"
                 )
                 for c in t["constructors"]:
                     if c["name"] == name:
@@ -283,7 +291,8 @@ class Gen:
                     )
             elif t["kind"] == "product":
                 lines.append(
-                    f"  {name}: {{ node: {name}; sibling: {sibling(name)}; returns: {returns(name)} }};\n"
+                    f"  {name}: {{ node: {name}; sibling: {sibling(name)}; "
+                    f"returns: {returns(name)} }};\n"
                 )
         lines.append("}\n\n")
         return "".join(lines)
@@ -333,7 +342,9 @@ class Gen:
         parts = []
         if plain:
             parts.append(
-                "{ " + "; ".join(f"{camel(f['name'])}?: {self.param(f['type'])}" for f in plain) + " }"
+                "{ "
+                + "; ".join(f"{camel(f['name'])}?: {self.param(f['type'])}" for f in plain)
+                + " }"
             )
         parts.extend(f"{f['type']['ref']}Options" for f in flat)
         if parts:
@@ -422,7 +433,9 @@ export type Blocks =
   | readonly (Block | Inline | string | readonly (Inline | string)[])[];
 
 /** Attributes as constructors take them: (key, value) pairs, or a record. */
-export type Attributes = readonly (readonly [string, string])[] | { readonly [key: string]: string };
+export type Attributes =
+  | readonly (readonly [string, string])[]
+  | { readonly [key: string]: string };
 
 /**
  * Metadata as constructors take it, as pandoc's Lua converts it: a string
