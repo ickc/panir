@@ -60,6 +60,22 @@ whole; a link's target as `url` and `title`, or `target`):
 `Table(caption, colSpecs, head, bodies, foot)`, `TableBody(body, head,
 rowHeadColumns)`.
 
+Attributes are `[key, value]` pairs, in order, a key perhaps in two.
+By key, as Lua's `el.attributes[key]`: `getAttribute(attr, key)` is the
+value of the first pair with the key (or `undefined`), `setAttribute`
+gives that pair the value, in its place, or adds a pair at the end,
+`removeAttribute` removes that pair and returns its value, and
+`hasAttribute` asks. (Classes are an array: `attr.classes.includes("c")`.)
+
+```ts
+import { removeAttribute, setAttribute } from "panir";
+
+const cell = Div("x", { attributes: { colspan: "2", lang: "en" } });
+assert.equal(removeAttribute(cell.attr, "colspan"), "2");
+setAttribute(cell.attr, "lang", "fr");
+assert.deepEqual(cell.attr.attributes, [["lang", "fr"]]);
+```
+
 `Math`, `Image` and `Attr` are pandoc's names, and also JavaScript's
 (`Math.max`, `new Image()`): imported by name they hide the global ones
 in that module. Import the module whole, or rename them:

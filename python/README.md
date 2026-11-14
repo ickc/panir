@@ -57,7 +57,8 @@ Intro
   as Lua's `el.attributes.key`, by key: `attributes["k"]` is the value of
   the first pair with that key (`KeyError` if none; `.get("k")`), setting
   it replaces that value or adds a pair at the end, `del` removes that
-  pair, and `"k" in attributes` asks. Given whole, a mapping is its pairs;
+  pair (`pop("k", default)` too, returning its value, as `dict.pop`), and
+  `"k" in attributes` asks. Given whole, a mapping is its pairs;
   a `set` (for `classes=`) is refused: it has no order.
 - `repr` is constructor syntax that evaluates to an equal value.
 - Enum-like types (`MathType`, `Alignment`, ...) are enums; their names are

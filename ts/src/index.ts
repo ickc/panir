@@ -21,7 +21,9 @@ export type {
 } from "./walk.ts";
 export { Conversion } from "./conversion.ts";
 export type { ConversionInit } from "./conversion.ts";
-export { blocks, copy, equal, fromPlain, inlines, stringify, toPlain } from "./util.ts";
+export {
+  blocks, copy, equal, fromPlain, getAttribute, hasAttribute, inlines, removeAttribute, setAttribute, stringify, toPlain,
+} from "./util.ts";
 
 /** A document from pandoc's JSON text, checked (`ASTDecodeError`; a `SyntaxError` if it isn't JSON). */
 export function parse(text: string): Pandoc {

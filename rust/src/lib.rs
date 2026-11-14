@@ -18,6 +18,7 @@
 
 #![forbid(unsafe_code)]
 
+mod attr;
 mod filter;
 mod generated;
 mod stringify;

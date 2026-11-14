@@ -31,6 +31,7 @@ from panir import (
     Pandoc,
     Para,
     Space,
+    Span,
     Str,
     Strong,
     Table,
@@ -343,10 +344,25 @@ def metacount() -> list[Filter]:
     return [first, second]
 
 
+def attributes() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Span)
+    def by_key(s):
+        if "k" in s.attributes:
+            s.attributes["first"] = s.attributes["k"]
+            s.attributes["k"] += "!"
+        s.attributes.pop("drop", None)
+        if "mark" in s.classes:
+            s.classes.append("seen")
+
+    return [f]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
-    + (once, lists, meta, newdoc, twice, metacount)
+    + (once, lists, meta, newdoc, twice, metacount, attributes)
 }
 
 

@@ -53,13 +53,26 @@ Constructors:
   out; the content one argument, as in Lua: `Cell([Para("a"), Para("b")],
   AlignRight)`). These five also take every field by keyword: `Table(;
   bodies, identifier = "t")`, `Cell(; content = "a", col_span = 2)`.
-- attributes are (key, value) tuples, in order; pairs are taken too
-  (`attributes = ["lang" => "en"]`), and a `Dict`, in the order of its
-  keys (a Lua table of them has no order either).
+- attributes are (key, value) tuples, in order, a key perhaps in two;
+  pairs are taken too (`attributes = ["lang" => "en"]`), and a `Dict`, in
+  the order of its keys (a Lua table of them has no order either).
 - a constructor copies the lists and maps it is given: a node's lists are
   its own, which the caller may go on changing or give to another node.
   The nodes in them are not copied.
 - `show` writes what makes the node again; a document a block a line.
+
+An `Attr` by key is its attributes, as Lua's `el.attributes[key]`: the
+first pair with the key is read (`attr["k"]`, `get(attr, "k", nothing)`,
+`haskey`), set (`attr["k"] = "v"`, in its place, or a pair added at the
+end) and removed (`pop!(attr, "k", nothing)` returns its value,
+`delete!`):
+
+```julia
+cell = Div("x"; attributes = ["colspan" => "2", "lang" => "en"])
+span = parse(Int, pop!(cell.attr, "colspan", "1"))  # 2
+cell.attr["lang"] = "fr"
+cell.attr.attributes  # [("lang", "fr")]
+```
 
 What converts, converts as in pandoc's Lua, in constructors and where a
 field is set:

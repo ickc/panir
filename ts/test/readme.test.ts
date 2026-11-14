@@ -32,6 +32,15 @@ assert.deepEqual(h, {
 // #endregion
 
 // #region README
+import { removeAttribute, setAttribute } from "../src/index.ts";
+
+const cell = Div("x", { attributes: { colspan: "2", lang: "en" } });
+assert.equal(removeAttribute(cell.attr, "colspan"), "2");
+setAttribute(cell.attr, "lang", "fr");
+assert.deepEqual(cell.attr.attributes, [["lang", "fr"]]);
+// #endregion
+
+// #region README
 import * as pandoc from "../src/index.ts";
 import { Image as ImageNode } from "../src/index.ts";
 

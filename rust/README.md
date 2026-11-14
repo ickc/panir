@@ -114,6 +114,11 @@ They are checked against pandoc's Lua filters, with the scenarios in
   `Default` where pandoc's Lua constructors have defaults. Built with
   their fields' names, so in no order to remember (Lua's positional
   constructors have one; `Table { caption, ..Default::default() }` here).
+- An `Attr`'s attributes are pairs, in order, a key perhaps in two; by
+  key, as Lua's `el.attributes[key]`: `attr.get("k")` is the value of the
+  first pair with the key, `attr.set("k", v)` gives that pair the value,
+  in its place, or adds a pair at the end, and `attr.remove("k")` removes
+  that pair and returns its value; `attr.has_class("c")` asks.
 - Every node is `Clone`, `Eq` and `Hash`. A `ColWidth` compares its number
   bit for bit: one that isn't a number (pandoc's `null`) equals itself, and
   `0.0` and `-0.0`, written differently, differ.

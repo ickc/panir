@@ -146,12 +146,26 @@ function scenario_metacount()
     Filters([(add, :typewise), (number, :typewise)])
 end
 
+function scenario_attributes()
+    function f(s::Span)
+        if haskey(s.attr, "k")
+            s.attr["first"] = s.attr["k"]
+            s.attr["k"] *= "!"
+        end
+        delete!(s.attr, "drop")
+        "mark" in s.attr.classes && push!(s.attr.classes, "seen")
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
     "bottomup" => scenario_bottomup, "skip" => scenario_skip, "toplists" => scenario_toplists,
     "once" => scenario_once, "lists" => scenario_lists, "meta" => scenario_meta,
     "newdoc" => scenario_newdoc, "twice" => scenario_twice, "metacount" => scenario_metacount,
+    "attributes" => scenario_attributes,
 )
 
 @testset "filters as pandoc's Lua" begin

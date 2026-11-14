@@ -5,8 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
-  applyFilter, Div, Emph, fromJSON, Header, HorizontalRule, MetaBool, MetaInlines, MetaList, MetaString,
-  Pandoc as makePandoc, Para, Str, Strong, toJSON,
+  applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, MetaBool, MetaInlines, MetaList,
+  MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, Strong, toJSON,
 } from "../src/index.ts";
 import type { AnyFilter, Block, Filter, Pandoc, WalkedContext } from "../src/index.ts";
 
@@ -170,6 +170,18 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
       },
     ];
   },
+
+  attributes: () => [{
+    Span: (s) => {
+      const k = getAttribute(s.attr, "k");
+      if (k !== undefined) {
+        setAttribute(s.attr, "first", k);
+        setAttribute(s.attr, "k", `${k}!`);
+      }
+      removeAttribute(s.attr, "drop");
+      if (s.attr.classes.includes("mark")) s.attr.classes.push("seen");
+    },
+  }],
 };
 
 const lines = readFileSync(new URL("../../corpus/filters.jsonl", import.meta.url), "utf8")

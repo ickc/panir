@@ -400,6 +400,27 @@ impl Filter for TopLists {
     }
 }
 
+/// Attributes by key, a key perhaps in two pairs.
+struct Attributes(Order);
+
+impl Filter for Attributes {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        let Inline::Span(s) = x else { return None };
+        if let Some(k) = s.attr.get("k").map(str::to_owned) {
+            s.attr.set("first", k.as_str());
+            s.attr.set("k", k + "!");
+        }
+        s.attr.remove("drop");
+        if s.attr.has_class("mark") {
+            s.attr.classes.push("seen".into());
+        }
+        None
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<()> {
@@ -421,6 +442,7 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<()> {
         "toplists" => Box::new(TopLists),
         "newdoc" => Box::new(NewDoc),
         "twice" => Box::new(Twice(order)),
+        "attributes" => Box::new(Attributes(order)),
         "metacount" => {
             apply(doc, &mut AddKey, FORMAT);
             apply(doc, &mut Count(0), FORMAT);
