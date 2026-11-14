@@ -6,11 +6,12 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
   applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, MetaBool, MetaInlines, MetaList,
-  MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, stringify, Strong, toJSON, Underline,
+  MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, stringify, Strong, toJSON, truthy,
+  Underline,
 } from "../src/index.ts";
 import type {
   AnyFilter, Block, Filter, MetaBool as MetaBoolNode, MetaInlines as MetaInlinesNode, MetaList as MetaListNode,
-  MetaString as MetaStringNode, Pandoc, Str as StrNode, WalkedContext,
+  MetaString as MetaStringNode, MetaValue, Pandoc, Str as StrNode, WalkedContext,
 } from "../src/index.ts";
 
 const FORMAT = "json";
@@ -230,6 +231,16 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
 
   metadelete: () => [{
     MetaBool: () => [],
+  }],
+
+  truthy: () => [{
+    Pandoc: (doc) => {
+      const keys = ["yes", "no", "text", "empty", "null", "noword", "zero", "list", "map", "block", "missing"];
+      const words = keys.map((k) => `${k}=${truthy(doc.meta[k])}`);
+      const or = (v: MetaValue | undefined) => (truthy(v) ? v : MetaString("d"));
+      words.push(`no-or=${stringify(or(doc.meta.no))}`, `text-or=${stringify(or(doc.meta.text))}`);
+      doc.blocks.push(Para(words.join(" ")));
+    },
   }],
 
   attributes: () => [{

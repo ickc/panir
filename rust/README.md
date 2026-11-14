@@ -198,6 +198,25 @@ What a port of a Lua filter trips over:
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `meta_value` is called on each one.
 
+#### Metadata
+
+- **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
+  missing field and for `false` only; an empty string, list or map is
+  true, as is the text `no`: `truthy(meta.get("x"))`.
+
+```rust
+use panir::{Pandoc, truthy};
+
+let mut doc = Pandoc::new(vec![]);
+doc.meta.insert("draft".into(), false.into());
+doc.meta.insert("title".into(), "".into());
+let meta = &doc.meta;
+assert_eq!(
+    [truthy(meta.get("draft")), truthy(meta.get("title")), truthy(meta.get("missing"))],
+    [false, true, false]
+);
+```
+
 ## Types and `VisitMut`
 
 - A sum type is an enum: a constructor without fields is a unit variant

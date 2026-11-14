@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use panir::{Block, Inline, MetaValue};
+use panir::{Block, Inline, MetaValue, truthy};
 
 #[test]
 fn metadata_from_plain_values() {
@@ -49,4 +49,22 @@ fn metadata_from_plain_values() {
     assert_eq!(cites, expected);
     let m: panir::Meta = BTreeMap::from([("k".into(), true.into())]);
     assert_eq!(MetaValue::from(m.clone()), MetaValue::MetaMap(m));
+}
+
+#[test]
+fn lua_truth() {
+    // false only for a missing value and `false`, as Lua's `if meta.x then`
+    for v in [
+        MetaValue::from(true),
+        "".into(),
+        "false".into(),
+        MetaValue::MetaInlines(vec![]),
+        MetaValue::MetaBlocks(vec![]),
+        MetaValue::MetaList(vec![]),
+        MetaValue::MetaMap(BTreeMap::new()),
+    ] {
+        assert!(truthy(Some(&v)), "{v:?}");
+    }
+    assert!(!truthy(Some(&false.into())));
+    assert!(!truthy(None));
 }

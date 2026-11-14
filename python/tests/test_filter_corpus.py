@@ -468,11 +468,27 @@ def metadelete() -> list[Filter]:
     return [f]
 
 
+TRUTHY_KEYS = ("yes", "no", "text", "empty", "null", "noword", "zero", "list", "map", "block")
+
+
+def truthy() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def truth(doc):
+        words = [f"{k}={'true' if doc.meta.get(k) else 'false'}" for k in (*TRUTHY_KEYS, "missing")]
+        words.append(f"no-or={A.stringify(doc.meta.get('no') or MetaString('d'))}")
+        words.append(f"text-or={A.stringify(doc.meta.get('text') or MetaString('d'))}")
+        doc.blocks.append(Para(" ".join(words)))
+
+    return [f]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
     + (once, lists, meta, newdoc, twice, metacount, attributes, fails)
-    + (replaced, metavalues, metadelete)
+    + (replaced, metavalues, metadelete, truthy)
 }
 
 

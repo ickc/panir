@@ -238,6 +238,22 @@ What a port of a Lua filter trips over:
   here, as in panflute, `@f.on(MetaValue)` (or `MetaList`, ...) is called
   on each one.
 
+#### Metadata
+
+- **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
+  missing field and for `false` only; an empty string, list or map is
+  true, as is the text `no`. So is every metadata value here but
+  `MetaBool(False)`, so that `if meta.get("x"):` and `meta.get("x") or d`
+  are Lua's as written.
+
+```python
+>>> meta = Pandoc(meta={"draft": False, "title": ""}).meta
+>>> bool(meta.get("draft")), bool(meta.get("title")), bool(meta.get("missing"))
+(False, True, False)
+>>> meta.get("draft") or MetaString("final")
+MetaString('final')
+```
+
 ### Fragments
 
 A filter also applies to any node, or a list of inlines or of blocks, as

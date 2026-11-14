@@ -26,6 +26,25 @@ OUT = ROOT / "python/src/panir/_types.py"
 
 PRIM = {"string": "str", "int": "int", "double": "float", "bool": "bool"}
 
+# Methods of a class besides its fields': a metadata value's truth is Lua's
+# (`if meta.x then`, `meta.x or default`), false only for MetaBool(False),
+# so that `if meta.get("x"):` is right as written. (On the base too, so that
+# type checkers know a MetaValue may be false.)
+METHODS = {
+    "MetaValue": (
+        "    def __bool__(self) -> bool:\n"
+        '        """True, as in pandoc\'s Lua: a metadata value is false only if it is\n'
+        '        ``MetaBool(False)``."""\n'
+        "        return True\n"
+    ),
+    "MetaBool": (
+        "    def __bool__(self) -> bool:\n"
+        '        """Its value, as Lua\'s truth: ``if meta.get("x"):`` is Lua\'s ``if meta.x\n'
+        '        then``."""\n'
+        "        return self.value\n"
+    ),
+}
+
 # pandoc's Lua constructors whose positional arguments are in an order of
 # their own, not pandoc-types' (as the other generators' LUA_ORDER):
 # `pandoc.Cite(content, citations)`, `pandoc.TableBody(body, head,
@@ -213,7 +232,9 @@ class Gen:
                     f"class {base}(Node):\n"
                     f'    """Any of pandoc\'s ``{t["name"]}`` constructors."""\n\n'
                     f"    __slots__ = ()\n"
-                    f'    _kind = "sum"\n\n\n'
+                    f'    _kind = "sum"\n'
+                    + (f"\n{METHODS[base]}" if base in METHODS else "")
+                    + "\n\n"
                 )
                 names.append(base)
                 for c in t["constructors"]:
@@ -374,6 +395,8 @@ class Gen:
                 lines.append(f"        {n}: {self.field_type(f['type'])}")
             lines.append("")
             lines += init
+        if name in METHODS:
+            lines += ["", METHODS[name].rstrip("\n")]
         return "\n".join(lines) + "\n\n\n"
 
     def set_type(self, ty: dict) -> str:

@@ -27,9 +27,10 @@ include("generated.jl")
 include("core.jl")
 include("onepass.jl")
 include("walk.jl")
+include("meta.jl")
 
 include("precompile.jl")
 
-export Node, ASTDecodeError, ASTTypeError, ASTDepthError, Context, Conversion, walk!, skip_children!, check_unique, run_filter, stringify, inlines, blocks
+export Node, ASTDecodeError, ASTTypeError, ASTDepthError, Context, Conversion, walk!, skip_children!, check_unique, run_filter, stringify, inlines, blocks, truthy
 
 end

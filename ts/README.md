@@ -321,6 +321,21 @@ What a port of a Lua filter trips over:
   here, as in panflute, `MetaValue` (or `MetaList`, ...) is called on each
   one.
 
+#### Metadata
+
+- **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
+  missing field and for `false` only; an empty string, list or map is
+  true, as is the text `no`. A node is an object, always true in
+  JavaScript, `MetaBool(false)` too: `if (meta.x)` is true for `x: false`.
+  `truthy(meta.x)` is Lua's.
+
+```ts
+import { truthy } from "panir";
+
+const meta = Pandoc([], { meta: { draft: false, title: "" } }).meta;
+assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
+```
+
 ### Fragments
 
 A filter also applies to any node, or a list of inlines or of blocks, as

@@ -214,6 +214,16 @@ function holdsNodes(ty: TypeExpr): boolean {
 
 const holding = new Map<string, boolean>();
 
+/**
+ * Whether a metadata value is true as pandoc's Lua sees it (`if meta.x then`,
+ * `meta.x or d`): there, and not `MetaBool(false)`. An empty string, list or
+ * map is true, as the text `false` is. (`if (meta.x)` is not this: a node is
+ * an object, always true in JavaScript, `MetaBool(false)` too.)
+ */
+export function truthy(value: MetaValue | null | undefined): boolean {
+  return value != null && !(value.t === "MetaBool" && !value.value);
+}
+
 /** Metadata as plain values: string, boolean, array, object. `MetaInlines` and `MetaBlocks` become their text (`stringify`). */
 export function toPlain(value: MetaValue | Meta): unknown {
   return deep("toPlain", () => plain(value));

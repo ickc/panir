@@ -9,7 +9,7 @@ import {
   ASTTypeError, Attr, Citation, Code, copy, Div, Emph, equal, fromJSON, fromPlain, getAttribute, hasAttribute,
   LineBreak, ListAttributes, removeAttribute, setAttribute,
   MetaBlocks, MetaBool, MetaInlines, MetaList, MetaMap, MetaString, Note, Pandoc, Para, parse, Plain, Quoted, RawInline,
-  serialize, Str, stringify, toPlain,
+  serialize, Str, stringify, toPlain, truthy,
 } from "../src/index.ts";
 import type { Pandoc as Doc } from "../src/index.ts";
 import { pandoc } from "./pandoc.ts";
@@ -114,6 +114,17 @@ test("metadata to and from plain values, as pandoc's Lua converts", () => {
   assert.deepEqual(Pandoc([], { meta: { draft: true, title: Str("T") } }).meta,
                    Object.assign(Object.create(null), { draft: MetaBool(true), title: MetaInlines([Str("T")]) }));
   assert.deepEqual(MetaList(["a", 1]).content, [MetaString("a"), MetaString("1")]);
+});
+
+test("Lua's truth of metadata values: false only for a missing one and MetaBool(false)", () => {
+  for (const v of [MetaBool(true), MetaString(""), MetaString("false"), MetaInlines([]), MetaBlocks([]), MetaList([]),
+    MetaMap({})]) {
+    assert.equal(truthy(v), true, JSON.stringify(v));
+  }
+  assert.equal(truthy(MetaBool(false)), false);
+  assert.equal(truthy(undefined), false);
+  assert.equal(truthy(null), false);
+  assert.equal(truthy(Pandoc([], { meta: { off: false } }).meta.off), false);
 });
 
 test("attributes by key, as pandoc's Lua", () => {

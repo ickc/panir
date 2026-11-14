@@ -23,7 +23,8 @@ values are exported (`InlineMath`, `DoubleQuote`). Julia checks field types
 itself: `push!(para.content, Para())` and `h.level = "2"` are errors.
 
 `using Panir` brings in what a filter needs: the node types, the enums'
-values, `walk!`, `run_filter`, `Context`, `stringify` and the errors.
+values, `walk!`, `run_filter`, `Context`, `stringify`, `truthy` and the
+errors.
 Everything else is reached as `Panir.X`, or by name (`using Panir: Period,
 Alignment`): the names Julia or common packages have too (`Panir.Meta`,
 the metadata's type, since `Meta` is `Base.Meta`; `Panir.Period`,
@@ -209,6 +210,18 @@ What a port of a Lua filter trips over:
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, a method for `MetaValue` (or `MetaList`, ...) is
   called on each one.
+
+#### Metadata
+
+- **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
+  missing field and for `false` only; an empty string, list or map is
+  true, as is the text `no`. Julia's `if` takes a `Bool` only (a node there
+  is an error): `truthy(get(meta, "x", nothing))` is Lua's.
+
+```julia
+meta = Pandoc(; meta = Dict("draft" => false, "title" => "")).meta
+truthy(get(meta, "draft", nothing)), truthy(meta["title"]), truthy(get(meta, "missing", nothing))  # (false, true, false)
+```
 
 ### Fragments
 

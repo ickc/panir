@@ -359,7 +359,7 @@ end
     m = Module()
     Core.eval(m, :(using Panir))
     for name in (:Str, :Para, :Inline, :MetaValue, :InlineMath, :DoubleQuote, :AlignLeft, :LowerRoman, :OneParen,
-                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify, :check_unique)
+                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify, :check_unique, :truthy)
         @test isdefined(m, name)
     end
     # the common words, the aliases and the enums' types: as Panir.X
@@ -413,4 +413,14 @@ end
     # a node with nothing in it can't change: one Space in two places is fine
     sp = Space()
     @test check_unique(Para(Str("a"), sp, Str("b"), sp)) === nothing
+end
+
+@testset "Lua's truth of metadata values" begin
+    # false only for a missing value and `false`, as Lua's `if meta.x then`
+    for v in [MetaBool(true), MetaString(""), MetaString("false"), MetaInlines(), MetaBlocks(), MetaList(),
+              MetaMap(Dict{String, MetaValue}())]
+        @test truthy(v)
+    end
+    @test !truthy(MetaBool(false)) && !truthy(nothing)
+    @test_throws TypeError (MetaBool(false) ? 1 : 2)  # (a node in `if` is an error, not true)
 end

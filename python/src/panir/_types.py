@@ -1046,6 +1046,11 @@ class MetaValue(Node):
     __slots__ = ()
     _kind = "sum"
 
+    def __bool__(self) -> bool:
+        """True, as in pandoc's Lua: a metadata value is false only if it is
+        ``MetaBool(False)``."""
+        return True
+
 
 class MetaMap(MetaValue):
     """pandoc's ``MetaMap``, a MetaValue."""
@@ -1101,6 +1106,11 @@ class MetaBool(MetaValue):
 
     def __init__(self, value: bool) -> None:
         _init(self, (value,))
+
+    def __bool__(self) -> bool:
+        """Its value, as Lua's truth: ``if meta.get("x"):`` is Lua's ``if meta.x
+        then``."""
+        return self.value
 
 
 class MetaString(MetaValue):

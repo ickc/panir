@@ -95,6 +95,13 @@ applyFilter(doc, { traverse: order, Code: (c) => Str(c.text) });
 // #endregion
 
 // #region README
+import { truthy } from "../src/index.ts";
+
+const meta = Pandoc([], { meta: { draft: false, title: "" } }).meta;
+assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
+// #endregion
+
+// #region README
 const loud: Filter = { Str: (s) => s.text.toUpperCase() };
 assert.deepEqual(applyFilter(Emph(["a", Str("b")]), loud), Emph([Str("A"), Str("B")]));
 // #endregion

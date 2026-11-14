@@ -3,7 +3,7 @@
 
 use panir::{
     Attr, Block, Ctx, Div, Filter, FilterError, Header, Inline, Meta, MetaValue, Order, Pandoc,
-    apply, from_str, to_string,
+    apply, from_str, to_string, truthy,
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -562,6 +562,34 @@ impl Filter for MetaDelete {
     }
 }
 
+/// Lua's truth of each field, in a paragraph.
+struct Truthy(Order);
+
+impl Filter for Truthy {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let keys = [
+            "yes", "no", "text", "empty", "null", "noword", "zero", "list", "map", "block",
+            "missing",
+        ];
+        let mut words: Vec<String> = keys
+            .iter()
+            .map(|k| format!("{k}={}", truthy(doc.meta.get(*k))))
+            .collect();
+        let or = |v: Option<&MetaValue>| match v {
+            Some(v) if truthy(Some(v)) => panir::stringify(v),
+            _ => "d".into(),
+        };
+        words.push(format!("no-or={}", or(doc.meta.get("no"))));
+        words.push(format!("text-or={}", or(doc.meta.get("text"))));
+        doc.blocks
+            .push(Block::Para(panir::inlines(&words.join(" "))));
+        Some(())
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -586,6 +614,7 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "attributes" => Box::new(Attributes(order)),
         "fails" => Box::new(Fails(0)),
         "metadelete" => Box::new(MetaDelete(order)),
+        "truthy" => Box::new(Truthy(order)),
         "metacount" => {
             return Some(
                 apply(doc, &mut AddKey, FORMAT).and_then(|()| apply(doc, &mut Count(0), FORMAT)),

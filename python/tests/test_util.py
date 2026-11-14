@@ -176,3 +176,16 @@ def test_filter_metadata_function_sees_metadata():
     f.on_meta(lambda m: seen.append(sorted(m)))
     f(every_kind_of_metadata())
     assert seen == [["b", "i", "k", "m", "z"]]
+
+
+def test_lua_truth():
+    """A metadata value is false only if it is MetaBool(False), as Lua's
+    `if meta.x then`: an empty string, list or map is true."""
+    true = [MetaBool(True), MetaString(""), MetaString("false"), MetaInlines(), MetaBlocks()]
+    true += [MetaList(), MetaMap({})]
+    assert all(bool(v) for v in true)
+    assert not MetaBool(False)
+    meta = Pandoc(meta={"off": False, "empty": ""}).meta
+    assert not meta.get("off") and not meta.get("missing")
+    assert (meta.get("off") or MetaString("d")) == MetaString("d")  # Lua's `meta.off or "d"`
+    assert (meta.get("empty") or MetaString("d")) == MetaString("")
