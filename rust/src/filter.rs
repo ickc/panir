@@ -158,7 +158,9 @@ impl<'a> Ctx<'a> {
     /// Fail: the walk stops when the function returns (what it returns is
     /// not used), and [`apply`] returns the error, with where it happened
     /// ([`FilterError`]). Returns `None`, for `return ctx.fail(...)`; in a
-    /// function returning nothing, `ctx.fail::<()>(...)`.
+    /// function returning nothing, `ctx.fail::<()>(...)`. An error that is a
+    /// `FilterError` (of a walk the function started: [`Ctx::apply`]) is
+    /// returned as it is, saying where it happened in that walk.
     ///
     /// ```
     /// use panir::{Ctx, Filter, Inline};
@@ -184,6 +186,58 @@ impl<'a> Ctx<'a> {
     pub fn fail<T>(&mut self, error: impl Into<Box<dyn Error + Send + Sync>>) -> Option<T> {
         self.error.get_or_insert(error.into());
         None
+    }
+
+    /// Apply a filter to a fragment from inside a function, as Lua's
+    /// `el:walk{...}` there: [`apply_with`] with this walk's conversion,
+    /// as deep as this walk is (no deeper than [`MAX_DEPTH`](crate::MAX_DEPTH)
+    /// in all). The fragment's walk has no metadata (`ctx.meta()` is `None`
+    /// in it), as any fragment's.
+    ///
+    /// If a function of `f` fails, this one fails with its error, as
+    /// [`fail`](Ctx::fail) does, and returns `None`: `ctx.apply(&mut
+    /// content, &mut Caps)?;`. The error is the inner function's, where it
+    /// failed in the fragment (`inlines[2]`), as panir's other languages
+    /// report an error in a fragment's walk.
+    ///
+    /// ```
+    /// use panir::{Ctx, Filter, Inline, Order};
+    ///
+    /// struct Caps;
+    /// impl Filter for Caps {
+    ///     fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+    ///         if let Inline::Str(s) = x {
+    ///             *s = s.to_uppercase().into();
+    ///         }
+    ///         None
+    ///     }
+    /// }
+    ///
+    /// // an emphasis becomes its content, in capitals
+    /// struct Deemph;
+    /// impl Filter for Deemph {
+    ///     fn order(&self) -> Order {
+    ///         Order::Topdown
+    ///     }
+    ///     fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+    ///         let Inline::Emph(content) = x else { return None };
+    ///         ctx.apply(content, &mut Caps)?;
+    ///         Some(std::mem::take(content))
+    ///     }
+    /// }
+    ///
+    /// let mut doc = panir::Pandoc::new(vec![panir::Block::Para(vec![
+    ///     "a".into(),
+    ///     Inline::Emph(panir::inlines("b c")),
+    /// ])]);
+    /// panir::apply(&mut doc, &mut Deemph, None).unwrap();
+    /// assert_eq!(panir::stringify(&doc), "aB C");
+    /// ```
+    pub fn apply<T: Walkable, F: Filter + ?Sized>(&mut self, x: &mut T, f: &mut F) -> Option<()> {
+        match apply_with(x, f, self.conversion) {
+            Ok(()) => Some(()),
+            Err(e) => self.fail(e),
+        }
     }
 }
 
@@ -237,6 +291,40 @@ impl Error for FilterError {}
 struct Failure {
     error: FilterError,
     target: Option<Target>,
+    /// An error passed up as it is, its path already said.
+    kept: bool,
+}
+
+impl Failure {
+    /// `function` failed on `node`, at `target` (or `path`, if known). An
+    /// error that is already a [`FilterError`] (of a walk the function
+    /// started: [`Ctx::apply`]) is kept as it is, saying where in that walk,
+    /// as panir's other languages note an error once, where it was raised.
+    fn new(
+        function: Option<&'static str>,
+        node: &'static str,
+        error: Box<dyn Error + Send + Sync>,
+        target: Option<Target>,
+        path: &str,
+    ) -> Self {
+        match error.downcast::<FilterError>() {
+            Ok(error) => Failure {
+                error: *error,
+                target: None,
+                kept: true,
+            },
+            Err(error) => Failure {
+                error: FilterError {
+                    path: path.into(),
+                    function,
+                    node,
+                    error,
+                },
+                target,
+                kept: false,
+            },
+        }
+    }
 }
 
 /// An inline or a block: what a list of the filter's is of.
@@ -379,15 +467,7 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
         error: Box<dyn Error + Send + Sync>,
         target: Option<Target>,
     ) {
-        self.failure = Some(Failure {
-            error: FilterError {
-                path: String::new(),
-                function,
-                node,
-                error,
-            },
-            target,
-        });
+        self.failure = Some(Failure::new(function, node, error, target, ""));
     }
 
     /// The function on a list, its error noted; whether to skip its nodes.
@@ -509,7 +589,9 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
         if let Some(rest) = rest {
             xs.extend(rest); // (what a failure left unwalked)
         }
-        if let (Some(i), Some(failure)) = (failed, &mut self.failure) {
+        if let (Some(i), Some(failure)) = (failed, &mut self.failure)
+            && !failure.kept
+        {
             // (where the node is now, the list whole again)
             failure.target = Some(Target::node(&xs[i]));
         }
@@ -568,12 +650,17 @@ fn error_in<T: Locate + 'static>(
     prefix: &str,
     failure: Option<Failure>,
 ) -> Result<(), FilterError> {
-    let Some(Failure { mut error, target }) = failure else {
+    let Some(Failure {
+        mut error, target, ..
+    }) = failure
+    else {
         return Ok(());
     };
     if let Some(path) = target.and_then(|t| Path::find(root, t)) {
         error.path = match (prefix, path.starts_with('[')) {
             ("", _) => path,
+            // (the fragment itself)
+            (_, _) if path.is_empty() => prefix.into(),
             (_, true) => format!("{prefix}{path}"),
             (_, false) => format!("{prefix}.{path}"),
         };
@@ -591,19 +678,10 @@ fn whole<T>(
 ) -> (Option<Failure>, bool) {
     let mut ctx = Ctx::new(conversion, None);
     call(x, &mut ctx);
-    let failure = ctx.error.map(|error| Failure {
-        error: FilterError {
-            path: if node == "Meta" {
-                "meta".into()
-            } else {
-                String::new()
-            },
-            function: Some(function),
-            node,
-            error,
-        },
-        target: None,
-    });
+    let path = if node == "Meta" { "meta" } else { "" };
+    let failure = ctx
+        .error
+        .map(|error| Failure::new(Some(function), node, error, None, path));
     (failure, ctx.skip)
 }
 

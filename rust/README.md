@@ -70,6 +70,39 @@ impl Filter for NoNotes {
 `Inline`, a `Vec<Block>` or a `Vec<Inline>`, changed in place. As in Lua,
 the functions apply to what is in a node, not to the node itself; a list's
 function also to the list itself; `meta` and `pandoc` only to a document.
+From inside a function, `ctx.apply(x, &mut filter)` walks a fragment with
+the walk's conversion, as deep as the walk already is, and, if a function
+of that filter fails, fails with its error (where it was in the fragment:
+`inlines[2]`, as the other languages say) and returns `None`, for `?`:
+
+```rust
+use panir::{Ctx, Filter, Inline, Order};
+
+struct Caps;
+
+impl Filter for Caps {
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        if let Inline::Str(s) = x {
+            *s = s.to_uppercase().into();
+        }
+        None
+    }
+}
+
+/// An emphasis becomes its content, in capitals (pandocfilters' deemph).
+struct Deemph;
+
+impl Filter for Deemph {
+    fn order(&self) -> Order {
+        Order::Topdown
+    }
+    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+        let Inline::Emph(content) = x else { return None };
+        ctx.apply(content, &mut Caps)?;
+        Some(std::mem::take(content))
+    }
+}
+```
 
 A function fails with `ctx.fail(error)` (an error of any type, or a
 string), which returns `None`: the walk stops when the function returns,
@@ -101,7 +134,7 @@ assert_eq!(
 );
 ```
 
-The context (`Ctx`) has the conversion, `skip_children`, `fail` and the
+The context (`Ctx`) has the conversion, `skip_children`, `fail`, `apply` and the
 metadata (`ctx.meta()`; while a metadata value is walked, the other
 fields, as the value can't be lent while it changes; `None` in a
 fragment), and no more: not the node's
@@ -137,6 +170,7 @@ What a port of a Lua filter trips over:
   classes: `Attr::new("x", &["a", "b"], &[])` (a pair named `class` is an
   attribute named `class`).
 - `error(...)`: `return ctx.fail(...)`.
+- `el:walk{...}` in a function: `ctx.apply(&mut el, &mut filter)?`.
 - `return el, false` (top-down): `ctx.skip_children()`.
 - Lists count from 0, Lua's from 1 (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
@@ -212,10 +246,11 @@ What a port of a Lua filter trips over:
   reads a document down to `MAX_DEPTH` (256) levels of blocks and inlines in
   each other, and as far as 640 kB of stack allow (a level takes five times
   the stack unoptimized); a deeper one is an error, not a crash. A filter
-  walks as deep, counting the walks its functions start (`apply` on a
-  fragment) from where they are: deeper, as a top-down function whose
-  result holds what it matched makes it (each result walked, without
-  end), is a `FilterError` (`function` `None`), with the path. A function
+  walks as deep, counting the walks its functions start (`ctx.apply`, or
+  `apply` on a fragment) from where they are: deeper, as a top-down
+  function whose result holds what it matched makes it (each result
+  walked, without end), is a `FilterError` (`function` `None`), with the
+  path. A function
   that calls itself without end is Rust's stack overflow (the process
   aborts): panir can't see it.
 - A `ColWidth` that isn't finite is read and written as pandoc does (`null`,

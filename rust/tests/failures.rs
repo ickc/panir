@@ -189,3 +189,106 @@ fn every_function_can_fail() {
         "empty\n  in filter function inlines, on the Inlines"
     );
 }
+
+/// Upper-cases each Str, in the conversion's format; fails on `x`.
+struct Caps;
+
+impl Filter for Caps {
+    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+        let Inline::Str(s) = x else { return None };
+        if s == "x" {
+            return ctx.fail("no x, please");
+        }
+        *s = format!("{}:{}", s.to_uppercase(), ctx.format().unwrap_or("-")).into();
+        None
+    }
+}
+
+/// An emphasis becomes its content, walked with `Caps` (pandocfilters'
+/// deemph), with `Ctx::apply`.
+struct Deemph;
+
+impl Filter for Deemph {
+    fn order(&self) -> Order {
+        Order::Topdown
+    }
+    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+        let Inline::Emph(content) = x else {
+            return None;
+        };
+        ctx.apply(content, &mut Caps)?;
+        Some(std::mem::take(content))
+    }
+}
+
+#[test]
+fn a_walk_from_a_function_has_its_conversion_and_its_error() {
+    let para = |xs| Pandoc::new(vec![Block::Para(xs)]);
+    let mut doc = para(vec!["a".into(), Inline::Emph(panir::inlines("b c"))]);
+    apply(&mut doc, &mut Deemph, Some("html")).unwrap();
+    assert_eq!(panir::stringify(&doc), "aB:html C:html");
+    // the inner function's error, where it was in the fragment, as Python
+    // and TypeScript report one (noted once, where it was raised)
+    let mut doc = para(vec![
+        "a".into(),
+        Inline::Emph(vec!["b".into(), Inline::Space, "x".into()]),
+    ]);
+    let e = apply(&mut doc, &mut Deemph, None).unwrap_err();
+    assert_eq!(
+        (e.function, e.node, e.path.as_str()),
+        (Some("inline"), "Str", "inlines[2]")
+    );
+    assert_eq!(
+        e.to_string(),
+        "no x, please\n  in filter function inline, on the Str at inlines[2]"
+    );
+    // the walk stopped there: the emphasis is as the inner walk left it
+    assert_eq!(panir::stringify(&doc), "aB:- x");
+    // a FilterError given to ctx.fail is passed up the same way
+    struct ByHand;
+    impl Filter for ByHand {
+        fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+            let Inline::Emph(content) = x else {
+                return None;
+            };
+            match panir::apply_with(content, &mut Caps, ctx.conversion()) {
+                Ok(()) => None,
+                Err(e) => ctx.fail(e),
+            }
+        }
+    }
+    let mut doc = para(vec![Inline::Emph(vec!["x".into()])]);
+    let e = apply(&mut doc, &mut ByHand, None).unwrap_err();
+    assert_eq!(e.path, "inlines[0]");
+}
+
+#[test]
+fn a_walk_from_a_meta_or_pandoc_function_says_its_own_path() {
+    struct InMeta;
+    impl Filter for InMeta {
+        fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx) {
+            if let Some(panir::MetaValue::MetaInlines(xs)) = meta.get_mut("title") {
+                ctx.apply(xs, &mut Caps);
+            }
+        }
+    }
+    let mut doc = Pandoc::new(vec![]);
+    doc.meta.insert(
+        "title".into(),
+        panir::MetaValue::MetaInlines(panir::inlines("a x")),
+    );
+    let e = apply(&mut doc, &mut InMeta, None).unwrap_err();
+    assert_eq!(
+        (e.function, e.path.as_str()),
+        (Some("inline"), "inlines[2]")
+    );
+    // a Meta function's own error is at `meta`, as before
+    struct Fails;
+    impl Filter for Fails {
+        fn meta(&mut self, _: &mut Meta, ctx: &mut Ctx) {
+            ctx.fail::<()>("no");
+        }
+    }
+    let e = apply(&mut doc, &mut Fails, None).unwrap_err();
+    assert_eq!((e.function, e.path.as_str()), (Some("meta"), "meta"));
+}
