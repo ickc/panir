@@ -85,7 +85,7 @@ def test_readme_examples_type_check(tmp_path):
         json.dumps(
             {
                 "extraPaths": [str(SRC)],
-                "pythonVersion": "3.10",
+                "pythonVersion": "3.11",
                 "reportMissingImports": False,
                 "reportWildcardImportFromLibrary": False,
             }

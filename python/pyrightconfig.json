@@ -1,6 +1,6 @@
 {
   "include": ["src", "examples"],
   "exclude": ["examples/typecheck.py"],
-  "pythonVersion": "3.10",
+  "pythonVersion": "3.11",
   "typeCheckingMode": "standard"
 }
