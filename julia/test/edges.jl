@@ -381,3 +381,90 @@ end
     @test run((blocks, at) -> at == "One" && (blocks[find(blocks, "a")] = Para("A"))) ==
           ["A", "dbl", "dbl2", "One", "x", "Two"]
 end
+
+# Panir.parse reads in one pass (onepass.jl) what is the plain case, and
+# leaves the rest to the two-step reader (JSON.parse, then fromjson).
+fast(text) = try Panir._parse_fast(text) catch e; e isa Panir._Slow || e isa Exception ? :slow : rethrow() end
+# as Panir.parse read before onepass.jl
+function two_steps(text)
+    j = try
+        JSON.parse(text; maxdepth = 2048)
+    catch e
+        throw(ASTDecodeError(Any[], "JSON text", sprint(showerror, e)))
+    end
+    fromjson(j)
+end
+decode_error(f) = try f(); nothing catch e; e isa ASTDecodeError ? (e.path, e.expected, e.got) : e end
+
+@testset "one pass: what it reads, the same as two steps" begin
+    for line in [l for name in ("arbitrary.jsonl", "pandoc.jsonl")
+                 for l in split(read(joinpath(CORPUS, name), String), '\n') if !isempty(l)]
+        want = fromjson(JSON.parse(line))
+        got = fast(line)
+        @test got isa Pandoc && got == want && serialize(got) == serialize(want)
+    end
+    # as deep as the two-step reader goes
+    deep(n) = "{$VERSION_,\"meta\":{},\"blocks\":[" * "{\"t\":\"Div\",\"c\":[[\"\",[],[]],["^n *
+        "{\"t\":\"Para\",\"c\":[]}" * "]]}"^n * "]}"
+    @test fast(deep(681)) == fromjson(JSON.parse(deep(681); maxdepth = 2048))
+    @test fast(deep(682)) === :slow
+    e = decode_error(() -> parse(deep(682)))
+    @test e[1] == [] && e[2] == "JSON text" && occursin("maxdepth", e[3])
+    # doubles that aren't finite, as pandoc writes them
+    @test isnan(width(fast(table("null")))) && width(fast(table("\"-inf\""))) == -Inf
+    @test width(fast(table("1"))) === 1.0
+end
+
+@testset "one pass: what it leaves to two steps" begin
+    # (onepass.jl's _field! reads up to six fields)
+    nodes = [T for T in (getfield(Panir, n) for n in names(Panir; all = true))
+             if T isa DataType && T <: Node && isconcretetype(T)]
+    @test length(nodes) > 50 && maximum(fieldcount, nodes) <= 6
+    doc(blocks) = "{$VERSION_,\"meta\":{},\"blocks\":[$blocks]}"
+    # taken by the two-step reader
+    for (text, blocks) in [
+        # "c" before "t" (pandoc writes "t" first)
+        (doc("{\"c\":[{\"c\":\"a\",\"t\":\"Str\"}],\"t\":\"Para\"}"), [Para(Str("a"))]),
+        (doc("{\"c\":[],\"t\":\"HorizontalRule\"}"), [HorizontalRule()]),
+        # a key twice: the last, as two steps read it
+        (doc("{\"t\":\"Para\",\"c\":[{\"t\":\"Str\",\"c\":\"a\",\"c\":\"b\"}]}"), [Para(Str("b"))]),
+        # keys that aren't the node's are skipped, as two steps skip them
+        (doc("{\"t\":\"Para\",\"x\":1,\"c\":[{\"t\":\"Space\",\"c\":7}]}"), [Para(Space())]),
+    ]
+        @test parse(text).blocks == blocks
+    end
+    @test fast(doc("{\"c\":[],\"t\":\"Para\"}")) === :slow
+    @test fast(doc("{\"t\":\"Para\",\"x\":1,\"c\":[{\"t\":\"Space\",\"c\":7}]}")).blocks == [Para(Space())]
+    # wrong: the same error as two steps give
+    para(c) = doc("{\"t\":\"Para\",\"c\":$c}")
+    header(level) = doc("{\"t\":\"Header\",\"c\":[$level,[\"\",[],[]],[]]}")
+    span(attr) = doc("{\"t\":\"Plain\",\"c\":[{\"t\":\"Span\",\"c\":[$attr,[]]}]}")
+    for text in [
+        para("[{\"t\":\"Str\"}]"),                    # no "c"
+        para("{\"0\":{\"t\":\"Space\"}}"),            # an object for a list
+        para("[{\"t\":\"Para\",\"c\":[]}]"),          # a block for an inline
+        para("[{\"t\":\"Str\",\"c\":\"a\",\"t\":\"Emph\"}]"),  # "t" twice
+        para("[{\"t\":\"Nope\"}]"), para("[{\"t\":1}]"), para("[1]"), para("[null]"),
+        header("1.0"), header("true"), header("99999999999999999999"), header("\"1\""),
+        doc("{\"t\":\"Header\",\"c\":[1,[\"\",[],[]]]}"),           # a field short
+        doc("{\"t\":\"Header\",\"c\":[1,[\"\",[],[]],[],[]]}"),     # a field over
+        span("{\"id\":\"\"}"), span("[\"\",[],{\"k\":\"v\"}]"), span("[\"\",[],[[\"k\"]]]"),
+        span("[\"\",[],[{\"0\":\"k\",\"1\":\"v\"}]]"), span("[\"\",[1],[]]"),
+        doc("{\"t\":\"Para\",\"c\":[{\"t\":\"Quoted\",\"c\":[{\"t\":\"Quote\"},[]]}]}"),  # no such enum value
+        replace(table("0.5"), "AlignDefault" => "AlignNope"),
+        "{\"pandoc-api-version\":[1,22],\"meta\":{},\"blocks\":[]}",
+        "{\"meta\":{},\"blocks\":[]}", "{$VERSION_,\"meta\":{}}", "{$VERSION_,\"meta\":[],\"blocks\":[]}",
+        "[]", "{", doc("") * "x",
+        "{$VERSION_,\"meta\":{},\"blocks\":[],\"pandoc-api-version\":[1,22]}",  # twice
+    ]
+        @test fast(text) === :slow
+        e = decode_error(() -> parse(text))
+        @test e isa Tuple && e == decode_error(() -> two_steps(text))
+    end
+    # the corpus's wrong documents, as text: the errors two steps give
+    for c in corpus("invalid.jsonl")
+        text = JSON.json(c["document"])
+        @test fast(text) === :slow
+        @test decode_error(() -> parse(text)) == decode_error(() -> fromjson(c["document"]))
+    end
+end

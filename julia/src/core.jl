@@ -248,6 +248,15 @@ A document from pandoc's JSON text, checked. Throws `ASTDecodeError` saying
 where it is wrong, text that isn't JSON too.
 """
 function parse(text::AbstractString)
+    # in one pass (onepass.jl) if it is the plain case; else as below, which
+    # takes it or says what is wrong
+    doc = try
+        _parse_fast(text)
+    catch e
+        e isa Union{InterruptException, OutOfMemoryError, StackOverflowError} && rethrow()
+        nothing
+    end
+    doc === nothing || return doc
     j = try
         JSON.parse(text; maxdepth = _JSON_DEPTH)
     catch e
