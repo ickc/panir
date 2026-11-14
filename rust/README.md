@@ -102,8 +102,9 @@ assert_eq!(
 ```
 
 The context (`Ctx`) has the conversion, `skip_children`, `fail` and the
-metadata (`ctx.meta()`, while the blocks are walked: `None` while the
-metadata itself is, and in a fragment), and no more: not the node's
+metadata (`ctx.meta()`; while a metadata value is walked, the other
+fields, as the value can't be lent while it changes; `None` in a
+fragment), and no more: not the node's
 parent, siblings or path, which panir's Python and TypeScript contexts
 have (pandoc's Lua functions have no context). A function has its node as
 `&mut`, and while it does nothing else may reach the node, its parent

@@ -65,25 +65,37 @@ impl Filter for MetaSeen {
     }
     fn inline(&mut self, x: &mut panir::Inline, ctx: &mut Ctx) -> Option<Vec<panir::Inline>> {
         if let panir::Inline::Str(s) = x {
-            let title = ctx.meta().map(|m| panir::stringify(&m["title"]));
-            self.1
-                .push(format!("{s}:{}", title.as_deref().unwrap_or("-")));
+            let fields = ctx
+                .meta()
+                .map(|m| m.keys().map(|k| k.as_str()).collect::<Vec<_>>());
+            self.1.push(format!(
+                "{s}:{}",
+                fields.map_or("-".into(), |f| f.join(","))
+            ));
         }
         None
     }
 }
 
 #[test]
-fn the_metadata_while_the_blocks_are_walked() {
+fn the_metadata_in_the_context() {
     use panir::{MetaValue, Order};
     for order in [Order::Typewise, Order::Topdown, Order::Bottomup] {
         let mut d = Pandoc::new(vec![Block::Para(inlines("a b"))]);
         d.meta
             .insert("title".into(), MetaValue::MetaInlines(inlines("T")));
+        d.meta
+            .insert("x".into(), MetaValue::MetaInlines(inlines("X")));
         let mut seen = MetaSeen(order, vec![]);
         apply(&mut d, &mut seen, None).unwrap();
-        // the metadata's own Strs: none (it is being walked)
-        assert_eq!(seen.1, ["T:-", "a:T", "b:T"], "{order:?}");
+        // a metadata value's Strs: the other fields (it is out of the map
+        // while it is walked); the blocks': all
+        assert_eq!(
+            seen.1,
+            ["T:x", "X:title", "a:title,x", "b:title,x"],
+            "{order:?}"
+        );
+        assert_eq!(d.meta.len(), 2);
         // a fragment has no document
         let mut seen = MetaSeen(order, vec![]);
         apply(&mut d.blocks, &mut seen, None).unwrap();

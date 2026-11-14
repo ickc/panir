@@ -27,7 +27,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::path::{Locate, Path, Target};
-use crate::{Block, Inline, MAX_DEPTH, Meta, Pandoc, VisitMut, walk_block, walk_inline};
+use crate::{Block, Inline, MAX_DEPTH, Meta, Pandoc, Text, VisitMut, walk_block, walk_inline};
 
 thread_local! {
     /// How many lists deep the filter walks on this thread are: a walk started
@@ -139,11 +139,11 @@ impl<'a> Ctx<'a> {
         self.conversion
     }
 
-    /// The document's metadata, while its blocks are walked (as Lua filters
-    /// read it from a global their `Meta` function set, and panir's other
-    /// languages from `ctx.doc`). `None` while the metadata itself is walked
-    /// (its own functions change it), for `meta` and `pandoc`, which have
-    /// it, and in a fragment.
+    /// The document's metadata (as Lua filters read it from a global their
+    /// `Meta` function set, and panir's other languages from `ctx.doc`).
+    /// While a metadata value is walked, the other fields: the value is out
+    /// of the map meanwhile, as it can't be lent while it changes. `None`
+    /// for `meta` and `pandoc`, which have it, and in a fragment.
     pub fn meta(&self) -> Option<&'a Meta> {
         self.meta
     }
@@ -739,15 +739,23 @@ fn walk_document<F: Filter + ?Sized>(
         skip_meta = skip;
     }
     for &pass in passes {
-        // (the metadata, then the blocks, which are lent the metadata)
+        // the metadata, each value lent the others (out of the map while
+        // it is walked: it can't be lent while it changes), then the
+        // blocks, lent the metadata
         let Pandoc { meta, blocks, .. } = &mut *doc;
         if !skip_meta {
-            let mut d = Driver::new(&mut *f, conversion, None, pass, topdown);
-            for v in meta.values_mut() {
-                d.visit_meta_value(v);
-            }
-            if d.failure.is_some() {
-                return d.failure;
+            let keys: Vec<Text> = meta.keys().cloned().collect();
+            for k in keys {
+                let Some(mut v) = meta.remove(&k) else {
+                    continue;
+                };
+                let mut d = Driver::new(&mut *f, conversion, Some(&*meta), pass, topdown);
+                d.visit_meta_value(&mut v);
+                let failure = d.failure;
+                meta.insert(k, v);
+                if failure.is_some() {
+                    return failure;
+                }
             }
         }
         if order == Order::Bottomup {
