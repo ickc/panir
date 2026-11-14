@@ -1,7 +1,7 @@
 //! A filter on a fragment, as Lua's `el:walk{...}`: the calls are pandoc
 //! 3.14's (its Lua run on the same fragments, in each of its orders).
 
-use panir::{apply, Block, Ctx, Filter, Inline, Meta, Order, Pandoc};
+use panir::{Block, Ctx, Filter, Inline, Meta, Order, Pandoc, apply};
 
 /// Notes each call, as the Lua scenarios do.
 struct Noting(Order, Vec<String>);

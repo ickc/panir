@@ -28,9 +28,9 @@ mod text;
 #[doc = include_str!("../README.md")]
 struct Readme;
 
-pub use filter::{apply, apply_with, Conversion, Ctx, Filter, Order, Walkable};
+pub use filter::{Conversion, Ctx, Filter, Order, Walkable, apply, apply_with};
 pub use generated::*;
-pub use stringify::{stringify, Stringify};
+pub use stringify::{Stringify, stringify};
 pub use text::Text;
 
 use std::fmt;
@@ -171,10 +171,10 @@ pub fn from_str(json: &str) -> Result<Pandoc, Error> {
             #[serde(rename = "pandoc-api-version")]
             version: Vec<i64>,
         }
-        if let Ok(v) = read::<Version>(json) {
-            if !right_version(&v.version) {
-                return Error::new("pandoc-api-version", wrong_version(&v.version));
-            }
+        if let Ok(v) = read::<Version>(json)
+            && !right_version(&v.version)
+        {
+            return Error::new("pandoc-api-version", wrong_version(&v.version));
         }
         // (of a document too deep, a path says little, at length)
         let mut path = String::new();
@@ -306,10 +306,11 @@ fn path_at(json: &str, error: &serde_json::Error) -> String {
     while i < end {
         let byte = bytes[i];
         // a value begins: the next element of a list
-        if !byte.is_ascii_whitespace() && !matches!(byte, b',' | b']' | b'}' | b':') {
-            if let Some(In::List(index @ None)) = stack.last_mut() {
-                *index = Some(0);
-            }
+        if !byte.is_ascii_whitespace()
+            && !matches!(byte, b',' | b']' | b'}' | b':')
+            && let Some(In::List(index @ None)) = stack.last_mut()
+        {
+            *index = Some(0);
         }
         match byte {
             b'"' => {
@@ -342,18 +343,17 @@ fn path_at(json: &str, error: &serde_json::Error) -> String {
         i += 1;
     }
     // a tag that isn't one of the type's is the node's error
-    if message.starts_with("unknown variant") {
-        if let Some(In::Object(Some((start, close)), _)) = stack.last() {
-            if &json[*start..*close] == "t" {
-                stack.pop();
-            }
-        }
+    if message.starts_with("unknown variant")
+        && let Some(In::Object(Some((start, close)), _)) = stack.last()
+        && &json[*start..*close] == "t"
+    {
+        stack.pop();
     }
     // an element too many is the list's
-    if message.starts_with("trailing characters") {
-        if let Some(In::List(index)) = stack.last_mut() {
-            *index = None;
-        }
+    if message.starts_with("trailing characters")
+        && let Some(In::List(index)) = stack.last_mut()
+    {
+        *index = None;
     }
     let mut path = String::new();
     for place in &stack {
@@ -467,11 +467,7 @@ fn haskell_double(x: f64) -> String {
     let a = x.abs();
     if a == 0.0 || (0.1..1e7).contains(&a) {
         let t = format!("{x}");
-        if t.contains('.') {
-            t
-        } else {
-            t + ".0"
-        }
+        if t.contains('.') { t } else { t + ".0" }
     } else {
         let t = format!("{x:e}");
         match t.split_once('e') {

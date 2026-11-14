@@ -4,7 +4,7 @@
 //! or `!` and the error.
 
 use panir::{
-    apply, from_str, to_string, Block, Ctx, Filter, Inline, Meta, MetaValue, Order, Pandoc,
+    Block, Ctx, Filter, Inline, Meta, MetaValue, Order, Pandoc, apply, from_str, to_string,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;

@@ -1,6 +1,6 @@
 //! The edges: what a review and fuzzing against pandoc found (fuzz/).
 
-use panir::{from_str, to_string, Block, ColSpec, ColWidth, Pandoc, Table, MAX_DEPTH};
+use panir::{Block, ColSpec, ColWidth, MAX_DEPTH, Pandoc, Table, from_str, to_string};
 
 const HEAD: &str = r#"{"pandoc-api-version":[1,23,1,2],"meta":{},"blocks":["#;
 
@@ -52,14 +52,16 @@ fn doubles_that_are_not_finite() {
             "{written}: {w}"
         );
         assert_eq!(to_string(&doc), table(written));
-        let made = Pandoc::new(vec![Table {
-            col_specs: vec![ColSpec {
-                width: ColWidth::ColWidth(value),
+        let made = Pandoc::new(vec![
+            Table {
+                col_specs: vec![ColSpec {
+                    width: ColWidth::ColWidth(value),
+                    ..Default::default()
+                }],
                 ..Default::default()
-            }],
-            ..Default::default()
-        }
-        .into()]);
+            }
+            .into(),
+        ]);
         assert_eq!(to_string(&made), table(written));
     }
     assert_eq!(width(&from_str(&table("1")).unwrap()), 1.0);
@@ -151,15 +153,17 @@ fn another_version_says_so() {
     assert_eq!(e.path, "pandoc-api-version");
     assert_eq!(e.message, "expected 1.23.*, got [1, 20]");
     let none = r#"{"meta":{},"blocks":[]}"#;
-    assert!(from_str(none)
-        .unwrap_err()
-        .message
-        .contains("pandoc-api-version"));
+    assert!(
+        from_str(none)
+            .unwrap_err()
+            .message
+            .contains("pandoc-api-version")
+    );
 }
 
 #[test]
 fn many_replacements_in_a_long_list_take_no_longer() {
-    use panir::{apply, Ctx, Filter, Inline, Order};
+    use panir::{Ctx, Filter, Inline, Order, apply};
     // every other block deleted, the others doubled; every space deleted
     struct Thin(usize, Order);
     impl Filter for Thin {

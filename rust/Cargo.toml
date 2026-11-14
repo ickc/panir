@@ -1,7 +1,7 @@
 [package]
 name = "panir"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 # raised only when a dependency needs it; CI runs the tests on it
 rust-version = "1.97"
 description = "pandoc's document AST, generated from pandoc-types: the types, pandoc's JSON, filters run as pandoc runs Lua filters, visitors"

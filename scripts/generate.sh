@@ -18,6 +18,6 @@ python3 tools/derive.py
 python3 tools/gen_python.py
 ruff format -q python/src/panir/_types.py
 python3 tools/gen_rust.py
-rustfmt --edition 2021 rust/src/generated.rs
+rustfmt --edition 2024 rust/src/generated.rs
 python3 tools/gen_ts.py
 python3 tools/gen_julia.py

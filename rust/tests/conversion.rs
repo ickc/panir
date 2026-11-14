@@ -1,4 +1,4 @@
-use panir::{apply, apply_with, inlines, Block, Conversion, Ctx, Filter, Pandoc};
+use panir::{Block, Conversion, Ctx, Filter, Pandoc, apply, apply_with, inlines};
 
 /// Notes what its `pandoc` function is told.
 #[derive(Default)]

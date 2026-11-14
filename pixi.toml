@@ -36,7 +36,7 @@ ts = ["ts"]
 # everything derived from schema/reified.json and the corpus (no Haskell)
 derive = "python tools/derive.py"
 gen-python = { cmd = "python tools/gen_python.py && ruff format -q python/src/panir/_types.py", depends-on = ["derive"] }
-gen-rust = { cmd = "python tools/gen_rust.py && rustfmt --edition 2021 rust/src/generated.rs", depends-on = ["derive"] }
+gen-rust = { cmd = "python tools/gen_rust.py && rustfmt --edition 2024 rust/src/generated.rs", depends-on = ["derive"] }
 gen-ts = { cmd = "python tools/gen_ts.py", depends-on = ["derive"] }
 gen-julia = { cmd = "python tools/gen_julia.py", depends-on = ["derive"] }
 test-python = { cmd = "pytest -q python/tests", env = { PYTHONPATH = "python/src" } }

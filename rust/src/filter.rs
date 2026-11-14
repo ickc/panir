@@ -23,7 +23,7 @@
 //! For other nodes (`Cell`, `Attr`, ...), and any order of one's own, use
 //! [`VisitMut`].
 
-use crate::{walk_block, walk_inline, Block, Inline, Meta, Pandoc, VisitMut};
+use crate::{Block, Inline, Meta, Pandoc, VisitMut, walk_block, walk_inline};
 
 /// The order a filter's functions are called in: Lua's `traverse`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
