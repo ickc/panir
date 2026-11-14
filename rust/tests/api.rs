@@ -183,3 +183,17 @@ fn attributes_by_key_as_lua() {
     );
     assert_eq!(attr.remove("missing"), None);
 }
+
+#[test]
+fn attr_new_in_luas_order() {
+    let attr = Attr::new("i", &["a", "b"], &[("k", "1"), ("k", "2")]);
+    assert_eq!(
+        attr,
+        Attr {
+            identifier: "i".into(),
+            classes: vec!["a".into(), "b".into()],
+            attributes: vec![("k".into(), "1".into()), ("k".into(), "2".into())],
+        }
+    );
+    assert_eq!(Attr::new("", &[], &[]), Attr::default());
+}

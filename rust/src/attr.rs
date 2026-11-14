@@ -21,6 +21,31 @@ use crate::{Attr, Text};
 /// assert_eq!(attr.attributes.len(), 3);
 /// ```
 impl Attr {
+    /// An `Attr`, in the order of pandoc's Lua `pandoc.Attr(identifier,
+    /// classes, attributes)`.
+    ///
+    /// ```
+    /// use panir::{Attr, Inline, Span};
+    ///
+    /// let field = "city";
+    /// let span: Inline = Span {
+    ///     attr: Attr::new("", &["var"], &[("field", field)]),
+    ///     content: vec!["Paris".into()],
+    /// }
+    /// .into();
+    /// # let _ = span;
+    /// ```
+    pub fn new(identifier: &str, classes: &[&str], attributes: &[(&str, &str)]) -> Self {
+        Attr {
+            identifier: identifier.into(),
+            classes: classes.iter().map(|&c| c.into()).collect(),
+            attributes: attributes
+                .iter()
+                .map(|&(k, v)| (k.into(), v.into()))
+                .collect(),
+        }
+    }
+
     /// The value of the first pair with `key`.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.attributes

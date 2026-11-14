@@ -114,6 +114,9 @@ They are checked against pandoc's Lua filters, with the scenarios in
   `Default` where pandoc's Lua constructors have defaults. Built with
   their fields' names, so in no order to remember (Lua's positional
   constructors have one; `Table { caption, ..Default::default() }` here).
+- `Attr::new(identifier, classes, attributes)`, in the order of Lua's
+  `pandoc.Attr`, takes `&str`s: `Attr::new("", &["note"], &[("lang",
+  "en")])`.
 - An `Attr`'s attributes are pairs, in order, a key perhaps in two; by
   key, as Lua's `el.attributes[key]`: `attr.get("k")` is the value of the
   first pair with the key, `attr.set("k", v)` gives that pair the value,
