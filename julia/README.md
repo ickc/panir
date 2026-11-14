@@ -43,12 +43,8 @@ run_filter(upper)
   errors do), `doc`, `format`, and `conversion` (a `Conversion`, as in
   Python: formats with extensions and reader options, when pandoc or
   libpandoc tells them). They are right after earlier nodes of the list
-  were deleted or spliced, and a list reached through a context is as it
-  is now. (A list being walked holds its node and every one after it,
-  however it is reached; reached otherwise, as through the document a
-  method closed over, the nodes deleted or spliced in it so far may show
-  only once its walk is done, but a change made to it that way is made to
-  it as it is.) As in Lua, what a method returns are values: `[el, el]`
+  were deleted or spliced: a node replaced by none or several is spliced
+  in place, so a list is as it is now however it is reached. As in Lua, what a method returns are values: `[el, el]`
   puts two nodes in the document, the second a copy; elsewhere, to put a
   node in a second place, `deepcopy` it.
   As in pandoc's Lua filters, a method for `Vector{Inline}` or

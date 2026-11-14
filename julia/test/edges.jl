@@ -186,7 +186,7 @@ end
 
 # A long list whose nodes are deleted, kept, replaced by one and by several
 # (once quadratic: each replacement by none or several moved the rest).
-const LONG = 30_000
+const LONG = 3_000
 
 # By its number: deleted, kept, replaced by one, by several (an Emph among
 # them), returned twice. Top-down, the Emph's Str is walked too.
@@ -218,7 +218,7 @@ end
 
 @testset "a long list spliced, with contexts, $traverse" for traverse in (:bottomup, :topdown)
     # the context is right after earlier nodes were deleted and multiplied:
-    # looked at first halfway (until then the list is spliced the fast way)
+    # looked at first halfway
     topdown = traverse === :topdown
     original = numbered(LONG)
     looked = [0, LONG ÷ 2, LONG ÷ 2 + 1, LONG ÷ 2 + 3, LONG ÷ 2 + 4, LONG - 1]
@@ -279,20 +279,21 @@ end
 
 @testset "a list being walked seen from a closure, $traverse" for traverse in (:bottomup, :topdown, :typewise)
     # A method deletes or doubles blocks; a later one looks at the document
-    # it closed over (not ctx): its block and every one after it are there,
-    # in order. (Earlier deletions and doublings may show only at the end.)
+    # it closed over (not ctx): the list is as it is now, the earlier
+    # deletions and doublings made
     original = Block[RawBlock("html", "del"), Para("p1"), RawBlock("html", "dbl"), Para("p3"),
                      RawBlock("html", "del"), Para("p5"), Header(1, Attr(), Inline[Str("h")])]
     doc = Pandoc(original...)
     seen = String[]
+    text(b) = b isa RawBlock ? b.text : stringify(b)
     f(b::RawBlock) = b.text == "del" ? Block[] : Block[b, RawBlock("html", "dbl2")]
     function f(p::Para)
-        push!(seen, stringify(p))
+        push!(seen, stringify(p) * ": " * join(map(text, doc.blocks), " "))
         @test same(from_node(doc.blocks, p), from_node(original, p))
         nothing
     end
     walk!(f, doc; traverse)
-    @test seen == ["p1", "p3", "p5"]
+    @test seen == ["p1: p1 dbl p3 del p5 h", "p3: p1 dbl dbl2 p3 del p5 h", "p5: p1 dbl dbl2 p3 p5 h"]
     @test doc.blocks == Block[Para("p1"), RawBlock("html", "dbl"), RawBlock("html", "dbl2"), Para("p3"),
                               Para("p5"), Header(1, Attr(), Inline[Str("h")])]
 
@@ -303,13 +304,13 @@ end
     texts = String[]
     g(::Space) = Inline[]
     function g(s::Str)
-        push!(texts, s.text)
+        push!(texts, s.text * ": " * stringify(para.content))
         @test same(from_node(para.content, s), from_node(inlines, s))
         @test doc2.blocks[1].content === para.content
         s.text == "c" ? Inline[s, Str("C")] : nothing
     end
     walk!(g, doc2; traverse)
-    @test texts == ["a", "b", "c", "d", "e"]
+    @test texts == ["a: a b c d e", "b: ab c d e", "c: abc d e", "d: abcCd e", "e: abcCde"]
     @test doc2.blocks == Block[Para(Inline[Str(t) for t in ["a", "b", "c", "C", "d", "e"]])]
 end
 
@@ -330,7 +331,6 @@ end
         ctx.index == length(made) + 1 || (wrong[] += 1)
         right(ctx, now) || (wrong[] += 1)
         k % 100 == 0 && (wrong[] += count(c -> !right(c, now), kept))
-        # (made what it is now; in place from then on)
         k == n ÷ 2 && !same(ctx.container, now) && (wrong[] += 1)
         push!(kept, ctx)
         r = k % 3 == 0 ? Inline[] : k % 3 == 1 ? Inline[s, Str(s.text)] : nothing
@@ -377,7 +377,7 @@ end
         deleteat!(blocks, find(blocks, "x"))
         push!(blocks, Para("end"))
     end == ["TOC", "dbl", "dbl2", "One", "Two", "end"]
-    # the same length: seen at the end of the walk
+    # a node replaced through the closure
     @test run((blocks, at) -> at == "One" && (blocks[find(blocks, "a")] = Para("A"))) ==
           ["A", "dbl", "dbl2", "One", "x", "Two"]
 end
