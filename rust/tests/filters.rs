@@ -137,12 +137,13 @@ impl Filter for Lists {
     fn order(&self) -> Order {
         self.0
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) -> Option<()> {
         let n = xs.len();
         xs.retain(|x| !matches!(x, Inline::Space));
         xs.push(Inline::Str(format!("<{n}>").into()));
+        Some(())
     }
-    fn blocks(&mut self, xs: &mut Vec<Block>, _: &mut Ctx) {
+    fn blocks(&mut self, xs: &mut Vec<Block>, _: &mut Ctx) -> Option<()> {
         *xs = take(xs)
             .into_iter()
             .flat_map(|b| {
@@ -150,6 +151,7 @@ impl Filter for Lists {
                 std::iter::once(b).chain(rule)
             })
             .collect();
+        Some(())
     }
 }
 
@@ -159,7 +161,7 @@ impl Filter for MetaScenario {
     fn order(&self) -> Order {
         self.0
     }
-    fn meta(&mut self, m: &mut Meta, ctx: &mut Ctx) {
+    fn meta(&mut self, m: &mut Meta, ctx: &mut Ctx) -> Option<()> {
         m.insert("draft".into(), MetaValue::MetaBool(true));
         m.insert(
             "format".into(),
@@ -173,13 +175,15 @@ impl Filter for MetaScenario {
             ]),
         );
         m.remove("count");
+        Some(())
     }
-    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) {
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
         let draft = matches!(doc.meta.get("draft"), Some(MetaValue::MetaBool(true)));
         doc.blocks.insert(
             0,
             Block::Para(vec![str_(if draft { "draft" } else { "final" })]),
         );
+        Some(())
     }
 }
 
@@ -210,8 +214,9 @@ impl Filter for Twice {
 struct AddKey;
 
 impl Filter for AddKey {
-    fn meta(&mut self, m: &mut Meta, _: &mut Ctx) {
+    fn meta(&mut self, m: &mut Meta, _: &mut Ctx) -> Option<()> {
         m.insert("added".into(), MetaValue::MetaInlines(vec![str_("new")]));
+        Some(())
     }
 }
 
@@ -227,17 +232,19 @@ impl Filter for Count {
             _ => None,
         }
     }
-    fn meta(&mut self, m: &mut Meta, _: &mut Ctx) {
+    fn meta(&mut self, m: &mut Meta, _: &mut Ctx) -> Option<()> {
         self.0 += 1;
         m.insert(
             "calls".into(),
             MetaValue::MetaString(self.0.to_string().into()),
         );
+        Some(())
     }
-    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) {
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
         self.0 += 1;
         let calls = panir::inlines(&format!("calls: {}", self.0));
         doc.blocks.push(Block::Para(calls));
+        Some(())
     }
 }
 
@@ -294,17 +301,21 @@ impl Filter for Noting {
         self.seen.push(note.into());
         None
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) -> Option<()> {
         self.seen.push(format!("Inlines{}", xs.len()));
+        Some(())
     }
-    fn blocks(&mut self, xs: &mut Vec<Block>, _: &mut Ctx) {
+    fn blocks(&mut self, xs: &mut Vec<Block>, _: &mut Ctx) -> Option<()> {
         self.seen.push(format!("Blocks{}", xs.len()));
+        Some(())
     }
-    fn meta(&mut self, _: &mut Meta, _: &mut Ctx) {
+    fn meta(&mut self, _: &mut Meta, _: &mut Ctx) -> Option<()> {
         self.seen.push("Meta".into());
+        Some(())
     }
-    fn pandoc(&mut self, _: &mut Pandoc, _: &mut Ctx) {
+    fn pandoc(&mut self, _: &mut Pandoc, _: &mut Ctx) -> Option<()> {
         self.seen.push("Pandoc".into());
+        Some(())
     }
 }
 
@@ -355,7 +366,7 @@ impl Filter for NewDoc {
     fn order(&self) -> Order {
         Order::Topdown
     }
-    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) {
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
         let Some(MetaValue::MetaInlines(title)) = doc.meta.get("title") else {
             panic!("no title");
         };
@@ -370,6 +381,7 @@ impl Filter for NewDoc {
         ]);
         new.meta = take(&mut doc.meta);
         *doc = new;
+        Some(())
     }
     fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
         match x {
@@ -385,12 +397,13 @@ impl Filter for TopLists {
     fn order(&self) -> Order {
         Order::Topdown
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) -> Option<()> {
         if xs.len() == 1 {
             ctx.skip_children();
         } else {
             xs.reverse();
         }
+        Some(())
     }
     fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
         match x {
@@ -483,7 +496,7 @@ impl Filter for Replaced {
         self.seen.push("Div".into());
         Some(take(&mut d.content))
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) -> Option<()> {
         if matches!(xs.first(), Some(Inline::Str(s)) if s == "list") {
             self.seen.push("Inlines".into());
             *xs = vec![
@@ -491,6 +504,7 @@ impl Filter for Replaced {
                 Inline::Strong(vec![Inline::Emph(vec![str_("g")])]),
             ];
         }
+        Some(())
     }
 }
 

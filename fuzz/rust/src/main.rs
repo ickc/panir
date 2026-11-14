@@ -328,19 +328,23 @@ impl Filter for Interp<'_> {
         let order = self.order;
         self.on_block(x, &mut || skip(order, ctx))
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) -> Option<()> {
         let order = self.order;
-        self.on_list("Inlines", xs, new_inline, &mut || skip(order, ctx))
+        self.on_list("Inlines", xs, new_inline, &mut || skip(order, ctx));
+        Some(())
     }
-    fn blocks(&mut self, xs: &mut Vec<Block>, ctx: &mut Ctx) {
+    fn blocks(&mut self, xs: &mut Vec<Block>, ctx: &mut Ctx) -> Option<()> {
         let order = self.order;
-        self.on_list("Blocks", xs, new_block, &mut || skip(order, ctx))
+        self.on_list("Blocks", xs, new_block, &mut || skip(order, ctx));
+        Some(())
     }
-    fn meta(&mut self, meta: &mut Meta, _: &mut Ctx) {
-        self.on_meta(meta)
+    fn meta(&mut self, meta: &mut Meta, _: &mut Ctx) -> Option<()> {
+        self.on_meta(meta);
+        Some(())
     }
-    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) {
-        self.on_pandoc(doc)
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        self.on_pandoc(doc);
+        Some(())
     }
 }
 

@@ -5,8 +5,9 @@ use panir::{Block, Conversion, Ctx, Filter, Pandoc, apply, apply_with, inlines};
 struct Seen(Option<(Option<String>, Conversion)>);
 
 impl Filter for Seen {
-    fn pandoc(&mut self, _: &mut Pandoc, ctx: &mut Ctx) {
+    fn pandoc(&mut self, _: &mut Pandoc, ctx: &mut Ctx) -> Option<()> {
         self.0 = Some((ctx.format().map(str::to_owned), ctx.conversion().clone()));
+        Some(())
     }
 }
 

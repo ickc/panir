@@ -114,8 +114,13 @@ impl Filter for Deemph {
 }
 ```
 
-A function fails with `ctx.fail(error)` (an error of any type, or a
-string), which returns `None`: the walk stops when the function returns,
+Every function returns an `Option`, so that `?` reads the same in all of
+them (`ctx.apply(...)?`, or `meta.get("x")?` to stop early): `inline`,
+`block` and `meta_value` return `None` to keep the node, or nodes in its
+place; `inlines`, `blocks`, `meta` and `pandoc` change their value in place,
+and return `Some(())` (`None` the same: done). A function fails with
+`return ctx.fail(error)` (an error of any type, or a string), in any of
+them; `fail` returns `None`: the walk stops when the function returns,
 and `apply` returns a `FilterError` with the error, the method that
 failed, the node's constructor and its path (in the other languages' form:
 `blocks[2].content[0]`), shown as they show theirs. `panir::filter` prints
@@ -178,8 +183,9 @@ What a port of a Lua filter trips over:
   as attributes (`{id = "x", class = "a b"}`) gives the identifier and
   classes: `Attr::new("x", &["a", "b"], &[])` (a pair named `class` is an
   attribute named `class`).
-- `error(...)`: `return ctx.fail(...)`.
-- `el:walk{...}` in a function: `ctx.apply(&mut el, &mut filter)?`.
+- `error(...)`: `return ctx.fail(...)`, and `el:walk{...}` in a function:
+  `ctx.apply(&mut el, &mut filter)?`, in every function (each returns an
+  `Option`).
 - `return el, false` (top-down): `ctx.skip_children()`.
 - Lists count from 0, Lua's from 1 (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
