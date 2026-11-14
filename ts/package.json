@@ -30,7 +30,7 @@
   ],
   "sideEffects": false,
   "engines": {
-    "node": ">=22.18"
+    "node": ">=16.11"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
