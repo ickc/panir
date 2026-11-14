@@ -355,7 +355,7 @@ end
     m = Module()
     Core.eval(m, :(using Panir))
     for name in (:Str, :Para, :Inline, :MetaValue, :InlineMath, :DoubleQuote, :AlignLeft, :LowerRoman, :OneParen,
-                 :NormalCitation, :ASTTypeError, :walk!, :stringify)
+                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify)
         @test isdefined(m, name)
     end
     # the common words, the aliases and the enums' types: as Panir.X

@@ -225,7 +225,7 @@ about:
 |---|---|
 | `Panir.parse` | 680 / 220 / 1,000 |
 | `Panir.fromjson` | 3,100 / 1,100 / 5,100 |
-| `walk!`, every order | 7,400 / 1,400 / 7,900 |
+| `walk!`, every order | 255 / 63 / 255 (`Panir.MAX_DEPTH`) |
 | `deepcopy` | 10,000 / 2,500 / 10,000 |
 | `hash`, `==` | 18,000 / 2,800 / 26,000 |
 | `serialize`, `Panir.tojson` | 20,000 / 5,300 / 25,000 |
@@ -235,6 +235,16 @@ Beyond, `Panir.parse` raises `ASTDecodeError` (JSON.jl stops at 2,048
 levels of JSON, which comes first), and anything else Julia's own
 `StackOverflowError`. panir doesn't catch that: Julia itself warns that
 after one "program state may be corrupted".
+
+`walk!` stops sooner, by itself: at `Panir.MAX_DEPTH` (256) nodes in one
+another (as Rust's panir reads and walks; a table in a table's cell is
+four, the table, its body, row and cell), counting a walk a method starts
+on from where the walk it is in is. Deeper is an `ASTDepthError` with the
+path, so that a top-down method whose result holds what it matched (each
+result walked in turn, without end: pandocfilters' metavars with a field
+naming itself) is an error, where it ran out of stack and then didn't end.
+A method that calls itself without end is Julia's `StackOverflowError`,
+which panir can't see.
 
 ## Also
 
