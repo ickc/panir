@@ -8,6 +8,7 @@
 use serde::de;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
+use std::hash::Hash;
 
 use crate::Text;
 
@@ -15,10 +16,10 @@ use crate::Text;
 pub const PANDOC_API_VERSION: [i64; 4] = [1, 23, 1, 2];
 
 /// pandoc's `Pandoc`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Pandoc {
-    #[serde(rename = "pandoc-api-version")]
-    pub api_version: Vec<i64>,
+    #[serde(rename = "pandoc-api-version", deserialize_with = "crate::api_version")]
+    pub(crate) api_version: Vec<i64>,
     pub meta: Meta,
     pub blocks: Vec<Block>,
 }
@@ -49,7 +50,7 @@ impl crate::Json for Pandoc {
 pub type Meta = BTreeMap<Text, MetaValue>;
 
 /// pandoc's `Block`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "t", content = "c")]
 pub enum Block {
     Plain(Vec<Inline>),
@@ -290,7 +291,7 @@ impl From<Div> for Block {
 }
 
 /// pandoc's `CodeBlock`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CodeBlock {
     pub attr: Attr,
     pub text: Text,
@@ -320,7 +321,7 @@ impl<'de> Deserialize<'de> for CodeBlock {
 }
 
 /// pandoc's `RawBlock`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RawBlock {
     pub format: Format,
     pub text: Text,
@@ -350,7 +351,7 @@ impl<'de> Deserialize<'de> for RawBlock {
 }
 
 /// pandoc's `OrderedList`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OrderedList {
     pub list_attributes: ListAttributes,
     pub content: Vec<Vec<Block>>,
@@ -392,7 +393,7 @@ impl<'de> Deserialize<'de> for OrderedList {
 }
 
 /// pandoc's `Header`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Header {
     pub level: i64,
     pub attr: Attr,
@@ -429,7 +430,7 @@ impl<'de> Deserialize<'de> for Header {
 }
 
 /// pandoc's `Table`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Table {
     pub attr: Attr,
     pub caption: Caption,
@@ -506,7 +507,7 @@ impl<'de> Deserialize<'de> for Table {
 }
 
 /// pandoc's `Figure`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Figure {
     pub attr: Attr,
     pub caption: Caption,
@@ -553,7 +554,7 @@ impl<'de> Deserialize<'de> for Figure {
 }
 
 /// pandoc's `Div`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Div {
     pub attr: Attr,
     pub content: Vec<Block>,
@@ -592,7 +593,7 @@ impl<'de> Deserialize<'de> for Div {
 }
 
 /// pandoc's `MetaValue`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "t", content = "c")]
 pub enum MetaValue {
     MetaMap(BTreeMap<Text, MetaValue>),
@@ -719,7 +720,7 @@ impl crate::Json for MetaValue {
 }
 
 /// pandoc's `Inline`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "t", content = "c")]
 pub enum Inline {
     Str(Text),
@@ -1020,7 +1021,7 @@ impl From<Span> for Inline {
 }
 
 /// pandoc's `Quoted`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Quoted {
     pub quote_type: QuoteType,
     pub content: Vec<Inline>,
@@ -1053,7 +1054,7 @@ impl<'de> Deserialize<'de> for Quoted {
 }
 
 /// pandoc's `Cite`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Cite {
     pub citations: Vec<Citation>,
     pub content: Vec<Inline>,
@@ -1092,7 +1093,7 @@ impl<'de> Deserialize<'de> for Cite {
 }
 
 /// pandoc's `Code`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Code {
     pub attr: Attr,
     pub text: Text,
@@ -1122,7 +1123,7 @@ impl<'de> Deserialize<'de> for Code {
 }
 
 /// pandoc's `Math`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Math {
     pub math_type: MathType,
     pub text: Text,
@@ -1152,7 +1153,7 @@ impl<'de> Deserialize<'de> for Math {
 }
 
 /// pandoc's `RawInline`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RawInline {
     pub format: Format,
     pub text: Text,
@@ -1182,7 +1183,7 @@ impl<'de> Deserialize<'de> for RawInline {
 }
 
 /// pandoc's `Link`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Link {
     pub attr: Attr,
     pub content: Vec<Inline>,
@@ -1219,7 +1220,7 @@ impl<'de> Deserialize<'de> for Link {
 }
 
 /// pandoc's `Image`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Image {
     pub attr: Attr,
     pub content: Vec<Inline>,
@@ -1256,7 +1257,7 @@ impl<'de> Deserialize<'de> for Image {
 }
 
 /// pandoc's `Span`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Span {
     pub attr: Attr,
     pub content: Vec<Inline>,
@@ -1295,7 +1296,7 @@ impl<'de> Deserialize<'de> for Span {
 }
 
 /// pandoc's `Attr`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Attr {
     pub identifier: Text,
     pub classes: Vec<Text>,
@@ -1346,7 +1347,7 @@ impl<'de> Deserialize<'de> for Attr {
 pub type Format = Text;
 
 /// pandoc's `ListAttributes`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ListAttributes {
     pub start: i64,
     pub style: ListNumberStyle,
@@ -1393,7 +1394,7 @@ impl<'de> Deserialize<'de> for ListAttributes {
 }
 
 /// pandoc's `Caption`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Caption {
     pub short: Option<ShortCaption>,
     pub content: Vec<Block>,
@@ -1432,7 +1433,7 @@ impl<'de> Deserialize<'de> for Caption {
 }
 
 /// pandoc's `ColSpec`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ColSpec {
     pub alignment: Alignment,
     pub width: ColWidth,
@@ -1471,7 +1472,7 @@ impl<'de> Deserialize<'de> for ColSpec {
 }
 
 /// pandoc's `TableHead`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableHead {
     pub attr: Attr,
     pub rows: Vec<Row>,
@@ -1510,7 +1511,7 @@ impl<'de> Deserialize<'de> for TableHead {
 }
 
 /// pandoc's `TableBody`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableBody {
     pub attr: Attr,
     pub row_head_columns: RowHeadColumns,
@@ -1563,7 +1564,7 @@ impl<'de> Deserialize<'de> for TableBody {
 }
 
 /// pandoc's `TableFoot`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableFoot {
     pub attr: Attr,
     pub rows: Vec<Row>,
@@ -1631,7 +1632,7 @@ impl crate::Json for QuoteType {
 }
 
 /// pandoc's `Citation`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Citation {
     #[serde(rename = "citationId")]
     pub id: Text,
@@ -1695,7 +1696,7 @@ impl crate::Json for MathType {
 }
 
 /// pandoc's `Target`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Target {
     pub url: Text,
     pub title: Text,
@@ -1850,11 +1851,34 @@ impl crate::Json for Alignment {
 }
 
 /// pandoc's `ColWidth`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "t", content = "c")]
 pub enum ColWidth {
     ColWidth(#[serde(serialize_with = "crate::aeson_double")] f64),
     ColWidthDefault,
+}
+
+/// Equal when the same number, bit for bit: one that isn't a number
+/// (pandoc's `null`) equals itself, so that `Eq` and `Hash` hold.
+impl PartialEq for ColWidth {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ColWidth::ColWidth(a), ColWidth::ColWidth(b)) => a.to_bits() == b.to_bits(),
+            (ColWidth::ColWidthDefault, ColWidth::ColWidthDefault) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ColWidth {}
+
+impl Hash for ColWidth {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        Hash::hash(&std::mem::discriminant(self), h);
+        if let ColWidth::ColWidth(x) = self {
+            Hash::hash(&x.to_bits(), h);
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for ColWidth {
@@ -1939,7 +1963,7 @@ impl crate::Json for ColWidth {
 }
 
 /// pandoc's `Row`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Row {
     pub attr: Attr,
     pub cells: Vec<Cell>,
@@ -2013,7 +2037,7 @@ impl crate::Json for CitationMode {
 }
 
 /// pandoc's `Cell`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Cell {
     pub attr: Attr,
     pub alignment: Alignment,

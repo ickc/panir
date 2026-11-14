@@ -65,8 +65,9 @@ They are checked against pandoc's Lua filters, with the scenarios in
 - Every string is a `Text`: up to 22 bytes kept in place (no heap
   allocation; 99.7% of the words of a real document), longer ones a heap
   `String`, in the 24 bytes a `String` takes. It reads as a `&str`; make one
-  with `.into()` from `&str` or `String` (`*s = s.to_uppercase().into()`);
-  `push_str` and `make_mut` change one in place. Against `String`, reading
+  with `.into()` from `&str`, `String` or `Cow<str>` (`*s =
+  s.to_uppercase().into()`); `push_str`, `extend` and `write!` append to
+  one, `make_mut` changes it in place. Against `String`, reading
   and writing JSON is 15–24% faster and a whole document's AST 16% smaller.
 - `from_str` reads without tracking where it is (another 25% faster); the
   path of an error is found from its position in the text, which is gone
@@ -75,31 +76,45 @@ They are checked against pandoc's Lua filters, with the scenarios in
   the same text as serde's `Serialize` gives, twice as fast), and
   `to_writer` hands it over block by block.
 - Products are structs (`Attr { identifier, classes, attributes }`), with
-  `Default` where pandoc's Lua constructors have defaults.
+  `Default` where pandoc's Lua constructors have defaults. Built with
+  their fields' names, so in no order to remember (Lua's positional
+  constructors have one; `Table { caption, ..Default::default() }` here).
+- Every node is `Clone`, `Eq` and `Hash`. A `ColWidth` compares its number
+  bit for bit: one that isn't a number (pandoc's `null`) equals itself, and
+  `0.0` and `-0.0`, written differently, differ.
+- A `Pandoc` is made with `Pandoc::new(blocks)` (then `doc.meta`), and its
+  `api_version()` is always one pandoc reads: set when read, and not a
+  public field.
 - `VisitMut` has a method per type, and `visit_blocks`/`visit_inlines` for
   whole lists (to splice or remove). Each default visits the children
   through the `walk_*` function of the same name. `Visit` is the same,
   reading only (`&`, through `walk_*_ref`): nothing to copy to look
-  through part of a document.
+  through part of a document. `doc.visit(&mut v)` walks a document with a
+  `Visit`, `doc.visit_mut(&mut v)` with a `VisitMut`.
 - Strings convert as in pandoc's Lua: `inlines("hello world")` is its words
   and spaces, `blocks("...")` `Plain` text, and `"x".into()` is a `Str`
   where one inline goes, `Plain` text where one block goes.
-- `from_str`/`to_string` (and `to_writer`) for documents; `from_str` checks
-  the `pandoc-api-version` and reports the path of JSON it can't read. It
+- `from_str`/`to_string` (and `from_slice`, `from_reader`, `to_writer`)
+  for documents; `from_str` checks the `pandoc-api-version` and reports
+  the path of JSON it can't read. It
   reads a document down to `MAX_DEPTH` (256) levels of blocks and inlines in
   each other, and as far as 640 kB of stack allow (a level takes five times
   the stack unoptimized); a deeper one is an error, not a crash.
 - A `ColWidth` that isn't finite is read and written as pandoc does (`null`,
   `"+inf"`, `"-inf"`); a finite one byte for byte.
 
-Decoding errors give the exact path in the JSON, plus line and column:
+A decoding error (`panir::Error`) has the exact path in the JSON (`path`,
+empty for the document itself), what is wrong (`message`), and the `line`
+and `column` in the text; displayed as
 
 ```
 meta.author.c[0].c[2].c[2].c: invalid type: integer `42`, expected a string at line 1 column 244
 ```
 
-(serde's derived adjacently tagged enums lose the path inside `"c"`, so the
-sum types' `Deserialize` is generated: it reads `"t"`, then decodes `"c"` in
-place.)
+The path goes on into contents that came before their tag (`{"c": ...,
+"t": ...}`, as JSON with sorted keys has them): the same path as in
+pandoc's order. (serde's derived adjacently tagged enums lose the path
+inside `"c"`, so the sum types' `Deserialize` is generated: it reads
+`"t"`, then decodes `"c"` in place.)
 
 Status: a prototype.

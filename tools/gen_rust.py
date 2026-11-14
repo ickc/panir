@@ -171,8 +171,14 @@ class Gen:
     def sum(self, t: dict) -> None:
         o = self.out
         structs = []
+        # a Double has no Eq or Hash: a type with one compares it by its bits
+        double = any(
+            len(c["fields"]) == 1 and self.rust(c["fields"][0]["type"]) == "f64"
+            for c in t["constructors"]
+        )
+        derives = "Debug, Clone, " + ("" if double else "PartialEq, Eq, Hash, ") + "Serialize"
         o.append(f"/// pandoc's `{t['name']}`.\n")
-        o.append("#[derive(Debug, Clone, PartialEq, Serialize)]\n")
+        o.append(f"#[derive({derives})]\n")
         o.append('#[serde(tag = "t", content = "c")]\n')
         o.append(f"pub enum {t['name']} {{\n")
         for c in t["constructors"]:
@@ -188,6 +194,8 @@ class Gen:
                 o.append(f"    {c['name']}(Box<{c['name']}>),\n")
                 structs.append(c)
         o.append("}\n\n")
+        if double:
+            self.bitwise_eq(t)
         self.sum_de(t)
         arms = []
         for c in t["constructors"]:
@@ -213,6 +221,32 @@ class Gen:
             if c["name"] in self.types:
                 raise SystemExit(f"constructor {c['name']} clashes with a type name")
             self.struct(c, "array", f"pandoc's `{c['name']}`, a `{t['name']}`.")
+
+    def bitwise_eq(self, t: dict) -> None:
+        """``PartialEq``, ``Eq`` and ``Hash`` for a sum type with a Double: the
+        same when the same bits (a NaN, pandoc's ``null``, equals itself)."""
+        name, eqs, hashes = t["name"], [], []
+        for c in t["constructors"]:
+            cn, fs = c["name"], c["fields"]
+            if not fs:
+                eqs.append(f"({name}::{cn}, {name}::{cn}) => true,\n")
+            elif len(fs) == 1 and self.rust(fs[0]["type"]) == "f64":
+                eqs.append(f"({name}::{cn}(a), {name}::{cn}(b)) => a.to_bits() == b.to_bits(),\n")
+                hashes.append(f"if let {name}::{cn}(x) = self {{ Hash::hash(&x.to_bits(), h); }}\n")
+            else:
+                raise SystemExit(f"gen_rust.py: {cn} beside a Double: add support for it")
+        self.out.append(
+            f"/// Equal when the same number, bit for bit: one that isn't a number\n"
+            f"/// (pandoc's `null`) equals itself, so that `Eq` and `Hash` hold.\n"
+            f"impl PartialEq for {name} {{\n"
+            f"    fn eq(&self, other: &Self) -> bool {{\n"
+            f"        match (self, other) {{\n{''.join(eqs)}_ => false,\n}}\n    }}\n}}\n\n"
+            f"impl Eq for {name} {{}}\n\n"
+            f"impl Hash for {name} {{\n"
+            f"    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {{\n"
+            f"        Hash::hash(&std::mem::discriminant(self), h);\n"
+            f"{''.join(hashes)}    }}\n}}\n\n"
+        )
 
     def nests(self, name: str) -> bool:
         """Whether a value of the type can hold another of the same type."""
@@ -305,7 +339,7 @@ class Gen:
         name = t["name"]
         fields = t["fields"]
         derive_serde = encoding in ("object", "root")
-        derives = ["Debug", "Clone", "PartialEq"]
+        derives = ["Debug", "Clone", "PartialEq", "Eq", "Hash"]
         if derive_serde:
             derives += ["Serialize", "Deserialize"]
         for f in fields:
@@ -313,8 +347,11 @@ class Gen:
         o.append(f"/// {doc}\n#[derive({', '.join(derives)})]\n")
         o.append(f"pub struct {name} {{\n")
         if encoding == "root":
+            # not public: always a version pandoc reads (`api_version()`)
             o.append(
-                '    #[serde(rename = "pandoc-api-version")]\n    pub api_version: Vec<i64>,\n'
+                '    #[serde(rename = "pandoc-api-version",'
+                ' deserialize_with = "crate::api_version")]\n'
+                "    pub(crate) api_version: Vec<i64>,\n"
             )
         for f in fields:
             if "key" in f and f["key"] != f["name"]:
@@ -525,6 +562,7 @@ HEADER = """\
 use serde::de;
 use serde::{{Deserialize, Deserializer, Serialize, Serializer}};
 use std::collections::BTreeMap;
+use std::hash::Hash;
 
 use crate::Text;
 

@@ -1,7 +1,7 @@
 //! [`Text`]: the AST's string (pandoc-types' `Text`), which keeps short
 //! strings in place of a heap pointer.
 
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -227,6 +227,15 @@ impl From<Box<str>> for Text {
     }
 }
 
+impl From<Cow<'_, str>> for Text {
+    fn from(s: Cow<'_, str>) -> Self {
+        match s {
+            Cow::Borrowed(s) => Text::from(s),
+            Cow::Owned(s) => Text::from(s),
+        }
+    }
+}
+
 impl From<char> for Text {
     fn from(c: char) -> Self {
         Text::from(c.encode_utf8(&mut [0; 4]) as &str)
@@ -251,6 +260,39 @@ where
 {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         String::from_iter(iter).into()
+    }
+}
+
+/// Appends, as a `String` does: `t.extend(["a", "b"])`, `t.extend(s.chars())`.
+impl Extend<char> for Text {
+    fn extend<I: IntoIterator<Item = char>>(&mut self, iter: I) {
+        iter.into_iter().for_each(|c| self.push(c));
+    }
+}
+
+impl<'a> Extend<&'a char> for Text {
+    fn extend<I: IntoIterator<Item = &'a char>>(&mut self, iter: I) {
+        iter.into_iter().for_each(|c| self.push(*c));
+    }
+}
+
+macro_rules! extend_str {
+    ($($t:ty),*) => {$(
+        impl<'a> Extend<$t> for Text {
+            fn extend<I: IntoIterator<Item = $t>>(&mut self, iter: I) {
+                iter.into_iter().for_each(|s| self.push_str(&s));
+            }
+        }
+    )*};
+}
+
+extend_str!(&'a str, String, Text, Box<str>, Cow<'a, str>);
+
+/// `write!(t, "{n} words")` appends.
+impl fmt::Write for Text {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.push_str(s);
+        Ok(())
     }
 }
 
@@ -379,6 +421,26 @@ mod tests {
         assert_eq!(t, "a\"b");
         assert_eq!(serde_json::to_string(&t).unwrap(), r#""a\"b""#);
         assert_eq!("ab".chars().collect::<Text>(), "ab");
+    }
+
+    #[test]
+    fn from_cow_extend_write() {
+        use std::fmt::Write as _;
+        assert_eq!(Text::from(Cow::Borrowed("a")), "a");
+        assert_eq!(
+            Text::from(Cow::<str>::Owned("b".repeat(30))),
+            "b".repeat(30)
+        );
+        let mut t = Text::from("x");
+        t.extend(['y', 'z']);
+        t.extend(&['!']);
+        t.extend(["ab", "cd"]);
+        t.extend([String::from("e"), "f".repeat(20)]);
+        t.extend([Text::from("g")]);
+        t.extend([Cow::Borrowed("h")]);
+        t.extend([Box::<str>::from("i")]);
+        write!(t, "{}-{}", 1, 2).unwrap();
+        assert_eq!(t, format!("xyz!abcde{}ghi1-2", "f".repeat(20)));
     }
 
     #[test]
