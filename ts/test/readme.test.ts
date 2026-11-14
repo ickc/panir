@@ -95,11 +95,12 @@ applyFilter(doc, { traverse: order, Code: (c) => Str(c.text) });
 // #endregion
 
 // #region README
-import { lookup, truthy } from "../src/index.ts";
+import { items, lookup, truthy } from "../src/index.ts";
 
-const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" } } }).meta;
+const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" }, tags: "a" } }).meta;
 assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
 assert.deepEqual([lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")], [MetaString("2"), undefined]);
+assert.deepEqual([items(meta.tags), items(meta.missing)], [[MetaString("a")], []]);
 // #endregion
 
 // #region README

@@ -204,3 +204,16 @@ def test_lookup():
     for path in [*missing, ("toc", "depth", "x")]:
         assert panir.lookup(meta, *path) is None
     assert panir.lookup(None, "x") is None
+
+
+def test_items():
+    """One value or a list of them, as a list."""
+    meta = Pandoc(meta={"one": "a", "l": ["a", "b"], "e": [], "off": False}).meta
+    assert panir.items(meta.get("one")) == [MetaString("a")]
+    assert panir.items(meta.get("l")) == [MetaString("a"), MetaString("b")]
+    assert panir.items(meta.get("e")) == []
+    assert panir.items(meta.get("off")) == [MetaBool(False)]
+    assert panir.items(meta.get("missing")) == []
+    listed = panir.items(meta["l"])
+    listed.pop()  # a new list: the document's is as it was
+    assert len(meta["l"].content) == 2 and listed[0] is meta["l"].content[0]  # type: ignore[attr-defined]

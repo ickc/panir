@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
-  applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, lookup, MetaBool, MetaInlines, MetaList,
+  applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, items, lookup, MetaBool, MetaInlines, MetaList,
   MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, stringify, Strong, toJSON, truthy,
   Underline,
 } from "../src/index.ts";
@@ -252,6 +252,17 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
       const words = paths.map(([key, ...keys]) => {
         const v = lookup(doc.meta, key, ...keys);
         return `${[key, ...keys].join(".")}=${v === undefined ? "none" : stringify(v)}`;
+      });
+      doc.blocks.push(Para(words.join(" ")));
+    },
+  }],
+
+  items: () => [{
+    Pandoc: (doc) => {
+      const keys = ["one", "list", "empty", "map", "nested", "off", "inlines", "missing"];
+      const words = keys.map((k) => {
+        const texts = items(doc.meta[k]).map((x) => stringify(x));
+        return `${k}=${texts.length}:${texts.join(",")}`;
       });
       doc.blocks.push(Para(words.join(" ")));
     },

@@ -244,6 +244,16 @@ export function lookup(value: Meta | MetaValue | null | undefined, key: string, 
   return v as MetaValue | undefined;
 }
 
+/**
+ * One value or a list of them, as a list: a `MetaList`'s items, nothing for
+ * a missing value, any other value alone (a filter's `ensure_list`; the
+ * shapes `header-includes` takes). A new array, of the document's values.
+ */
+export function items(value: MetaValue | null | undefined): MetaValue[] {
+  if (value == null) return [];
+  return value.t === "MetaList" ? [...value.content] : [value];
+}
+
 /** Metadata as plain values: string, boolean, array, object. `MetaInlines` and `MetaBlocks` become their text (`stringify`). */
 export function toPlain(value: MetaValue | Meta): unknown {
   return deep("toPlain", () => plain(value));

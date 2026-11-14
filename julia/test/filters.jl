@@ -239,6 +239,18 @@ function scenario_lookup()
     Filters([(f, :typewise)])
 end
 
+function scenario_items()
+    function f(d::Pandoc)
+        words = map(["one", "list", "empty", "map", "nested", "off", "inlines", "missing"]) do k
+            texts = map(stringify, items(get(d.meta, k, nothing)))
+            "$k=$(length(texts)):$(join(texts, ","))"
+        end
+        push!(d.blocks, Para(join(words, " ")))
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
@@ -247,7 +259,7 @@ const SCENARIOS = Dict(
     "newdoc" => scenario_newdoc, "twice" => scenario_twice, "metacount" => scenario_metacount,
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
     "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete,
-    "truthy" => scenario_truthy, "lookup" => scenario_lookup,
+    "truthy" => scenario_truthy, "lookup" => scenario_lookup, "items" => scenario_items,
 )
 
 @testset "filters as pandoc's Lua" begin

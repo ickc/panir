@@ -3,7 +3,7 @@
 
 use panir::{
     Attr, Block, Ctx, Div, Filter, FilterError, Header, Inline, Meta, MetaValue, Order, Pandoc,
-    apply, from_str, lookup, to_string, truthy,
+    apply, from_str, items, lookup, to_string, truthy,
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -623,6 +623,33 @@ impl Filter for Lookup {
     }
 }
 
+/// How many values each field has as a list, and their text, in a paragraph.
+struct Items(Order);
+
+impl Filter for Items {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let keys = [
+            "one", "list", "empty", "map", "nested", "off", "inlines", "missing",
+        ];
+        let words: Vec<String> = keys
+            .iter()
+            .map(|k| {
+                let texts: Vec<String> = items(doc.meta.get(*k))
+                    .iter()
+                    .map(panir::stringify)
+                    .collect();
+                format!("{k}={}:{}", texts.len(), texts.join(","))
+            })
+            .collect();
+        doc.blocks
+            .push(Block::Para(panir::inlines(&words.join(" "))));
+        Some(())
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -649,6 +676,7 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "metadelete" => Box::new(MetaDelete(order)),
         "truthy" => Box::new(Truthy(order)),
         "lookup" => Box::new(Lookup(order)),
+        "items" => Box::new(Items(order)),
         "metacount" => {
             return Some(
                 apply(doc, &mut AddKey, FORMAT).and_then(|()| apply(doc, &mut Count(0), FORMAT)),

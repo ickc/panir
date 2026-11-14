@@ -23,8 +23,8 @@ values are exported (`InlineMath`, `DoubleQuote`). Julia checks field types
 itself: `push!(para.content, Para())` and `h.level = "2"` are errors.
 
 `using Panir` brings in what a filter needs: the node types, the enums'
-values, `walk!`, `run_filter`, `Context`, `stringify`, `truthy`, `lookup`
-and the errors.
+values, `walk!`, `run_filter`, `Context`, `stringify`, `truthy`, `lookup`,
+`items` and the errors.
 Everything else is reached as `Panir.X`, or by name (`using Panir: Period,
 Alignment`): the names Julia or common packages have too (`Panir.Meta`,
 the metadata's type, since `Meta` is `Base.Meta`; `Panir.Period`,
@@ -221,11 +221,16 @@ What a port of a Lua filter trips over:
   "a", "b", "c")`, `nothing` where a key is missing or a value on the way
   is not a map (where Lua would fail, on `true`, or find a method, on a
   string or a list). It starts from the metadata or a `MetaMap`.
+- **One value or a list of them** (a filter's `ensure_list`, the shapes
+  `header-includes` takes): `items(get(meta, "x", nothing))`, a
+  `MetaList`'s items, nothing for a missing value, any other value alone;
+  a new vector, of the document's values.
 
 ```julia
-meta = Pandoc(; meta = Dict("draft" => false, "title" => "", "toc" => Dict("depth" => "2"))).meta
+meta = Pandoc(; meta = Dict("draft" => false, "title" => "", "toc" => Dict("depth" => "2"), "tags" => "a")).meta
 truthy(get(meta, "draft", nothing)), truthy(meta["title"]), truthy(get(meta, "missing", nothing))  # (false, true, false)
 lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")  # (MetaString("2"), nothing)
+items(meta["tags"]), items(get(meta, "missing", nothing))  # ([MetaString("a")], MetaValue[])
 ```
 
 ### Fragments

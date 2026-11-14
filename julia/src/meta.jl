@@ -41,3 +41,18 @@ end
 _entries(m::AbstractDict) = m
 _entries(m::MetaMap) = m.content
 _entries(_) = nothing
+
+"""
+    items(v) -> Vector{MetaValue}
+
+One value or a list of them, as a list: a `MetaList`'s items, nothing for
+`nothing`, any other value alone (a filter's `ensure_list`; the shapes
+`header-includes` takes). A new vector, of the document's values.
+
+```julia
+for author in items(get(doc.meta, "author", nothing)) ... end
+```
+"""
+items(::Nothing) = MetaValue[]
+items(v::MetaList) = copy(v.content)
+items(v::MetaValue) = MetaValue[v]

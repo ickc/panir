@@ -1,6 +1,6 @@
 //! Metadata as pandoc's Lua filters read and write it: Lua's truth, a
-//! lookup through maps, and metadata made from plain Rust values, as
-//! pandoc's Lua converts plain Lua values.
+//! lookup through maps, one value or a list of them, and metadata made from
+//! plain Rust values, as pandoc's Lua converts plain Lua values.
 
 use crate::{Block, Inline, Meta, MetaValue, Text};
 
@@ -46,6 +46,27 @@ pub fn lookup<'a>(meta: &'a Meta, path: &[&str]) -> Option<&'a MetaValue> {
         }
     }
     map.get(*last)
+}
+
+/// One value or a list of them, as a list: a `MetaList`'s items, nothing for
+/// a missing value, any other value alone (a filter's `ensure_list`, the
+/// shapes `header-includes` takes).
+///
+/// ```
+/// use panir::{MetaValue, items};
+///
+/// let one = MetaValue::from("a");
+/// let list: MetaValue = ["a", "b"].into_iter().collect();
+/// assert_eq!(items(Some(&one)).len(), 1);
+/// assert_eq!(items(Some(&list)).len(), 2);
+/// assert!(items(None).is_empty());
+/// ```
+pub fn items(value: Option<&MetaValue>) -> &[MetaValue] {
+    match value {
+        None => &[],
+        Some(MetaValue::MetaList(xs)) => xs,
+        Some(v) => std::slice::from_ref(v),
+    }
 }
 
 // Plain values as metadata, as pandoc's Lua converts them: a string is a

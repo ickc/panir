@@ -359,7 +359,8 @@ end
     m = Module()
     Core.eval(m, :(using Panir))
     for name in (:Str, :Para, :Inline, :MetaValue, :InlineMath, :DoubleQuote, :AlignLeft, :LowerRoman, :OneParen,
-                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify, :check_unique, :truthy, :lookup)
+                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify, :check_unique, :truthy, :lookup,
+                 :items)
         @test isdefined(m, name)
     end
     # the common words, the aliases and the enums' types: as Panir.X
@@ -436,4 +437,15 @@ end
         @test lookup(meta, path...) === nothing
     end
     @test lookup(nothing, "x") === nothing
+end
+
+@testset "one value or a list of them, as a list" begin
+    meta = Pandoc(; meta = Dict("one" => "a", "l" => ["a", "b"], "e" => [], "off" => false)).meta
+    @test items(meta["one"]) == [MetaString("a")]
+    @test items(meta["l"]) == [MetaString("a"), MetaString("b")]
+    @test isempty(items(meta["e"])) && isempty(items(nothing))
+    @test items(meta["off"]) == [MetaBool(false)]
+    listed = items(meta["l"])
+    pop!(listed)  # a new vector: the document's is as it was
+    @test length(meta["l"].content) == 2
 end

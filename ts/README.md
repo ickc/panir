@@ -333,13 +333,18 @@ What a port of a Lua filter trips over:
   way is not a map (where Lua would fail, on `true`, or find a method, on
   a string or a list). It starts from the metadata or a `MetaMap`, and
   reads a map's own keys only.
+- **One value or a list of them** (a filter's `ensure_list`, the shapes
+  `header-includes` takes): `items(meta.x)`, a `MetaList`'s items, nothing
+  for a missing value, any other value alone; a new array, of the
+  document's values.
 
 ```ts
-import { lookup, truthy } from "panir";
+import { items, lookup, truthy } from "panir";
 
-const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" } } }).meta;
+const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" }, tags: "a" } }).meta;
 assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
 assert.deepEqual([lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")], [MetaString("2"), undefined]);
+assert.deepEqual([items(meta.tags), items(meta.missing)], [[MetaString("a")], []]);
 ```
 
 ### Fragments

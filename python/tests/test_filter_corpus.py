@@ -512,11 +512,25 @@ def lookup() -> list[Filter]:
     return [f]
 
 
+def items() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def lists(doc):
+        words = []
+        for k in ("one", "list", "empty", "map", "nested", "off", "inlines", "missing"):
+            texts = [A.stringify(x) for x in A.items(doc.meta.get(k))]
+            words.append(f"{k}={len(texts)}:{','.join(texts)}")
+        doc.blocks.append(Para(" ".join(words)))
+
+    return [f]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
     + (once, lists, meta, newdoc, twice, metacount, attributes, fails)
-    + (replaced, metavalues, metadelete, truthy, lookup)
+    + (replaced, metavalues, metadelete, truthy, lookup, items)
 }
 
 

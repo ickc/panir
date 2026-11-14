@@ -208,14 +208,19 @@ What a port of a Lua filter trips over:
   is not a map (where Lua would fail, on `true`, or find a method, on a
   string or a list). It starts from the metadata or a `MetaMap`'s content
   (a `Meta` too).
+- **One value or a list of them** (a filter's `ensure_list`, the shapes
+  `header-includes` takes): `items(meta.get("x"))`, a `MetaList`'s items,
+  nothing for a missing value, any other value alone: a slice, borrowed
+  from the document.
 
 ```rust
-use panir::{MetaValue, Pandoc, lookup, truthy};
+use panir::{MetaValue, Pandoc, items, lookup, truthy};
 
 let mut doc = Pandoc::new(vec![]);
 doc.meta.insert("draft".into(), false.into());
 doc.meta.insert("title".into(), "".into());
 doc.meta.insert("toc".into(), [("depth", "2")].into_iter().collect());
+doc.meta.insert("tags".into(), "a".into());
 let meta = &doc.meta;
 assert_eq!(
     [truthy(meta.get("draft")), truthy(meta.get("title")), truthy(meta.get("missing"))],
@@ -223,6 +228,8 @@ assert_eq!(
 );
 assert_eq!(lookup(meta, &["toc", "depth"]), Some(&MetaValue::from("2")));
 assert_eq!(lookup(meta, &["title", "depth"]), None);
+assert_eq!(items(meta.get("tags")), [MetaValue::from("a")]);
+assert!(items(meta.get("missing")).is_empty());
 ```
 
 ## Types and `VisitMut`

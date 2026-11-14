@@ -7,7 +7,8 @@
 - filters: ``Filter``, and ``walk`` underneath; ``Conversion``, the pandoc
   run a filter is part of, which parses fragments as the document was read;
 - ``stringify``, and metadata to and from Python (``to_python``,
-  ``from_python``), and as Lua reads it (``lookup``).
+  ``from_python``), and as Lua reads it
+  (``lookup``, ``items``).
 """
 
 from __future__ import annotations
@@ -31,7 +32,16 @@ from ._types import Pandoc
 from ._walk import Context, walk
 from .conversion import Conversion
 from .filter import Filter, run
-from .util import blocks, check_unique, from_python, inlines, lookup, stringify, to_python
+from .util import (
+    blocks,
+    check_unique,
+    from_python,
+    inlines,
+    items,
+    lookup,
+    stringify,
+    to_python,
+)
 
 __version__ = "0.1.0"
 
@@ -84,6 +94,7 @@ __all__ = [
     "dumps",
     "from_python",
     "inlines",
+    "items",
     "load",
     "loads",
     "lookup",

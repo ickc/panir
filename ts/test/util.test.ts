@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
   ASTTypeError, Attr, Citation, Code, copy, Div, Emph, equal, fromJSON, fromPlain, getAttribute, hasAttribute,
-  LineBreak, ListAttributes, lookup, removeAttribute, setAttribute,
+  items, LineBreak, ListAttributes, lookup, removeAttribute, setAttribute,
   MetaBlocks, MetaBool, MetaInlines, MetaList, MetaMap, MetaString, Note, Pandoc, Para, parse, Plain, Quoted, RawInline,
   serialize, Str, stringify, toPlain, truthy,
 } from "../src/index.ts";
@@ -140,6 +140,18 @@ test("a nested option, through maps: undefined where a key is missing or a value
   assert.equal(lookup(undefined, "x"), undefined);
   // a field named t is a field
   assert.deepEqual(lookup(Pandoc([], { meta: { t: { u: "v" } } }).meta, "t", "u"), MetaString("v"));
+});
+
+test("one value or a list of them, as a list", () => {
+  const meta = Pandoc([], { meta: { one: "a", l: ["a", "b"], e: [], off: false } }).meta;
+  assert.deepEqual(items(meta.one), [MetaString("a")]);
+  assert.deepEqual(items(meta.l), [MetaString("a"), MetaString("b")]);
+  assert.deepEqual(items(meta.e), []);
+  assert.deepEqual(items(meta.off), [MetaBool(false)]);
+  assert.deepEqual(items(meta.missing), []);
+  const listed = items(meta.l);
+  listed.pop(); // a new array: the document's is as it was
+  assert.equal((meta.l as { content: unknown[] }).content.length, 2);
 });
 
 test("attributes by key, as pandoc's Lua", () => {

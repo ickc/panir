@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use panir::{Block, Inline, MetaValue, lookup, truthy};
+use panir::{Block, Inline, MetaValue, items, lookup, truthy};
 
 #[test]
 fn metadata_from_plain_values() {
@@ -97,4 +97,16 @@ fn a_nested_option() {
         panic!()
     };
     assert_eq!(lookup(toc, &["depth"]), Some(&"2".into()));
+}
+
+#[test]
+fn one_value_or_a_list() {
+    let one = MetaValue::from("a");
+    let list: MetaValue = ["a", "b"].into_iter().collect();
+    let empty = MetaValue::MetaList(vec![]);
+    assert_eq!(items(Some(&one)), [MetaValue::from("a")]);
+    assert_eq!(items(Some(&list)), ["a".into(), "b".into()]);
+    assert!(items(Some(&empty)).is_empty());
+    assert_eq!(items(Some(&false.into())), [false.into()]);
+    assert!(items(None).is_empty());
 }

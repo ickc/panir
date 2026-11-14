@@ -31,6 +31,6 @@ include("meta.jl")
 
 include("precompile.jl")
 
-export Node, ASTDecodeError, ASTTypeError, ASTDepthError, Context, Conversion, walk!, skip_children!, check_unique, run_filter, stringify, inlines, blocks, truthy, lookup
+export Node, ASTDecodeError, ASTTypeError, ASTDepthError, Context, Conversion, walk!, skip_children!, check_unique, run_filter, stringify, inlines, blocks, truthy, lookup, items
 
 end

@@ -249,15 +249,21 @@ What a port of a Lua filter trips over:
   "a", "b", "c")`, `None` where a key is missing or a value on the way is
   not a map (where Lua would fail, on `true`, or find a method, on a
   string or a list). It starts from the metadata or a `MetaMap`.
+- **One value or a list of them** (a filter's `ensure_list`, the shapes
+  `header-includes` takes): `items(meta.get("x"))`, a `MetaList`'s items,
+  nothing for a missing value, any other value alone; a new list, of the
+  document's values.
 
 ```python
->>> meta = Pandoc(meta={"draft": False, "title": "", "toc": {"depth": "2"}}).meta
+>>> meta = Pandoc(meta={"draft": False, "title": "", "toc": {"depth": "2"}, "tags": "a"}).meta
 >>> bool(meta.get("draft")), bool(meta.get("title")), bool(meta.get("missing"))
 (False, True, False)
 >>> meta.get("draft") or MetaString("final")
 MetaString('final')
 >>> lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")
 (MetaString('2'), None)
+>>> items(meta.get("tags")), items(meta.get("missing"))
+([MetaString('a')], [])
 ```
 
 ### Fragments

@@ -37,6 +37,7 @@ __all__ = [
     "check_unique",
     "from_python",
     "inlines",
+    "items",
     "lookup",
     "stringify",
     "to_python",
@@ -147,6 +148,21 @@ def lookup(
             return None
         value = found
     return found
+
+
+def items(value: MetaValue | None) -> list[MetaValue]:
+    """One value or a list of them, as a list: a ``MetaList``'s items,
+    nothing for ``None``, any other value alone (a filter's ``ensure_list``;
+    the shapes ``header-includes`` takes). A new list, of the document's
+    values.
+
+        for name in items(doc.meta.get("author")): ...
+    """
+    if value is None:
+        return []
+    if isinstance(value, MetaList):
+        return list(value.content)
+    return [value]
 
 
 @too_deep("to_python")
