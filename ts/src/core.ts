@@ -925,6 +925,9 @@ export function isNodeOf(type: string, x: unknown): boolean {
   if (tags) return typeof x === "object" && x !== null && tags.has((x as { t?: string }).t!) && isObject(x);
   try {
     checkArgument({ ref: type }, x);
+    // (and no field of another: a Cell isn't a Caption)
+    const fields = tables().nodes.get(type)?.fields;
+    if (fields) for (const k of Object.keys(x as object)) if (!fields.some((f) => f.name === k)) return false;
     return true;
   } catch (e) {
     if (e instanceof Bad) return false;
@@ -939,20 +942,19 @@ export function nameOf(type: string): string {
 
 /**
  * What a filter function returned for a node of a list of `type`, as the
- * nodes to put there: converted as pandoc's Lua converts it (a list
- * element by element; a string where inlines go its words, where blocks go
- * `Plain` text; one node a list of it), in a new array; undefined if it
- * isn't anything of the sort. The caller checks each node.
+ * nodes to put there: an inline's or a block's converted as pandoc's Lua
+ * converts it (a list element by element; a string where inlines go its
+ * words, where blocks go `Plain` text; one node a list of it), in a new
+ * array; another node's as it is (Lua has no functions for those: no
+ * conversions); undefined if it isn't anything of the sort. The caller
+ * checks each node.
  */
 export function returnedNodes(type: string, r: unknown): unknown[] | undefined {
-  const item = { ref: type };
-  if (Array.isArray(r)) return convertList(item, r) as unknown[];
-  if (typeof r === "string") {
-    if (type === "Inline" || type === "Block") return convertList(item, r) as unknown[];
-    return undefined;
-  }
+  const lua = type === "Inline" || type === "Block";
+  if (Array.isArray(r)) return lua ? convertList({ ref: type }, r) as unknown[] : [...r];
+  if (typeof r === "string") return lua ? convertList({ ref: type }, r) as unknown[] : undefined;
   if (typeof r !== "object" || r === null) return undefined;
-  return [convertOne(type, r)];
+  return [lua ? convertOne(type, r) : r];
 }
 
 // -- constructors ---------------------------------------------------------------
