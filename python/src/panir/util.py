@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from . import _deep
 from ._core import Node, NodeList, text_inlines, too_deep
 from ._types import (
     Block,
@@ -56,6 +55,7 @@ def blocks(text: str) -> list[Block]:
     return out
 
 
+@too_deep("stringify")
 def stringify(value: Any) -> str:
     """The text of a node (or list of nodes), without markup, exactly as
     pandoc's Lua ``pandoc.utils.stringify``.
@@ -66,7 +66,7 @@ def stringify(value: Any) -> str:
     ``"false"``; but a whole document is the text of its inlines only (in
     the metadata too: not its ``MetaString`` and ``MetaBool`` values).
     """
-    return _deep.deep(_stringify, lambda: too_deep("stringify"), value)
+    return _stringify(value)
 
 
 def _stringify(value: Any) -> str:
@@ -118,12 +118,13 @@ def _text(value: Any, out: list[str], inlines_only: bool) -> None:
             _text(getattr(value, f), out, inlines_only)
 
 
+@too_deep("to_python")
 def to_python(value: MetaValue | Mapping[str, MetaValue]) -> Any:
     """Metadata as plain Python: str, bool, list, dict.
 
     ``MetaInlines`` and ``MetaBlocks`` become their text (``stringify``).
     """
-    return _deep.deep(_to_python, lambda: too_deep("to_python"), value)
+    return _to_python(value)
 
 
 def _to_python(value: Any) -> Any:
@@ -142,6 +143,7 @@ def _to_python(value: Any) -> Any:
     raise TypeError(f"not metadata: {value!r}")
 
 
+@too_deep("from_python")
 def from_python(value: Any) -> MetaValue | None:
     """A Python value as metadata, or None if it has no obvious form.
 
@@ -149,7 +151,7 @@ def from_python(value: Any) -> MetaValue | None:
     int and float -> MetaString (YAML numbers read by pandoc are strings too).
     Setting metadata converts with this: ``doc.meta["draft"] = True``.
     """
-    return _deep.deep(_from_python, lambda: too_deep("from_python"), value)
+    return _from_python(value)
 
 
 def _from_python(value: Any) -> MetaValue | None:

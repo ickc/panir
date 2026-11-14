@@ -1,10 +1,9 @@
-"""Deep documents: read, written, walked, copied and compared to 256 levels
-(the Rust crate's MAX_DEPTH) and beyond, in any thread, without touching
-the recursion limit; deeper than panir can go is a clean error."""
+"""Deep documents: plain recursion, as deep as Python's recursion limit
+allows (about 190 levels at the default; the deepest real document found
+has 38); deeper is ``ASTDecodeError`` reading, ``ASTDepthError`` otherwise."""
 
 from __future__ import annotations
 
-import contextvars
 import copy
 import pickle
 import sys
@@ -15,14 +14,12 @@ import pytest
 from panir import (
     ASTDecodeError,
     ASTDepthError,
+    ASTError,
     Div,
-    Emph,
     Filter,
-    Inline,
     Pandoc,
     Para,
     Str,
-    _deep,
     stringify,
     walk,
 )
@@ -30,7 +27,7 @@ from panir import (
 V = '"pandoc-api-version":[1,23,1,2]'
 OPEN = {
     "div": ('{"t":"Div","c":[["",[],[]],[', "]]}"),
-    "emph": ('{"t":"Emph","c":[', "]}"),
+    # (a table in a table is four levels: Table, TableBody, Row, Cell)
     "table": (
         '{"t":"Table","c":[["",[],[]],[null,[]],[],[["",[],[]],[]],[[["",[],[]],0,[],'
         '[[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[',
@@ -39,13 +36,10 @@ OPEN = {
 }
 
 
-def text(kind: str, depth: int) -> str:
-    """``depth`` levels of a kind of node, around a paragraph (or a Str)."""
+def text(kind: str, count: int) -> str:
+    """``count`` of a kind of node in one another, around a paragraph."""
     o, c = OPEN[kind]
-    if kind == "emph":
-        inner = o * depth + '{"t":"Str","c":"x"}' + c * depth
-        return f'{{{V},"meta":{{}},"blocks":[{{"t":"Para","c":[{inner}]}}]}}'
-    inner = o * depth + '{"t":"Para","c":[{"t":"Str","c":"x"}]}' + c * depth
+    inner = o * count + '{"t":"Para","c":[{"t":"Str","c":"x"}]}' + c * count
     return f'{{{V},"meta":{{}},"blocks":[{inner}]}}'
 
 
@@ -58,184 +52,106 @@ def everything(t: str) -> None:
     assert copy.deepcopy(doc) == doc
     assert pickle.loads(pickle.dumps(doc)) == doc
     assert Pandoc.from_json(doc.to_json()) == doc
-    # (Python's parser stops at 200 parentheses: its eval, not the repr)
-    assert repr(doc).startswith("Pandoc(") and repr(doc).count("(") > 256
+    assert repr(doc).startswith("Pandoc(")
     assert stringify(doc) == "x"
     for traverse in ("typewise", "topdown", "bottomup"):
         f = Filter(traverse=traverse)
-
-        @f.on(Str)
-        def upper(s, ctx):
-            assert ctx.where.endswith("content[0]")
-            return Str(s.text.upper())
-
-        @f.on(Div, Emph)
-        def keep(x):
-            return None
-
+        f.on(Str)(lambda s: Str(s.text.upper() if s.text == "x" else "x"))
         assert f(other) is other
-    assert stringify(other) == "X"
-    count = []
+        assert stringify(other) == "X"
+        f(other)
+    count: list = []
     walk(doc, lambda x, ctx: count.append(1))
-    assert len(count) > 2
+    assert len(count) > 100
 
 
-@pytest.mark.parametrize("kind", ["div", "emph", "table"])
-def test_256_levels_of_each_kind(kind):
-    limit = sys.getrecursionlimit()
-    everything(text(kind, 256))
-    assert sys.getrecursionlimit() == limit
+# 100 levels: more than twice the deepest real document found
+@pytest.mark.parametrize(("kind", "count"), [("div", 100), ("table", 25)])
+def test_100_levels(kind, count):
+    everything(text(kind, count))
 
 
-@pytest.mark.parametrize("kind", ["div", "table"])
-def test_256_levels_in_a_thread_with_a_small_stack(kind):
-    # (512 kB: a thread's stack on macOS; 3.12 and 3.13's json would crash
-    # in it, deep enough)
+@pytest.mark.parametrize(("kind", "count"), [("div", 100), ("table", 25)])
+def test_100_levels_in_another_thread(kind, count):
     errors: list[BaseException] = []
 
     def run():
         try:
-            everything(text(kind, 256))
+            everything(text(kind, count))
         except BaseException as e:
             errors.append(e)
 
-    old = threading.stack_size(512 << 10)
-    try:
-        t = threading.Thread(target=run)
-        t.start()
-    finally:
-        threading.stack_size(old)
+    t = threading.Thread(target=run)
+    t.start()
     t.join()
     assert not errors, errors
 
 
-def test_deeper_still():
-    # 2,000 divs: deeper than the caller's thread goes, with any Python
-    # (6,000 levels of JSON; json on 3.12 and 3.13 goes to 10,000)
-    everything(text("div", 2000))
+def nested(count: int) -> Pandoc:
+    x = Para("x")
+    for _ in range(count):
+        x = Div(x)
+    return Pandoc(x)
 
 
-def test_a_deep_walk_goes_on_in_another_thread():
-    doc = panir.loads(text("div", 1000))
-    var = contextvars.ContextVar("var", default="unset")
-    var.set("set")
-    seen = []
+def test_deeper_than_the_recursion_limit_is_a_clean_error():
+    deep = nested(3000)
     f = Filter()
-
-    @f.on(Para)
-    def deepest(p, ctx):
-        seen.append((threading.current_thread().name, var.get(), len(ctx.ancestors)))
-        return [p, Para("after")]
-
-    f(doc)
-    # in panir's thread, with the caller's context; the walk as usual
-    assert seen == [("panir-deep", "set", 1001)]
-    inner = doc.blocks[0]
-    for _ in range(999):
-        inner = inner.content[0]
-    assert inner.content == [Para("x"), Para("after")]
-
-
-def test_an_error_deep_in_a_walk_is_the_functions():
-    doc = panir.loads(text("div", 1000))
-    f = Filter()
-
-    @f.on(Str)
-    def fail(s):
-        raise KeyError("mine")
-
-    with pytest.raises(KeyError, match="mine") as e:
-        f(doc)
-    assert "in filter function" in e.value.__notes__[0]
-    assert "blocks[0]" + ".content[0]" * 1000 in e.value.__notes__[0]
-
-
-@pytest.fixture
-def shallow(monkeypatch):
-    """panir's thread as if it couldn't go deeper than 3,000 calls."""
-    monkeypatch.setattr(_deep, "LIMIT", 3000)
-    monkeypatch.setattr(sys, "getrecursionlimit", lambda: 1000)  # (the caller's)
-    real = sys.setrecursionlimit
-    monkeypatch.setattr(sys, "setrecursionlimit", lambda n: real(min(n, 3000)))
-    yield
-    real(1000)
-
-
-def nested_json(depth: int) -> dict:
-    j: dict = {"t": "Str", "c": "x"}
-    for _ in range(depth):
-        j = {"t": "Emph", "c": [j]}
-    return {"pandoc-api-version": [1, 23, 1, 2], "meta": {}, "blocks": [{"t": "Para", "c": [j]}]}
-
-
-def nested(depth: int) -> Inline:
-    x: Inline = Str("x")
-    for _ in range(depth):
-        x = Emph(x)
-    return x
-
-
-def test_too_deep_is_a_clean_error(shallow):
-    # deeper than panir's thread can go (as if; really, tens of thousands
-    # of levels): ASTDecodeError reading, ASTDepthError otherwise, never a
-    # bare RecursionError
-    with pytest.raises(ASTDecodeError, match="JSON nested less deeply"):
-        Pandoc.from_json(nested_json(5000))
-    deep = Pandoc(Para(nested(5000)))
+    f.on(Str)(lambda s: None)
+    with pytest.raises(ASTDecodeError, match="recursion limit"):
+        Pandoc.from_json(_nested_json(3000))
     for op, what in [
-        (lambda: deep.to_json(), "JSON of Pandoc"),
-        (lambda: copy.deepcopy(deep), "copy of Pandoc"),
+        (lambda: deep.to_json(), "to_json"),
+        (lambda: copy.deepcopy(deep), "copy"),
+        (lambda: repr(deep), "repr"),
         (lambda: stringify(deep), "stringify"),
-        (lambda: repr(deep), "repr of"),
+        (lambda: f(deep), "walk"),
+        (lambda: walk(deep, lambda x, ctx: None), "walk"),
     ]:
         with pytest.raises(ASTDepthError) as e:
             op()
-        assert str(e.value).startswith(what), str(e.value)
+        assert str(e.value).startswith(what + ": ")
+        assert "sys.setrecursionlimit" in str(e.value)
         assert isinstance(e.value, RecursionError)
+    # json in C may go deeper (3.14's, bounded by the stack): it works, or
+    # it is the same error
+    for op, error in [
+        (lambda: panir.loads(text("div", 3000)), ASTDecodeError),
+        (lambda: panir.dumps(deep), ASTDepthError),
+        (lambda: pickle.dumps(deep), ASTDepthError),
+    ]:
+        try:
+            op()
+        except ASTError as e:
+            assert isinstance(e, error)
+    # comparing doesn't recurse
+    assert deep == nested(3000)
+    assert deep != nested(2999)
+
+
+def _nested_json(count: int) -> dict:
+    j: dict = {"t": "Para", "c": [{"t": "Str", "c": "x"}]}
+    for _ in range(count):
+        j = {"t": "Div", "c": [["", [], []], [j]]}
+    return {"pandoc-api-version": [1, 23, 1, 2], "meta": {}, "blocks": [j]}
+
+
+def test_a_filter_functions_own_recursion_says_which_function():
     f = Filter()
-    f.on(Str)(lambda s: None)
-    with pytest.raises(ASTDepthError, match="walk at blocks"):
-        f(deep)
-    # comparing has no recursion
-    assert deep == Pandoc(Para(nested(5000)))
-    assert deep != Pandoc(Para(nested(4999)))
+
+    @f.on(Str)
+    def endless(s):
+        return endless(s)
+
+    with pytest.raises(ASTDepthError) as e:
+        f(Pandoc(Para("x")))
+    assert "in filter function" in e.value.__notes__[0]
 
 
-def test_the_recursion_limit_is_restored():
-    before = sys.getrecursionlimit()
-    everything(text("div", 300))
-    assert sys.getrecursionlimit() == before
-
-
-def test_equality_without_recursion():
-    a, b = nested(100_000), nested(100_000)
-    assert a == b
-    b2 = b
-    for _ in range(99_999):
-        b2 = b2.content[0]  # type: ignore[attr-defined]
-    b2.content[0] = Str("y")  # type: ignore[attr-defined]
-    assert a != b
-    assert Div(Para("x")) != Div(Para("y")) and Div(Para("x")) == Div(Para("x"))
-    nan = float("nan")
-    from panir import ColWidth
-
-    w = ColWidth(nan)
-    assert w == w and ColWidth(float("nan")) != ColWidth(float("nan"))  # (as [nan] == [nan])
-
-
-def test_where_no_thread_can_be_had(monkeypatch):
-    # (a platform that won't give the stack, or has no threads: Pyodide)
-    deep = Pandoc(Para(nested(3000)))
-    monkeypatch.setattr(_deep, "STACK", 1 << 62)
-    with pytest.raises(ASTDepthError):
-        copy.deepcopy(deep)
-    monkeypatch.undo()
-
-    def no_threads(self):
-        raise RuntimeError("can't start new thread")
-
-    monkeypatch.setattr(threading.Thread, "start", no_threads)
+def test_a_higher_recursion_limit_goes_deeper():
     limit = sys.getrecursionlimit()
-    with pytest.raises(ASTDepthError):
-        copy.deepcopy(deep)
-    assert sys.getrecursionlimit() == limit
+    sys.setrecursionlimit(5_000)
+    try:
+        everything(text("div", 400))
+    finally:
+        sys.setrecursionlimit(limit)

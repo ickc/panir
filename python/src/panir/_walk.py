@@ -7,11 +7,9 @@ values of its fields whose type can hold nodes.
 from __future__ import annotations
 
 import copy
-import sys
 from collections.abc import Callable, Sequence
 from typing import Any, TypeVar, overload
 
-from . import _deep
 from ._core import (
     ASTTypeError,
     Node,
@@ -332,8 +330,6 @@ class _Walker:
         root: str = "",
     ) -> None:
         self.find, self.top_down, self.root = find, top_down, root
-        # how deep (in frames) to walk in this thread; deeper, in panir's own
-        self.hop = _hop_at()
         self.doc, self.conversion = doc, conversion
         self.lists = lists or {}
         self.frames: list = []
@@ -341,17 +337,6 @@ class _Walker:
         # the lists being walked whose result is made aside: those of every
         # pass of a filter's walk (a context may be kept from one to the next)
         self.splicing: list[_Splice] = [] if splicing is None else splicing
-
-    def deeper(self, node: Node, kids: tuple | None) -> None:
-        """Walk what is in ``node`` in panir's own thread (``_deep``): the
-        walk is too deep for this one."""
-        hop, self.hop = self.hop, sys.maxsize
-        try:
-            _deep.retry(
-                self.children, lambda: too_deep(f"walk at {self.context().where}"), node, kids
-            )
-        finally:
-            self.hop = hop
 
     def mend(self) -> None:
         """Make every list being walked what it is now (out + the rest)."""
@@ -711,9 +696,6 @@ class _Walker:
 
     def children(self, node: Node, kids: tuple | None = None) -> None:
         """Walk what is in ``node`` (``kids``: its class's, if already known)."""
-        if len(self.frames) > self.hop:
-            self.deeper(node, kids)
-            return
         for f, spec, get, nodes in _kids(type(node)) if kids is None else kids:
             old = get(node)
             if nodes and type(old) is NodeList:
@@ -752,19 +734,7 @@ def walk(
     doc: Any = None,
     wants: Callable[[type], bool] | None = None,
 ) -> Node: ...
-def _hop_at() -> int:
-    """How many frames a walk may go down in the calling thread: what
-    Python's recursion limit leaves, at about three calls a frame (and
-    some left for the functions it calls)."""
-    if _deep.in_deep_thread():
-        return sys.maxsize
-    depth, f = 0, sys._getframe(1)
-    while f is not None:
-        depth += 1
-        f = f.f_back  # type: ignore[assignment]
-    return max(8, (sys.getrecursionlimit() - depth - 300) // 4)
-
-
+@too_deep("walk")
 def walk(
     node: Any,
     action: Action,

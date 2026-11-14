@@ -224,6 +224,7 @@ conversion from its context, and they are read the way the document was:
 ```python
 import libpandoc
 
+
 @f.on(CodeBlock)
 def cells(code, ctx):
     if "cells" in code.attr.classes:
@@ -246,31 +247,15 @@ and that depends on who runs it:
 
 ## Deep documents
 
-Reading, writing, walking, copying, comparing and pickling work on
-documents nested at least 256 levels deep (blocks and inlines in each
-other; the Rust crate's `MAX_DEPTH`), on Python 3.10 to 3.14, in any
-thread, without touching the recursion limit: 300 nested divs is a 9 kB
-web page. What goes deeper than the calling thread allows goes on in a
-thread of panir's own, with a 256 MB stack (address space, used as
-touched) and a recursion limit of 50,000 (Python has one limit for all
-threads: it is raised meanwhile). Comparing doesn't recurse at all.
-
-A walk that goes that deep (about 170 levels below its caller, at the
-default recursion limit) calls the filter's functions for the nodes below
-in that thread too, with a copy of the caller's context variables. What
-is tied to the calling thread isn't theirs there: thread-local data, or a
-connection that must stay in the thread that made it.
-
-Deeper still, it works as far as that thread goes: about 1,100 tables in
-tables or 3,300 divs on 3.12 and 3.13, whose `json` stops at 10,000 levels
-whatever the stack; on 3.10, 3.11 and 3.14, about 5,500 tables or 16,000
-divs to read (more on 3.14), 2,500 tables or 10,000 divs to read or write
-the slow way (`from_json`, `to_json`, or a number that isn't finite).
-Beyond, reading raises `ASTDecodeError`, and anything else `ASTDepthError`
-(an `ASTError` and a `RecursionError`): never a bare `RecursionError`, nor
-a crash in panir. (CPython 3.13 itself crashes freeing any object nested
-a few thousand levels deep, plain lists too, in a thread with a stack of
-512 kB.)
+Reading, writing, walking, copying and pickling recurse, as deep as
+Python's recursion limit lets them: at the default (1,000), documents
+about 190 levels deep work on Python 3.10 to 3.14, in any thread (190
+divs in one another, or 48 tables in tables, four levels each; on 3.14,
+245). The deepest real document found has 38 levels (a news site's page,
+through `pandoc -f html`). Deeper, reading raises `ASTDecodeError` and
+anything else `ASTDepthError` (an `ASTError` and a `RecursionError`);
+`sys.setrecursionlimit` goes deeper. panir never changes the limit.
+Comparing doesn't recurse.
 
 ## Also
 

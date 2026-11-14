@@ -22,7 +22,6 @@ import math
 from collections.abc import Callable
 from typing import Any
 
-from . import _deep
 from ._core import (
     _CLASSES,
     _INT_MAX,
@@ -43,7 +42,6 @@ from ._core import (
     _Spec,
     _TupleSpec,
     too_deep,
-    too_deep_to_read,
 )
 
 __all__ = ["clone", "dumps", "loads", "paused_gc"]
@@ -587,12 +585,11 @@ def _as_list(spec: _ListSpec, items: Any) -> NodeList:
 _ready = False
 _hook: Callable[[dict], Any] | None = None
 _encoder: json.JSONEncoder | None = None
-_default: Callable[[Any], Any] | None = None
 _JSON = {"ensure_ascii": False, "separators": (",", ":")}
 
 
 def _prepare() -> None:
-    global _ready, _hook, _encoder, _default
+    global _ready, _hook, _encoder
     table = _hook_table()
     if table is not None:
         get = table.get
@@ -620,25 +617,12 @@ def _prepare() -> None:
         return write(o)
 
     _encoder = json.JSONEncoder(default=default, check_circular=False, **_JSON)  # type: ignore[arg-type]
-    _default = default
     _ready = True
 
 
+@too_deep("read")
 def loads(text: str | bytes, root: type[Node]) -> Any:
-    """A document from pandoc's JSON text; as deep as it goes (``_deep``)."""
-    if _deep.risky() and _brackets(text) > _deep.SAFE_LEVELS:
-        return _deep.retry(_loads, too_deep_to_read, text, root)
-    return _deep.deep(_loads, too_deep_to_read, text, root)
-
-
-def _brackets(text: str | bytes) -> int:
-    """At least as many as the levels of JSON in ``text``."""
-    if isinstance(text, str):
-        return text.count("[") + text.count("{")
-    return text.count(b"[") + text.count(b"{")
-
-
-def _loads(text: str | bytes, root: type[Node]) -> Any:
+    """A document from pandoc's JSON text."""
     if not _ready:
         _prepare()
     with paused_gc():
@@ -662,66 +646,26 @@ def node_text(node: Node) -> str | None:
     which is pickled field by field."""
     if not _ready:
         _prepare()
-    what = lambda: too_deep(f"pickle of {type(node).__name__}")  # noqa: E731
     try:
-        if _deep.risky():
-            try:
-                return _encode(node, _counting_encoder())
-            except _MayBeDeep:
-                return _deep.retry(_encode, what, node)
-        return _deep.deep(_encode, what, node)
+        with paused_gc():
+            return _encoder.encode(node)  # type: ignore[union-attr]
     except (_Slow, ValueError, TypeError):
         return None
 
 
-def _encode(node: Node, encoder: json.JSONEncoder | None = None) -> str:
-    with paused_gc():
-        return (encoder or _encoder).encode(node)  # type: ignore[union-attr]
-
-
+@too_deep("dumps")
 def dumps(doc: Node) -> str:
-    """A document (or node) as pandoc's JSON text; as deep as it goes."""
+    """A document (or node) as pandoc's JSON text."""
     if not _ready:
         _prepare()
-    what = lambda: too_deep(f"JSON of {type(doc).__name__}")  # noqa: E731
-    if _deep.risky():
-        # (json's recursion would crash a small stack before it raises: a
-        # document that may be deep is written in panir's thread)
-        try:
-            return _dumps(doc, _counting_encoder())
-        except _MayBeDeep:
-            return _deep.retry(_dumps, what, doc)
-    return _deep.deep(_dumps, what, doc)
-
-
-def _dumps(doc: Node, encoder: json.JSONEncoder | None = None) -> str:
     with paused_gc():
         try:
-            return (encoder or _encoder).encode(doc)  # type: ignore[union-attr]
-        except (RecursionError, _MayBeDeep):
+            return _encoder.encode(doc)  # type: ignore[union-attr]
+        except RecursionError:
             raise
         except Exception:  # noqa: S110  the slow writer takes it, or says what is wrong
             pass
         return json.dumps(doc._to_json(), **_JSON)  # type: ignore[arg-type]
-
-
-class _MayBeDeep(Exception):
-    """More nodes than levels json's recursion surely has stack for."""
-
-
-def _counting_encoder() -> json.JSONEncoder:
-    """The encoder, which stops after as many nodes as a document can have
-    and be surely shallow enough (a node is at most a few levels of JSON)."""
-    assert _default is not None
-    default, left = _default, [_deep.SAFE_LEVELS // 8]
-
-    def counting(o: Any) -> Any:
-        left[0] -= 1
-        if left[0] < 0:
-            raise _MayBeDeep
-        return default(o)
-
-    return json.JSONEncoder(default=counting, check_circular=False, **_JSON)  # type: ignore[arg-type]
 
 
 assert Enum  # (the declarations' enum class, for the specs above)

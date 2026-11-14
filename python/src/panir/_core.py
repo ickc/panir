@@ -17,17 +17,16 @@ Nothing here knows a pandoc type by name.
 from __future__ import annotations
 
 import enum
+import functools
 import inspect
 import math
 import re
 import sys
 import types
 import typing
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from operator import length_hint
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
-
-from . import _deep
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, ParamSpec, TypeVar, overload
 
 if TYPE_CHECKING:
     from .filter import Filter
@@ -47,6 +46,7 @@ __all__ = [
 ]
 
 _T = TypeVar("_T")
+_P = ParamSpec("_P")
 _In = TypeVar("_In")
 # (typing.Self is 3.11's)
 _N = TypeVar("_N", bound="Node")
@@ -114,25 +114,43 @@ class ASTDecodeError(ASTError, ValueError):
 
 
 class ASTDepthError(ASTError, RecursionError):
-    """A document nested deeper than panir can go, even in a thread of its
-    own with a large stack (see ``_deep``): ``where`` is what it was doing."""
+    """A document nested deeper than Python's recursion limit lets panir go
+    (``sys.setrecursionlimit`` raises it): ``where`` is what it was doing."""
 
 
-def too_deep(where: str) -> ASTDepthError:
-    return ASTDepthError(
-        where,
-        "a document nested less deeply",
-        f"one deeper than {_deep.LIMIT:,} Python calls in a thread of panir's own can go",
+def _limit() -> str:
+    return (
+        f"one nested deeper than Python's recursion limit lets it go "
+        f"({sys.getrecursionlimit():,}; sys.setrecursionlimit raises it)"
     )
 
 
-def too_deep_to_read() -> ASTDecodeError:
-    return ASTDecodeError(
-        (),
-        "JSON nested less deeply",
-        "JSON deeper than Python's json module, or panir's reader, can go "
-        "in a thread of panir's own",
-    )
+def too_deep(what: str) -> Callable[[Callable[_P, _T]], Callable[_P, _T]]:
+    """For panir's entry points: a ``RecursionError`` in what it does (a
+    document nested too deep) is ``ASTDecodeError`` when it reads (``what``
+    is "read"), ``ASTDepthError`` otherwise; its notes (a walk's: which
+    filter function, where) are kept."""
+
+    def wrap(fn: Callable[_P, _T]) -> Callable[_P, _T]:
+        @functools.wraps(fn)
+        def checked(*args: _P.args, **kwargs: _P.kwargs) -> _T:
+            try:
+                return fn(*args, **kwargs)
+            except RecursionError as e:
+                if isinstance(e, ASTError):  # (an inner entry point's)
+                    raise
+                error: ASTError = (
+                    ASTDecodeError((), "JSON nested less deeply", _limit())
+                    if what == "read"
+                    else ASTDepthError(what, "a document nested less deeply", _limit())
+                )
+                for note in getattr(e, "__notes__", ()):
+                    add_note(error, note)
+                raise error from None  # (not a thousand frames of traceback)
+
+        return checked
+
+    return wrap
 
 
 def format_path(path: Iterable) -> str:
@@ -257,13 +275,10 @@ class Node:
 
     __hash__ = None  # type: ignore[assignment]  # mutable
 
+    @too_deep("repr")
     def __repr__(self) -> str:
         """Constructor syntax, omitting defaults: ``Header(1, Str('Hi'))``."""
-        # (the repr of what is in it is this function's, through repr(list))
-        what = lambda: too_deep(f"repr of {type(self).__name__}")  # noqa: E731
-        if _deep.risky():  # (and what is in it, in panir's thread too)
-            return _deep.retry(self._repr, what)
-        return _deep.deep(self._repr, what)
+        return self._repr()
 
     def _repr(self) -> str:
         cls = type(self)
@@ -295,6 +310,7 @@ class Node:
     def _default_of(owner: type[Node], field: str) -> Any:
         return owner._specs[field].decode(owner._defaults[field])
 
+    @too_deep("pickle")
     def __reduce__(self) -> tuple:
         # as pandoc's JSON, read back as loads reads it (checked): faster
         # than field by field, and as deep as reading goes
@@ -308,10 +324,11 @@ class Node:
     def __copy__(self) -> Node:
         return _make(type(self), [getattr(self, f) for f in self._fields])
 
+    @too_deep("copy")
     def __deepcopy__(self: _N, memo: dict) -> _N:
         from ._fast import clone  # (it reads this module's declarations)
 
-        return _deep.deep(clone, lambda: too_deep(f"copy of {type(self).__name__}"), self)  # type: ignore[return-value]
+        return clone(self)  # type: ignore[return-value]
 
     def walk(self: _N, filter: Filter, format: str | None = None, **kwargs: Any) -> _N:
         """Apply a filter to what is in this node (in place), as pandoc's
@@ -320,9 +337,10 @@ class Node:
         returned, if anything)."""
         return filter(self, format, **kwargs)
 
+    @too_deep("to_json")
     def to_json(self) -> Any:
         """This value as pandoc's JSON (lists, dicts, str, ...; for json.dumps)."""
-        return _deep.deep(self._to_json, lambda: too_deep(f"JSON of {type(self).__name__}"))
+        return self._to_json()
 
     def _to_json(self) -> Any:
         try:
@@ -333,21 +351,20 @@ class Node:
             ) from None
 
     @classmethod
+    @too_deep("read")
     def from_json(cls: type[_N], j: Any) -> _N:
         """A value of this type (or constructor) from pandoc's JSON."""
         spec = _SPEC_OF.get(_sum_of(cls) or cls)
         if spec is None:
             raise TypeError(f"{cls.__name__} is not a pandoc type")
-        value = _deep.deep(_decode, too_deep_to_read, spec, j)
+        value = _decode(spec, j)
         if not isinstance(value, cls):
             raise ASTDecodeError((), cls.__name__, _describe(value))
         return value
 
 
 def _repr(v: Any) -> str:
-    """``repr(v)``, the nodes in it by ``Node._repr``: recursion in Python
-    only (``repr`` of a list recurses in C, which 3.12 and 3.13 stop at
-    10,000 levels, whatever the stack)."""
+    """``repr(v)``, the nodes in it by ``Node._repr``."""
     if isinstance(v, Node):
         return v._repr()
     if isinstance(v, list):
@@ -394,7 +411,7 @@ def _decode(spec: Any, j: Any) -> Any:
 
 def _equal(a: Node, b: Node) -> bool:
     """Whether two nodes of one class are equal: their fields, and what is
-    in them. Without recursion, so as deep as a document goes; as ``==`` of
+    in them. Without recursion; as ``==`` of
     lists, an element is equal to itself (a NaN too)."""
     todo: list = [(a, b)]
     pop, push = todo.pop, todo.append

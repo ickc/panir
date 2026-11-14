@@ -35,6 +35,7 @@ from ._core import (
     _describe,
     _ListSpec,
     add_note,
+    too_deep,
     unwritable,
 )
 from ._types import Block, Inline, MetaValue, Pandoc
@@ -201,6 +202,7 @@ class Filter:
     def __call__(
         self, doc: _Fragment, format: str | None = None, *, conversion: Conversion | None = None
     ) -> _Fragment: ...
+    @too_deep("walk")
     def __call__(
         self, doc: Any, format: str | None = None, *, conversion: Conversion | None = None
     ) -> Any:
