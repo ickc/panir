@@ -862,6 +862,27 @@ impl From<String> for Block {
     }
 }
 
+impl Block {
+    /// The inlines a block holds as its content (`Plain`, `Para`, `Header`),
+    /// as Lua's `block.content` of those.
+    pub fn inlines(&self) -> Option<&Vec<Inline>> {
+        match self {
+            Block::Plain(xs) | Block::Para(xs) => Some(xs),
+            Block::Header(h) => Some(&h.content),
+            _ => None,
+        }
+    }
+
+    /// As [`Block::inlines`], to change them.
+    pub fn inlines_mut(&mut self) -> Option<&mut Vec<Inline>> {
+        match self {
+            Block::Plain(xs) | Block::Para(xs) => Some(xs),
+            Block::Header(h) => Some(&mut h.content),
+            _ => None,
+        }
+    }
+}
+
 impl Pandoc {
     /// A document with these blocks and no metadata.
     pub fn new(blocks: Vec<Block>) -> Self {

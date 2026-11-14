@@ -152,7 +152,9 @@ What a port of a Lua filter trips over:
   (152 and 360): less memory and faster walks on big documents. Fields read
   and change through the box as they are (`Inline::Link(l) => l.target.url
   = ...`); the JSON is the same. `x.tag()` is the constructor's name
-  (`"Para"`), as Lua's `el.tag` and the JSON's `"t"`.
+  (`"Para"`), as Lua's `el.tag` and the JSON's `"t"`; `block.inlines()`
+  and `inlines_mut()` the inlines of a `Plain`, `Para` or `Header`, as
+  Lua's `block.content` of those.
 - Every string is a `Text`: up to 22 bytes kept in place (no heap
   allocation; 99.7% of the words of a real document), longer ones a heap
   `String`, in the 24 bytes a `String` takes. It reads as a `&str`; make one

@@ -197,3 +197,19 @@ fn attr_new_in_luas_order() {
     );
     assert_eq!(Attr::new("", &[], &[]), Attr::default());
 }
+
+#[test]
+fn a_blocks_inlines() {
+    use panir::{Header, inlines};
+    let mut header: Block = Header {
+        level: 1,
+        attr: Attr::default(),
+        content: inlines("a b"),
+    }
+    .into();
+    header.inlines_mut().unwrap().pop();
+    assert_eq!(header.inlines(), Some(&inlines("a ")));
+    assert_eq!(Block::Plain(inlines("x")).inlines(), Some(&inlines("x")));
+    assert_eq!(Block::BlockQuote(vec![]).inlines(), None);
+    assert_eq!(Block::LineBlock(vec![inlines("x")]).inlines(), None); // (lines of them)
+}
