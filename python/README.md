@@ -252,9 +252,9 @@ and that depends on who runs it:
 
 Reading, writing, walking, copying and pickling recurse, as deep as
 Python's recursion limit lets them: at the default (1,000), documents
-about 190 levels deep work on Python 3.10 to 3.14, in any thread (190
-divs in one another, or 48 tables in tables, four levels each; on 3.14,
-245). The deepest real document found has 38 levels (a news site's page,
+about 190 levels deep work on Python 3.10 to 3.15, in any thread (190
+divs in one another, or 48 tables in tables, four levels each; on 3.14
+and 3.15, 245). The deepest real document found has 38 levels (a news site's page,
 through `pandoc -f html`). Deeper, reading raises `ASTDecodeError` and
 anything else `ASTDepthError` (an `ASTError` and a `RecursionError`);
 `sys.setrecursionlimit` goes deeper. panir never changes the limit.

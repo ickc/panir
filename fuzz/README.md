@@ -9,7 +9,7 @@ pandoc deciding what is right.
     python3 fuzz/run.py --replay fuzz/failures/ts-data-0-4.json
 
 It needs the pandoc of `pins.env` on the `PATH` (or `$PANDOC`), and for each
-language asked for: Python with `PYTHONPATH=python/src`; Node 24 (`$NODE`);
+language asked for: Python with `PYTHONPATH=python/src`; Node 26 (`$NODE`);
 `cargo build --release` in `fuzz/rust`; Julia with `julia/` instantiated.
 
 ## What is checked

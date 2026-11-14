@@ -11,18 +11,18 @@ jobs:
   schema:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Read pins
         run: grep -v "^#" pins.env >> "$GITHUB_ENV"
       - uses: haskell-actions/setup@v2.12.1
         with:
           ghc-version: ${{ env.GHC_VERSION }}
           cabal-version: ${{ env.CABAL_VERSION }}
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cabal/store
           key: schema-${{ env.GHC_VERSION }}-${{ env.INDEX_STATE }}-${{ hashFiles('haskell/*.cabal') }}
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           cache: true
       - uses: dtolnay/rust-toolchain@stable
@@ -49,17 +49,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-15-intel, macos-15, windows-latest]
-        env: [py310, py314]
+        env: [py310, py314, py315]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           environments: ${{ matrix.env }}
           cache: true
       - name: Lint
-        if: matrix.env == 'py314' && matrix.os == 'ubuntu-latest'
-        run: pixi run -e py314 lint
+        if: matrix.env == 'py315' && matrix.os == 'ubuntu-latest'
+        run: pixi run -e py315 lint
       - name: Test the source
         run: pixi run -e ${{ matrix.env }} test-python
       - name: Test the installed wheel
@@ -72,8 +72,8 @@ jobs:
           cp -r python/tests corpus "$RUNNER_TEMP/"
           mkdir -p "$RUNNER_TEMP/python" && mv "$RUNNER_TEMP/tests" "$RUNNER_TEMP/python/"
           cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$py" -m pytest -q python/tests
-      - uses: actions/upload-artifact@v4
-        if: matrix.env == 'py314' && matrix.os == 'ubuntu-latest'
+      - uses: actions/upload-artifact@v7
+        if: matrix.env == 'py315' && matrix.os == 'ubuntu-latest'
         with:
           name: python-wheel
           path: wheelhouse/*.whl
@@ -88,14 +88,14 @@ jobs:
       run:
         working-directory: rust
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           cache: true
       - run: cargo fmt --check
@@ -133,11 +133,11 @@ jobs:
         working-directory: ts
         shell: bash
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
-      - uses: prefix-dev/setup-pixi@v0.10.2
+          node-version: 26
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           cache: true
       - run: npm ci
@@ -160,15 +160,15 @@ jobs:
         version: ["1.10", "1"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-runtest@v1
         with:
           project: julia
-      - uses: prefix-dev/setup-pixi@v0.10.2
+      - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           cache: true
       - name: The example runs as a pandoc filter
@@ -183,34 +183,34 @@ jobs:
   fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Read pins
         run: grep -v "^#" pins.env >> "$GITHUB_ENV"
       - name: Install pandoc ${{ env.PANDOC_VERSION }}
         run: |
           curl -fsSL "https://github.com/jgm/pandoc/releases/download/$PANDOC_VERSION/pandoc-$PANDOC_VERSION-linux-amd64.tar.gz" | tar xz -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/pandoc-$PANDOC_VERSION/bin" >> "$GITHUB_PATH"
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
-      - uses: actions/setup-node@v5
+          python-version: "3.15"
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz/rust
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1"
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: Build the drivers
         run: |
           cargo build --release --manifest-path fuzz/rust/Cargo.toml
           julia --project=julia -e 'using Pkg; Pkg.instantiate(); using Panir'
       - name: Fuzz
         run: PYTHONPATH=python/src python fuzz/run.py --count 3000
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: fuzz-failures
@@ -222,17 +222,17 @@ jobs:
   package:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: One version in every language
         run: python3 scripts/version.py
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.3
       - name: Python (sdist and wheel, twine check)
         run: |
           uv build python -o dist/python
           uvx twine check --strict dist/python/*
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
       - name: npm (pack, install the tarball, import it)
         run: |
           cd ts && npm ci && npm pack --pack-destination "$RUNNER_TEMP"
@@ -240,7 +240,7 @@ jobs:
           npm init -y >/dev/null && npm install "$RUNNER_TEMP"/panir-*.tgz
           node --input-type=module -e 'import { Str, serialize, parse } from "panir"; import { runFilter } from "panir/node"; console.log(Str("ok").text, typeof runFilter)'
       # the oldest Node package.json's engines claims
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "16.11"
       - name: npm, on Node 16.11
