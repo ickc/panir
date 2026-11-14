@@ -57,7 +57,7 @@ fn div() -> Block {
 
 fn calls<T: panir::Walkable>(mut x: T, order: Order) -> String {
     let mut f = Noting(order, vec![]);
-    apply(&mut x, &mut f, None);
+    apply(&mut x, &mut f, None).unwrap();
     f.1.join(" ")
 }
 
@@ -112,7 +112,7 @@ fn a_fragment_is_changed_in_place() {
         }
     }
     let mut d = div();
-    apply(&mut d, &mut Loud, None);
+    apply(&mut d, &mut Loud, None).unwrap();
     let want: Block = panir::Div {
         attr: Default::default(),
         content: vec![Block::Para(vec!["A".into(), "B".into()])],
@@ -122,7 +122,7 @@ fn a_fragment_is_changed_in_place() {
     // as a trait object too
     let mut d = div();
     let f: &mut dyn Filter = &mut Loud;
-    apply(&mut d, f, None);
+    apply(&mut d, f, None).unwrap();
     assert_eq!(d, want);
 }
 
@@ -145,7 +145,7 @@ fn skipping_children_is_for_top_down_only() {
     }
     let n = |order| {
         let mut f = Skips(order, 0);
-        apply(&mut div(), &mut f, None);
+        apply(&mut div(), &mut f, None).unwrap();
         f.1
     };
     // the Div's blocks are skipped top-down; elsewhere the children came

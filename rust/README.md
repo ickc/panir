@@ -71,16 +71,76 @@ impl Filter for NoNotes {
 the functions apply to what is in a node, not to the node itself; a list's
 function also to the list itself; `meta` and `pandoc` only to a document.
 
-The context (`Ctx`) has the conversion and `skip_children`, and no more:
-not the node's parent, siblings or path, which panir's Python and
-TypeScript contexts have (pandoc's Lua functions have no context). A
-function has its node as `&mut`, and while it does nothing else may reach
-the node, its parent included. A walk that needs them is a `VisitMut`
-that keeps its own (a stack of what it is in).
+A function fails with `ctx.fail(error)` (an error of any type, or a
+string), which returns `None`: the walk stops when the function returns,
+and `apply` returns a `FilterError` with the error, the method that
+failed, the node's constructor and its path (in the other languages' form:
+`blocks[2].content[0]`), shown as they show theirs. `panir::filter` prints
+it and exits with status 1, as pandoc expects of a JSON filter.
+
+```rust
+use panir::{Block, Ctx, Filter, Inline, Pandoc};
+
+struct NoEmph;
+
+impl Filter for NoEmph {
+    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+        match x {
+            Inline::Emph(_) => ctx.fail("no emphasis, please"),
+            _ => None,
+        }
+    }
+}
+
+let mut doc = Pandoc::new(vec![Block::Para(vec!["a".into(), Inline::Emph(vec![])])]);
+let e = panir::apply(&mut doc, &mut NoEmph, None).unwrap_err();
+assert_eq!(e.path, "blocks[0].content[1]");
+assert_eq!(
+    e.to_string(),
+    "no emphasis, please\n  in filter function inline, on the Emph at blocks[0].content[1]"
+);
+```
+
+The context (`Ctx`) has the conversion, `skip_children`, `fail` and the
+metadata (`ctx.meta()`; while a metadata value is walked, the other
+fields, as the value can't be lent while it changes; `None` in a
+fragment), and no more: not the node's
+parent, siblings or path, which panir's Python and TypeScript contexts
+have (pandoc's Lua functions have no context). A function has its node as
+`&mut`, and while it does nothing else may reach the node, its parent
+included. A walk that needs them is a `VisitMut` that keeps its own (a
+stack of what it is in).
 
 They are checked against pandoc's Lua filters, with the scenarios in
 [`corpus/filters/`](https://github.com/ickc/panir/tree/main/corpus/filters). For other nodes (`Cell`, `Attr`,
 ...) or any other walk, `VisitMut`.
+
+### Coming from Lua
+
+What a port of a Lua filter trips over:
+
+- **`return nil` undoes a function's changes in Lua; here they stay.**
+  In pandoc's Lua a function gets a copy of its element, and what it
+  changes counts only if it returns the element: `return nil` (or no
+  `return`) leaves the element as it was, children and lists included
+  (checked with pandoc 3.14). Here the node itself is changed, and the
+  changes stay whatever the function returns. A Lua filter that changes its
+  element, then returns `nil` (pandoc-ext/list-table removes a div's class,
+  then declines an empty div) is ported by deciding first, and changing
+  after.
+- **Lua's elements are values**: `pandoc.Span(meta.title)` puts a copy in
+  the body; here, `.clone()` (ownership allows nothing else).
+- `el.t`, `el.tag`: `x.tag()`.
+- `el.attributes.k`, `= v`, `= nil`: `attr.get("k")`, `attr.set("k", v)`,
+  `attr.remove("k")`; the first pair with the key, as in Lua. A Lua table
+  as attributes (`{id = "x", class = "a b"}`) gives the identifier and
+  classes: `Attr::new("x", &["a", "b"], &[])` (a pair named `class` is an
+  attribute named `class`).
+- `error(...)`: `return ctx.fail(...)`.
+- `return el, false` (top-down): `ctx.skip_children()`.
+- Lists count from 0, Lua's from 1 (`el.content[1]`).
+- The metadata a Lua filter keeps from its `Meta` function, for the
+  functions after: `ctx.meta()`.
 
 ## Types and `VisitMut`
 
@@ -92,7 +152,10 @@ They are checked against pandoc's Lua filters, with the scenarios in
   `Inline` or a `Block` is 32 bytes, not the size of the biggest variant
   (152 and 360): less memory and faster walks on big documents. Fields read
   and change through the box as they are (`Inline::Link(l) => l.target.url
-  = ...`); the JSON is the same.
+  = ...`); the JSON is the same. `x.tag()` is the constructor's name
+  (`"Para"`), as Lua's `el.tag` and the JSON's `"t"`; `block.inlines()`
+  and `inlines_mut()` the inlines of a `Plain`, `Para` or `Header`, as
+  Lua's `block.content` of those.
 - Every string is a `Text`: up to 22 bytes kept in place (no heap
   allocation; 99.7% of the words of a real document), longer ones a heap
   `String`, in the 24 bytes a `String` takes. It reads as a `&str`; make one
@@ -114,6 +177,14 @@ They are checked against pandoc's Lua filters, with the scenarios in
   `Default` where pandoc's Lua constructors have defaults. Built with
   their fields' names, so in no order to remember (Lua's positional
   constructors have one; `Table { caption, ..Default::default() }` here).
+- `Attr::new(identifier, classes, attributes)`, in the order of Lua's
+  `pandoc.Attr`, takes `&str`s: `Attr::new("", &["note"], &[("lang",
+  "en")])`.
+- An `Attr`'s attributes are pairs, in order, a key perhaps in two; by
+  key, as Lua's `el.attributes[key]`: `attr.get("k")` is the value of the
+  first pair with the key, `attr.set("k", v)` gives that pair the value,
+  in its place, or adds a pair at the end, and `attr.remove("k")` removes
+  that pair and returns its value; `attr.has_class("c")` asks.
 - Every node is `Clone`, `Eq` and `Hash`. A `ColWidth` compares its number
   bit for bit: one that isn't a number (pandoc's `null`) equals itself, and
   `0.0` and `-0.0`, written differently, differ.
@@ -140,7 +211,13 @@ They are checked against pandoc's Lua filters, with the scenarios in
   the path of JSON it can't read. It
   reads a document down to `MAX_DEPTH` (256) levels of blocks and inlines in
   each other, and as far as 640 kB of stack allow (a level takes five times
-  the stack unoptimized); a deeper one is an error, not a crash.
+  the stack unoptimized); a deeper one is an error, not a crash. A filter
+  walks as deep, counting the walks its functions start (`apply` on a
+  fragment) from where they are: deeper, as a top-down function whose
+  result holds what it matched makes it (each result walked, without
+  end), is a `FilterError` (`function` `None`), with the path. A function
+  that calls itself without end is Rust's stack overflow (the process
+  aborts): panir can't see it.
 - A `ColWidth` that isn't finite is read and written as pandoc does (`null`,
   `"+inf"`, `"-inf"`); a finite one byte for byte.
 

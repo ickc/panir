@@ -255,6 +255,29 @@ impl crate::Json for Block {
     }
 }
 
+impl Block {
+    /// The constructor's name, as in pandoc's JSON (`"t"`) and Lua
+    /// (`el.tag`, `el.t`).
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Block::Plain { .. } => "Plain",
+            Block::Para { .. } => "Para",
+            Block::LineBlock { .. } => "LineBlock",
+            Block::CodeBlock { .. } => "CodeBlock",
+            Block::RawBlock { .. } => "RawBlock",
+            Block::BlockQuote { .. } => "BlockQuote",
+            Block::OrderedList { .. } => "OrderedList",
+            Block::BulletList { .. } => "BulletList",
+            Block::DefinitionList { .. } => "DefinitionList",
+            Block::Header { .. } => "Header",
+            Block::HorizontalRule { .. } => "HorizontalRule",
+            Block::Table { .. } => "Table",
+            Block::Figure { .. } => "Figure",
+            Block::Div { .. } => "Div",
+        }
+    }
+}
+
 impl From<CodeBlock> for Block {
     fn from(x: CodeBlock) -> Self {
         Block::CodeBlock(Box::new(x))
@@ -737,6 +760,21 @@ impl crate::Json for MetaValue {
     }
 }
 
+impl MetaValue {
+    /// The constructor's name, as in pandoc's JSON (`"t"`) and Lua
+    /// (`el.tag`, `el.t`).
+    pub fn tag(&self) -> &'static str {
+        match self {
+            MetaValue::MetaMap { .. } => "MetaMap",
+            MetaValue::MetaList { .. } => "MetaList",
+            MetaValue::MetaBool { .. } => "MetaBool",
+            MetaValue::MetaString { .. } => "MetaString",
+            MetaValue::MetaInlines { .. } => "MetaInlines",
+            MetaValue::MetaBlocks { .. } => "MetaBlocks",
+        }
+    }
+}
+
 /// pandoc's `Inline`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "t", content = "c")]
@@ -1004,6 +1042,35 @@ impl crate::Json for Inline {
                 x.json(out);
                 out.push('}');
             }
+        }
+    }
+}
+
+impl Inline {
+    /// The constructor's name, as in pandoc's JSON (`"t"`) and Lua
+    /// (`el.tag`, `el.t`).
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Inline::Str { .. } => "Str",
+            Inline::Emph { .. } => "Emph",
+            Inline::Underline { .. } => "Underline",
+            Inline::Strong { .. } => "Strong",
+            Inline::Strikeout { .. } => "Strikeout",
+            Inline::Superscript { .. } => "Superscript",
+            Inline::Subscript { .. } => "Subscript",
+            Inline::SmallCaps { .. } => "SmallCaps",
+            Inline::Quoted { .. } => "Quoted",
+            Inline::Cite { .. } => "Cite",
+            Inline::Code { .. } => "Code",
+            Inline::Space { .. } => "Space",
+            Inline::SoftBreak { .. } => "SoftBreak",
+            Inline::LineBreak { .. } => "LineBreak",
+            Inline::Math { .. } => "Math",
+            Inline::RawInline { .. } => "RawInline",
+            Inline::Link { .. } => "Link",
+            Inline::Image { .. } => "Image",
+            Inline::Note { .. } => "Note",
+            Inline::Span { .. } => "Span",
         }
     }
 }
@@ -2007,6 +2074,17 @@ impl crate::Json for ColWidth {
     }
 }
 
+impl ColWidth {
+    /// The constructor's name, as in pandoc's JSON (`"t"`) and Lua
+    /// (`el.tag`, `el.t`).
+    pub fn tag(&self) -> &'static str {
+        match self {
+            ColWidth::ColWidth { .. } => "ColWidth",
+            ColWidth::ColWidthDefault { .. } => "ColWidthDefault",
+        }
+    }
+}
+
 /// pandoc's `Row`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Row {
@@ -2843,4 +2921,136 @@ pub fn walk_row_ref<V: Visit + ?Sized>(v: &mut V, x: &Row) {
 pub fn walk_cell_ref<V: Visit + ?Sized>(v: &mut V, x: &Cell) {
     v.visit_attr(&x.attr);
     v.visit_blocks(&x.content);
+}
+
+impl crate::path::Locate for Pandoc {
+    fn locate(&self, p: &mut crate::path::Path) -> bool {
+        p.field("meta", |p| p.map(&self.meta, |p, x0| (x0).locate(p)))
+            || p.field("blocks", |p| p.list(&self.blocks, |p, x0| (x0).locate(p)))
+    }
+}
+
+impl crate::path::Locate for Block {
+    fn locate(&self, p: &mut crate::path::Path) -> bool {
+        match self {
+            Block::Plain(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            Block::Para(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            Block::LineBlock(y) => p.field("content", |p| {
+                p.list(y, |p, x0| p.list(x0, |p, x1| (x1).locate(p)))
+            }),
+            Block::BlockQuote(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            Block::OrderedList(y) => p.field("content", |p| {
+                p.list(&y.content, |p, x0| p.list(x0, |p, x1| (x1).locate(p)))
+            }),
+            Block::BulletList(y) => p.field("content", |p| {
+                p.list(y, |p, x0| p.list(x0, |p, x1| (x1).locate(p)))
+            }),
+            Block::DefinitionList(y) => p.field("content", |p| {
+                p.list(y, |p, x0| {
+                    p.index(0, |p| p.list(&(x0).0, |p, x2| (x2).locate(p)))
+                        || p.index(1, |p| {
+                            p.list(&(x0).1, |p, x2| p.list(x2, |p, x3| (x3).locate(p)))
+                        })
+                })
+            }),
+            Block::Header(y) => p.field("content", |p| p.list(&y.content, |p, x0| (x0).locate(p))),
+            Block::Table(y) => {
+                p.field("caption", |p| (&y.caption).locate(p))
+                    || p.field("head", |p| (&y.head).locate(p))
+                    || p.field("bodies", |p| p.list(&y.bodies, |p, x0| (x0).locate(p)))
+                    || p.field("foot", |p| (&y.foot).locate(p))
+            }
+            Block::Figure(y) => {
+                p.field("caption", |p| (&y.caption).locate(p))
+                    || p.field("content", |p| p.list(&y.content, |p, x0| (x0).locate(p)))
+            }
+            Block::Div(y) => p.field("content", |p| p.list(&y.content, |p, x0| (x0).locate(p))),
+            _ => false,
+        }
+    }
+}
+
+impl crate::path::Locate for MetaValue {
+    fn locate(&self, p: &mut crate::path::Path) -> bool {
+        match self {
+            MetaValue::MetaMap(y) => p.field("content", |p| p.map(y, |p, x0| (x0).locate(p))),
+            MetaValue::MetaList(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            MetaValue::MetaInlines(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            MetaValue::MetaBlocks(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            _ => false,
+        }
+    }
+}
+
+impl crate::path::Locate for Inline {
+    fn locate(&self, p: &mut crate::path::Path) -> bool {
+        match self {
+            Inline::Emph(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            Inline::Underline(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            Inline::Strong(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            Inline::Strikeout(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            Inline::Superscript(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            Inline::Subscript(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            Inline::SmallCaps(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            Inline::Quoted(y) => p.field("content", |p| p.list(&y.content, |p, x0| (x0).locate(p))),
+            Inline::Cite(y) => {
+                p.field("citations", |p| {
+                    p.list(&y.citations, |p, x0| (x0).locate(p))
+                }) || p.field("content", |p| p.list(&y.content, |p, x0| (x0).locate(p)))
+            }
+            Inline::Link(y) => p.field("content", |p| p.list(&y.content, |p, x0| (x0).locate(p))),
+            Inline::Image(y) => p.field("content", |p| p.list(&y.content, |p, x0| (x0).locate(p))),
+            Inline::Note(y) => p.field("content", |p| p.list(y, |p, x0| (x0).locate(p))),
+            Inline::Span(y) => p.field("content", |p| p.list(&y.content, |p, x0| (x0).locate(p))),
+            _ => false,
+        }
+    }
+}
+
+impl crate::path::Locate for Caption {
+    fn locate(&self, p: &mut crate::path::Path) -> bool {
+        p.field("short", |p| {
+            (&self.short)
+                .as_ref()
+                .is_some_and(|x0| p.list(x0, |p, x1| (x1).locate(p)))
+        }) || p.field("content", |p| p.list(&self.content, |p, x0| (x0).locate(p)))
+    }
+}
+
+impl crate::path::Locate for TableHead {
+    fn locate(&self, p: &mut crate::path::Path) -> bool {
+        p.field("rows", |p| p.list(&self.rows, |p, x0| (x0).locate(p)))
+    }
+}
+
+impl crate::path::Locate for TableBody {
+    fn locate(&self, p: &mut crate::path::Path) -> bool {
+        p.field("head", |p| p.list(&self.head, |p, x0| (x0).locate(p)))
+            || p.field("body", |p| p.list(&self.body, |p, x0| (x0).locate(p)))
+    }
+}
+
+impl crate::path::Locate for TableFoot {
+    fn locate(&self, p: &mut crate::path::Path) -> bool {
+        p.field("rows", |p| p.list(&self.rows, |p, x0| (x0).locate(p)))
+    }
+}
+
+impl crate::path::Locate for Citation {
+    fn locate(&self, p: &mut crate::path::Path) -> bool {
+        p.field("prefix", |p| p.list(&self.prefix, |p, x0| (x0).locate(p)))
+            || p.field("suffix", |p| p.list(&self.suffix, |p, x0| (x0).locate(p)))
+    }
+}
+
+impl crate::path::Locate for Row {
+    fn locate(&self, p: &mut crate::path::Path) -> bool {
+        p.field("cells", |p| p.list(&self.cells, |p, x0| (x0).locate(p)))
+    }
+}
+
+impl crate::path::Locate for Cell {
+    fn locate(&self, p: &mut crate::path::Path) -> bool {
+        p.field("content", |p| p.list(&self.content, |p, x0| (x0).locate(p)))
+    }
 }

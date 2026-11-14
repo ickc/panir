@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
-  ASTTypeError, Attr, Citation, Code, copy, Div, Emph, equal, fromJSON, fromPlain, LineBreak, ListAttributes,
+  ASTTypeError, Attr, Citation, Code, copy, Div, Emph, equal, fromJSON, fromPlain, getAttribute, hasAttribute,
+  LineBreak, ListAttributes, removeAttribute, setAttribute,
   MetaBlocks, MetaBool, MetaInlines, MetaList, MetaMap, MetaString, Note, Pandoc, Para, parse, Plain, Quoted, RawInline,
   serialize, Str, stringify, toPlain,
 } from "../src/index.ts";
@@ -113,6 +114,22 @@ test("metadata to and from plain values, as pandoc's Lua converts", () => {
   assert.deepEqual(Pandoc([], { meta: { draft: true, title: Str("T") } }).meta,
                    Object.assign(Object.create(null), { draft: MetaBool(true), title: MetaInlines([Str("T")]) }));
   assert.deepEqual(MetaList(["a", 1]).content, [MetaString("a"), MetaString("1")]);
+});
+
+test("attributes by key, as pandoc's Lua", () => {
+  const attr = Attr("id", ["x"], [["k", "v"], ["k", "w"], ["z", "1"]]);
+  assert.equal(getAttribute(attr, "k"), "v"); // the first pair with the key
+  assert.equal(getAttribute(attr, "missing"), undefined);
+  assert.ok(hasAttribute(attr, "z") && !hasAttribute(attr, "missing"));
+  setAttribute(attr, "k", "new"); // the first pair's value, in its place
+  assert.deepEqual(attr.attributes, [["k", "new"], ["k", "w"], ["z", "1"]]);
+  assert.equal(removeAttribute(attr, "k"), "new"); // the first pair only
+  assert.deepEqual(attr.attributes, [["k", "w"], ["z", "1"]]);
+  setAttribute(attr, "q", "2"); // a new key: at the end
+  assert.deepEqual(attr.attributes, [["k", "w"], ["z", "1"], ["q", "2"]]);
+  assert.equal(removeAttribute(attr, "missing"), undefined);
+  // still pairs: the document's JSON is the same
+  assert.deepEqual(Div([], { attr }).attr, Attr("id", ["x"], [["k", "w"], ["z", "1"], ["q", "2"]]));
 });
 
 test("copy and equal", () => {

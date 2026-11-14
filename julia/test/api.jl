@@ -39,6 +39,21 @@ end
     @test_throws MethodError Attr(; classes = Set(["a", "b"]))  # (no order)
 end
 
+@testset "an Attr by key is its attributes, as pandoc's Lua" begin
+    a = Attr("id", ["x"], ["k" => "v", "k" => "w", "z" => "1"])
+    @test (a["k"], get(a, "missing", nothing), get(a, "z", "")) == ("v", nothing, "1")  # the first pair
+    @test haskey(a, "z") && !haskey(a, "missing") && "x" in a.classes
+    @test_throws KeyError a["missing"]
+    a["k"] = "new"  # the first pair's value, in its place
+    @test a.attributes == [("k", "new"), ("k", "w"), ("z", "1")]
+    @test pop!(a, "k") == "new" && a.attributes == [("k", "w"), ("z", "1")]  # the first pair only
+    a["q"] = "2"  # a new key: at the end
+    @test a.attributes == [("k", "w"), ("z", "1"), ("q", "2")]
+    @test pop!(a, "missing", nothing) === nothing
+    @test_throws KeyError pop!(a, "missing")
+    @test delete!(delete!(a, "z"), "missing") === a && a.attributes == [("k", "w"), ("q", "2")]
+end
+
 @testset "constructors take their arguments in the order of Lua's" begin
     # pandoc.Cite(content, citations)
     cite = Cite("a b", [Citation("k", NormalCitation)])
@@ -340,7 +355,7 @@ end
     m = Module()
     Core.eval(m, :(using Panir))
     for name in (:Str, :Para, :Inline, :MetaValue, :InlineMath, :DoubleQuote, :AlignLeft, :LowerRoman, :OneParen,
-                 :NormalCitation, :ASTTypeError, :walk!, :stringify)
+                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify)
         @test isdefined(m, name)
     end
     # the common words, the aliases and the enums' types: as Panir.X

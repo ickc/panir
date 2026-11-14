@@ -5,8 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
-  applyFilter, Div, Emph, fromJSON, Header, HorizontalRule, MetaBool, MetaInlines, MetaList, MetaString,
-  Pandoc as makePandoc, Para, Str, Strong, toJSON,
+  applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, MetaBool, MetaInlines, MetaList,
+  MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, Strong, toJSON,
 } from "../src/index.ts";
 import type { AnyFilter, Block, Filter, Pandoc, WalkedContext } from "../src/index.ts";
 
@@ -170,6 +170,28 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
       },
     ];
   },
+
+  fails: () => {
+    let n = 0;
+    return [{
+      Para: (p) => {
+        if (++n === 2) throw new Error("the second paragraph");
+        p.content.push(Str("!"));
+      },
+    }];
+  },
+
+  attributes: () => [{
+    Span: (s) => {
+      const k = getAttribute(s.attr, "k");
+      if (k !== undefined) {
+        setAttribute(s.attr, "first", k);
+        setAttribute(s.attr, "k", `${k}!`);
+      }
+      removeAttribute(s.attr, "drop");
+      if (s.attr.classes.includes("mark")) s.attr.classes.push("seen");
+    },
+  }],
 };
 
 const lines = readFileSync(new URL("../../corpus/filters.jsonl", import.meta.url), "utf8")
@@ -185,7 +207,15 @@ test("every scenario in corpus/filters has a TypeScript filter, and every filter
 
 for (const { name, input, output, also } of lines) {
   const scenario = SCENARIOS[name];
-  const run = (filters: readonly Filter[]) => toJSON(applyFilter(fromJSON(input) as Pandoc, filters, FORMAT));
+  // (a scenario pandoc fails on, output null: the filter must fail too)
+  const run = (filters: readonly Filter[]) => {
+    const doc = fromJSON(input) as Pandoc;
+    if (output === null) {
+      assert.throws(() => applyFilter(doc, filters, FORMAT));
+      return null;
+    }
+    return toJSON(applyFilter(doc, filters, FORMAT));
+  };
   test(`as pandoc's Lua: ${name}`, () => {
     assert.ok(scenario, `no TypeScript filter for corpus/filters/${name}.lua`);
     assert.deepEqual(run(scenario()), output);

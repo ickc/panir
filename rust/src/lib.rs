@@ -18,8 +18,10 @@
 
 #![forbid(unsafe_code)]
 
+mod attr;
 mod filter;
 mod generated;
+mod path;
 mod stringify;
 mod text;
 
@@ -28,7 +30,7 @@ mod text;
 #[doc = include_str!("../README.md")]
 struct Readme;
 
-pub use filter::{Conversion, Ctx, Filter, Order, Walkable, apply, apply_with};
+pub use filter::{Conversion, Ctx, Filter, FilterError, Order, Walkable, apply, apply_with};
 pub use generated::*;
 pub use stringify::{Stringify, stringify};
 pub use text::Text;
@@ -91,6 +93,11 @@ impl std::error::Error for Error {}
 /// and `MetaValue` in each other (a `Str` in an `Emph` in a `Para` in a `Div`
 /// is four). A deeper one is an error, not a crash: a reader calls itself for
 /// each level, and the stack is not endless.
+///
+/// A filter's walk goes as deep (counting the lists of inlines and blocks it
+/// is in), and no deeper: a walk without end (a top-down function whose
+/// result holds what it matched) is a [`FilterError`]. Real documents nest
+/// up to 121 levels (a manual page's lists, through pandoc's man reader).
 ///
 /// It was 128 levels of JSON, serde_json's own limit: 42 nested divs, which a
 /// web page read from HTML can have.
@@ -855,6 +862,27 @@ impl From<String> for Block {
     }
 }
 
+impl Block {
+    /// The inlines a block holds as its content (`Plain`, `Para`, `Header`),
+    /// as Lua's `block.content` of those.
+    pub fn inlines(&self) -> Option<&Vec<Inline>> {
+        match self {
+            Block::Plain(xs) | Block::Para(xs) => Some(xs),
+            Block::Header(h) => Some(&h.content),
+            _ => None,
+        }
+    }
+
+    /// As [`Block::inlines`], to change them.
+    pub fn inlines_mut(&mut self) -> Option<&mut Vec<Inline>> {
+        match self {
+            Block::Plain(xs) | Block::Para(xs) => Some(xs),
+            Block::Header(h) => Some(&mut h.content),
+            _ => None,
+        }
+    }
+}
+
 impl Pandoc {
     /// A document with these blocks and no metadata.
     pub fn new(blocks: Vec<Block>) -> Self {
@@ -883,14 +911,16 @@ impl Pandoc {
 
 /// Run `f` as a pandoc JSON filter: read a document from stdin, change it,
 /// write it to stdout. `f` gets the output format pandoc passes (the first
-/// argument), if any. Errors go to stderr and exit with status 1.
+/// argument), if any, and returns nothing or a `Result` (what [`apply`]
+/// returns). An error goes to stderr, and the process exits with status 1,
+/// as pandoc expects of a JSON filter that fails.
 ///
 /// ```no_run
 /// panir::filter(|doc, _format| {
 ///     doc.blocks.retain(|b| !matches!(b, panir::Block::HorizontalRule));
 /// });
 /// ```
-pub fn filter<F: FnOnce(&mut Pandoc, Option<&str>)>(f: F) {
+pub fn filter<F: FnOnce(&mut Pandoc, Option<&str>) -> R, R: FilterResult>(f: F) {
     filter_with(|doc, conversion| f(doc, conversion.format.as_deref()));
 }
 
@@ -904,11 +934,11 @@ pub fn filter<F: FnOnce(&mut Pandoc, Option<&str>)>(f: F) {
 ///     let _ = columns;
 /// });
 /// ```
-pub fn filter_with<F: FnOnce(&mut Pandoc, &Conversion)>(f: F) {
+pub fn filter_with<F: FnOnce(&mut Pandoc, &Conversion) -> R, R: FilterResult>(f: F) {
     let conversion = Conversion::from_env();
     let run = || -> Result<(), String> {
         let mut doc = from_reader(std::io::stdin().lock()).map_err(|e| e.to_string())?;
-        f(&mut doc, &conversion);
+        f(&mut doc, &conversion).into_result()?;
         let mut out = std::io::BufWriter::new(std::io::stdout().lock());
         to_writer(&mut out, &doc)
             .and_then(|()| out.flush())
@@ -917,6 +947,25 @@ pub fn filter_with<F: FnOnce(&mut Pandoc, &Conversion)>(f: F) {
     if let Err(e) = run() {
         eprintln!("panir filter: {e}");
         std::process::exit(1);
+    }
+}
+
+/// What a function given to [`filter`] returns: nothing, or a `Result`
+/// whose error stops the filter (as [`apply`]'s).
+pub trait FilterResult {
+    /// The error, as it is to be shown.
+    fn into_result(self) -> Result<(), String>;
+}
+
+impl FilterResult for () {
+    fn into_result(self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+impl<E: fmt::Display> FilterResult for Result<(), E> {
+    fn into_result(self) -> Result<(), String> {
+        self.map_err(|e| e.to_string())
     }
 }
 

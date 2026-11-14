@@ -468,3 +468,30 @@ end
         @test decode_error(() -> parse(text)) == decode_error(() -> fromjson(c["document"]))
     end
 end
+
+@testset "a walk stops at MAX_DEPTH nodes, with an error" begin
+    divs(n) = (b = Para("x"); for _ in 1:n - 1; b = Div(b); end; Pandoc(b))
+    every(x::Node) = nothing
+    # a document as deep as Rust reads (the Str the 256th node) is walked
+    for traverse in (:typewise, :topdown, :bottomup)
+        @test walk!(every, divs(Panir.MAX_DEPTH - 1); traverse) isa Pandoc
+        e = try walk!(every, divs(Panir.MAX_DEPTH); traverse); nothing catch e; e end
+        @test e isa ASTDepthError && length(e.path) == 2 * (Panir.MAX_DEPTH + 1)  # (at the Str)
+    end
+    # top-down, each Str a span holding it, whose Str is walked in turn (as
+    # pandocfilters' metavars with a field naming itself)
+    runaway(s::Str) = Span(Str(s.text))
+    e = try walk!(runaway, Pandoc(Para("loop")); traverse = :topdown); nothing catch e; e end
+    @test e isa ASTDepthError
+    # (the 257th node: the innermost span's attributes)
+    @test e.path == [:blocks, 0, :content, 0, repeat([:content, 0], Panir.MAX_DEPTH - 2)..., :attr]
+    @test startswith(sprint(showerror, e), "blocks[0].content[0].content[0]")
+    @test endswith(sprint(showerror, e), ": nested more than 256 levels deep (a document that deep, " *
+                                         "or a top-down filter's method whose result holds what it matched, walked without end)")
+    # a walk a method starts counts on from where the walk it is in is
+    again(s::Str) = walk!(again, Span(Str(s.text)))
+    @test_throws ASTDepthError walk!(again, Pandoc(Para("loop")))
+    @test get(task_local_storage(), Panir._WALKER, nothing) === nothing  # (left as it was)
+    # in a task of its own too (whose stack is smaller)
+    @test fetch(Threads.@spawn try walk!(runaway, Pandoc(Para("x")); traverse = :topdown) catch e; e end) isa ASTDepthError
+end

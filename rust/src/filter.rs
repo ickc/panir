@@ -16,14 +16,33 @@
 //! }
 //!
 //! let mut doc = panir::Pandoc::new(vec![panir::Block::Para(panir::inlines("a b"))]);
-//! apply(&mut doc, &mut Upper, None);
+//! apply(&mut doc, &mut Upper, None).unwrap();
 //! assert_eq!(panir::to_string(&doc).contains("\"A\""), true);
 //! ```
 //!
 //! For other nodes (`Cell`, `Attr`, ...), and any order of one's own, use
 //! [`VisitMut`].
 
-use crate::{Block, Inline, Meta, Pandoc, VisitMut, walk_block, walk_inline};
+use std::error::Error;
+use std::fmt;
+
+use crate::path::{Locate, Path, Target};
+use crate::{Block, Inline, MAX_DEPTH, Meta, Pandoc, Text, VisitMut, walk_block, walk_inline};
+
+thread_local! {
+    /// How many lists deep the filter walks on this thread are: a walk started
+    /// by a function (`apply` on a fragment) goes on from the one it is in.
+    static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The depth as it was, again, when a walk ends (or a panic leaves it).
+struct Restore(usize);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        DEPTH.set(self.0);
+    }
+}
 
 /// The order a filter's functions are called in: Lua's `traverse`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -95,14 +114,18 @@ impl Conversion {
 /// [`VisitMut`] keeping its own.)
 pub struct Ctx<'a> {
     conversion: &'a Conversion,
+    meta: Option<&'a Meta>,
     skip: bool,
+    error: Option<Box<dyn Error + Send + Sync>>,
 }
 
 impl<'a> Ctx<'a> {
-    fn new(conversion: &'a Conversion) -> Self {
+    fn new(conversion: &'a Conversion, meta: Option<&'a Meta>) -> Self {
         Ctx {
             conversion,
+            meta,
             skip: false,
+            error: None,
         }
     }
 
@@ -116,11 +139,131 @@ impl<'a> Ctx<'a> {
         self.conversion
     }
 
+    /// The document's metadata (as Lua filters read it from a global their
+    /// `Meta` function set, and panir's other languages from `ctx.doc`).
+    /// While a metadata value is walked, the other fields: the value is out
+    /// of the map meanwhile, as it can't be lent while it changes. `None`
+    /// for `meta` and `pandoc`, which have it, and in a fragment.
+    pub fn meta(&self) -> Option<&'a Meta> {
+        self.meta
+    }
+
     /// Don't walk the node's children, or its replacement's (Lua's `return
     /// el, false`). Top-down only: in the other orders the children came
     /// first, and this does nothing (as Lua ignores `false` there).
     pub fn skip_children(&mut self) {
         self.skip = true;
+    }
+
+    /// Fail: the walk stops when the function returns (what it returns is
+    /// not used), and [`apply`] returns the error, with where it happened
+    /// ([`FilterError`]). Returns `None`, for `return ctx.fail(...)`; in a
+    /// function returning nothing, `ctx.fail::<()>(...)`.
+    ///
+    /// ```
+    /// use panir::{Ctx, Filter, Inline};
+    ///
+    /// struct NoEmph;
+    /// impl Filter for NoEmph {
+    ///     fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+    ///         match x {
+    ///             Inline::Emph(_) => ctx.fail("no emphasis, please"),
+    ///             _ => None,
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// let mut doc = panir::Pandoc::new(vec![panir::Block::Para(vec![Inline::Emph(vec![])])]);
+    /// let e = panir::apply(&mut doc, &mut NoEmph, None).unwrap_err();
+    /// assert_eq!(e.path, "blocks[0].content[0]");
+    /// assert_eq!(
+    ///     e.to_string(),
+    ///     "no emphasis, please\n  in filter function inline, on the Emph at blocks[0].content[0]"
+    /// );
+    /// ```
+    pub fn fail<T>(&mut self, error: impl Into<Box<dyn Error + Send + Sync>>) -> Option<T> {
+        self.error.get_or_insert(error.into());
+        None
+    }
+}
+
+/// A filter function's error ([`Ctx::fail`]), and where: the walk stopped
+/// there. Displayed as panir's other languages note theirs:
+///
+/// ```text
+/// no metadata field city
+///   in filter function inline, on the Str at blocks[2].content[0]
+/// ```
+#[derive(Debug)]
+pub struct FilterError {
+    /// The node's path from the document, in pandoc's Lua field names, as
+    /// panir's other languages write it (`blocks[2].content[0]`; `meta.title`;
+    /// empty for the document itself); from a fragment, after its name
+    /// (`Para.content[0]`, `inlines[3]`). Empty if not known (a function on an
+    /// empty list).
+    pub path: String,
+    /// The [`Filter`] method that failed: `"inline"`, `"block"`, `"inlines"`,
+    /// `"blocks"`, `"meta"` or `"pandoc"`; `None` for the walk itself, which
+    /// stops at [`MAX_DEPTH`](crate::MAX_DEPTH) levels.
+    pub function: Option<&'static str>,
+    /// What it was called on: a constructor's name (`"Str"`), or `"Inlines"`,
+    /// `"Blocks"`, `"Meta"`, `"Pandoc"`.
+    pub node: &'static str,
+    /// The error the function gave.
+    pub error: Box<dyn Error + Send + Sync>,
+}
+
+impl fmt::Display for FilterError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.function {
+            Some(function) => write!(
+                f,
+                "{}\n  in filter function {function}, on the {}",
+                self.error, self.node
+            )?,
+            None => write!(f, "{}\n  walking the {}", self.error, self.node)?,
+        }
+        if !self.path.is_empty() {
+            write!(f, " at {}", self.path)?;
+        }
+        Ok(())
+    }
+}
+
+impl Error for FilterError {}
+
+/// What a walk stopped on: the error, and where, by address (the path is
+/// found once the walk has stopped).
+struct Failure {
+    error: FilterError,
+    target: Option<Target>,
+}
+
+/// An inline or a block: what a list of the filter's is of.
+trait Walked: Sized + 'static {
+    /// The filter's method for one, and for a list of them.
+    const FUNCTION: &'static str;
+    const LIST_FUNCTION: &'static str;
+    /// The name of a list of them.
+    const LIST: &'static str;
+    fn name(&self) -> &'static str;
+}
+
+impl Walked for Inline {
+    const FUNCTION: &'static str = "inline";
+    const LIST_FUNCTION: &'static str = "inlines";
+    const LIST: &'static str = "Inlines";
+    fn name(&self) -> &'static str {
+        self.tag()
+    }
+}
+
+impl Walked for Block {
+    const FUNCTION: &'static str = "block";
+    const LIST_FUNCTION: &'static str = "blocks";
+    const LIST: &'static str = "Blocks";
+    fn name(&self) -> &'static str {
+        self.tag()
     }
 }
 
@@ -153,7 +296,7 @@ impl<'a> Ctx<'a> {
 /// let mut filters: Vec<Box<dyn Filter>> = vec![Box::new(Upper(Order::Topdown))];
 /// let mut doc = panir::Pandoc::new(vec!["a b".into()]);
 /// for f in &mut filters {
-///     panir::apply(&mut doc, f.as_mut(), None);
+///     panir::apply(&mut doc, f.as_mut(), None).unwrap();
 /// }
 /// assert_eq!(doc.blocks, vec![panir::Block::from("A B")]);
 /// ```
@@ -200,16 +343,95 @@ struct Driver<'f, 'a, F: Filter + ?Sized> {
     conversion: &'a Conversion,
     pass: Pass,
     topdown: bool,
+    /// The document's metadata, for the blocks' functions.
+    meta: Option<&'a Meta>,
+    /// Set when a function failed: nothing more is walked.
+    failure: Option<Failure>,
 }
 
 /// A filter's function on one node, and on a list of them.
 type ElemFn<F, T> = fn(&mut F, &mut T, &mut Ctx) -> Option<Vec<T>>;
 type ListFn<F, T> = fn(&mut F, &mut Vec<T>, &mut Ctx);
 
-impl<F: Filter + ?Sized> Driver<'_, '_, F> {
+impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
+    fn new(
+        f: &'f mut F,
+        conversion: &'a Conversion,
+        meta: Option<&'a Meta>,
+        pass: Pass,
+        topdown: bool,
+    ) -> Self {
+        Driver {
+            f,
+            conversion,
+            meta,
+            pass,
+            topdown,
+            failure: None,
+        }
+    }
+
+    /// Stop the walk: `function` failed on `node`.
+    fn fail(
+        &mut self,
+        function: Option<&'static str>,
+        node: &'static str,
+        error: Box<dyn Error + Send + Sync>,
+        target: Option<Target>,
+    ) {
+        self.failure = Some(Failure {
+            error: FilterError {
+                path: String::new(),
+                function,
+                node,
+                error,
+            },
+            target,
+        });
+    }
+
+    /// The function on a list, its error noted; whether to skip its nodes.
+    fn on_list<T: Walked>(&mut self, xs: &mut Vec<T>, list: ListFn<F, T>) -> bool {
+        let mut ctx = Ctx::new(self.conversion, self.meta);
+        list(self.f, xs, &mut ctx);
+        if let Some(e) = ctx.error {
+            self.fail(Some(T::LIST_FUNCTION), T::LIST, e, Target::list(xs));
+        }
+        ctx.skip
+    }
+
+    /// The nodes of a list, a level deeper than the list holding it (or
+    /// than the walk that called the function that started this one): no
+    /// deeper than [`MAX_DEPTH`].
+    fn list<T: Walked>(
+        &mut self,
+        xs: &mut Vec<T>,
+        calls: (bool, bool),
+        elem: ElemFn<F, T>,
+        list: ListFn<F, T>,
+        children: fn(&mut Self, &mut T),
+    ) {
+        if self.failure.is_some() {
+            return;
+        }
+        // (its nodes a level deeper: as reading counts, an empty list isn't)
+        let depth = DEPTH.get() + 1;
+        if depth > MAX_DEPTH && !xs.is_empty() {
+            let e = format!(
+                "nested more than {MAX_DEPTH} levels deep (a document that deep, or a top-down \
+                 filter's function whose result holds what it matched, walked without end)"
+            );
+            self.fail(None, T::LIST, e.into(), Target::list(xs));
+            return;
+        }
+        DEPTH.set(depth);
+        self.nodes(xs, calls, elem, list, children);
+        DEPTH.set(depth - 1);
+    }
+
     /// The nodes of a list: each may be replaced, deleted or spliced; then
     /// (or first, top-down) the list.
-    fn list<T>(
+    fn nodes<T: Walked>(
         &mut self,
         xs: &mut Vec<T>,
         (on_elem, on_list): (bool, bool),
@@ -218,12 +440,8 @@ impl<F: Filter + ?Sized> Driver<'_, '_, F> {
         children: fn(&mut Self, &mut T),
     ) {
         let topdown = self.topdown;
-        if topdown && on_list {
-            let mut ctx = Ctx::new(self.conversion);
-            list(self.f, xs, &mut ctx);
-            if ctx.skip {
-                return;
-            }
+        if topdown && on_list && (self.on_list(xs, list) || self.failure.is_some()) {
+            return;
         }
         let mut i = 0;
         // The nodes still to walk, once one was replaced by none or several:
@@ -231,6 +449,8 @@ impl<F: Filter + ?Sized> Driver<'_, '_, F> {
         // appended. (Replacing in place moves all that follows, each time:
         // minutes, for every other block of 400,000 deleted.)
         let mut rest: Option<std::vec::IntoIter<T>> = None;
+        // the node a function failed on
+        let mut failed = None;
         loop {
             match &mut rest {
                 None if i >= xs.len() => break,
@@ -242,13 +462,22 @@ impl<F: Filter + ?Sized> Driver<'_, '_, F> {
             }
             if !topdown {
                 children(self, &mut xs[i]);
+                if self.failure.is_some() {
+                    break;
+                }
             }
-            let mut ctx = Ctx::new(self.conversion);
+            let mut ctx = Ctx::new(self.conversion, self.meta);
             let result = if on_elem {
                 elem(self.f, &mut xs[i], &mut ctx)
             } else {
                 None
             };
+            if let Some(e) = ctx.error {
+                // (what it returned is not used: the node stays)
+                self.fail(Some(T::FUNCTION), xs[i].name(), e, None);
+                failed = Some(i);
+                break;
+            }
             let n = match result {
                 None => 1,
                 Some(mut items) if items.len() == 1 => {
@@ -267,12 +496,25 @@ impl<F: Filter + ?Sized> Driver<'_, '_, F> {
             if topdown && !ctx.skip {
                 for x in &mut xs[i..i + n] {
                     children(self, x);
+                    if self.failure.is_some() {
+                        break;
+                    }
                 }
+            }
+            if self.failure.is_some() {
+                break;
             }
             i += n;
         }
-        if !topdown && on_list {
-            list(self.f, xs, &mut Ctx::new(self.conversion));
+        if let Some(rest) = rest {
+            xs.extend(rest); // (what a failure left unwalked)
+        }
+        if let (Some(i), Some(failure)) = (failed, &mut self.failure) {
+            // (where the node is now, the list whole again)
+            failure.target = Some(Target::node(&xs[i]));
+        }
+        if !topdown && on_list && self.failure.is_none() {
+            self.on_list(xs, list);
         }
     }
 
@@ -297,27 +539,72 @@ impl<F: Filter + ?Sized> VisitMut for Driver<'_, '_, F> {
 }
 
 /// The walks of a filter's order through `x`, with `walk`: one per kind,
-/// typewise, else one.
+/// typewise, else one; until a function fails.
 fn walks<F: Filter + ?Sized, T: ?Sized>(
     x: &mut T,
     f: &mut F,
     conversion: &Conversion,
     walk: impl Fn(&mut Driver<'_, '_, F>, &mut T),
-) {
+) -> Option<Failure> {
     let order = f.order();
     let passes: &[Pass] = match order {
         Order::Typewise => &[Pass::Inline, Pass::Inlines, Pass::Block, Pass::Blocks],
         Order::Topdown | Order::Bottomup => &[Pass::All],
     };
     for &pass in passes {
-        let mut d = Driver {
-            f: &mut *f,
-            conversion,
-            pass,
-            topdown: order == Order::Topdown,
-        };
+        let mut d = Driver::new(&mut *f, conversion, None, pass, order == Order::Topdown);
         walk(&mut d, x);
+        if d.failure.is_some() {
+            return d.failure;
+        }
     }
+    None
+}
+
+/// A failure's error, with the path of where it was in `root`, after
+/// `prefix` (a fragment's name).
+fn error_in<T: Locate + 'static>(
+    root: &T,
+    prefix: &str,
+    failure: Option<Failure>,
+) -> Result<(), FilterError> {
+    let Some(Failure { mut error, target }) = failure else {
+        return Ok(());
+    };
+    if let Some(path) = target.and_then(|t| Path::find(root, t)) {
+        error.path = match (prefix, path.starts_with('[')) {
+            ("", _) => path,
+            (_, true) => format!("{prefix}{path}"),
+            (_, false) => format!("{prefix}.{path}"),
+        };
+    }
+    Err(error)
+}
+
+/// A function on the metadata, or the document: its error, if it failed.
+fn whole<T>(
+    function: &'static str,
+    node: &'static str,
+    x: &mut T,
+    conversion: &Conversion,
+    call: impl FnOnce(&mut T, &mut Ctx),
+) -> (Option<Failure>, bool) {
+    let mut ctx = Ctx::new(conversion, None);
+    call(x, &mut ctx);
+    let failure = ctx.error.map(|error| Failure {
+        error: FilterError {
+            path: if node == "Meta" {
+                "meta".into()
+            } else {
+                String::new()
+            },
+            function: Some(function),
+            node,
+            error,
+        },
+        target: None,
+    });
+    (failure, ctx.skip)
 }
 
 /// What a filter applies to: a document, or a fragment of one, as Lua's
@@ -343,13 +630,17 @@ fn walks<F: Filter + ?Sized, T: ?Sized>(
 /// }
 ///
 /// let mut emph = Inline::Emph(vec!["a".into(), Inline::Emph(vec!["b".into()])]);
-/// apply(&mut emph, &mut Loud, None);
+/// apply(&mut emph, &mut Loud, None).unwrap();
 /// assert_eq!(emph, Inline::Emph(vec!["A".into(), "B".into()]));
 /// ```
 pub trait Walkable: sealed::Sealed {
     /// [`apply_with`] on this.
     #[doc(hidden)]
-    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion);
+    fn apply_filter<F: Filter + ?Sized>(
+        &mut self,
+        f: &mut F,
+        conversion: &Conversion,
+    ) -> Result<(), FilterError>;
 }
 
 mod sealed {
@@ -362,90 +653,165 @@ mod sealed {
 }
 
 impl Walkable for Block {
-    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion) {
-        walks(self, f, conversion, |d, x| walk_block(d, x));
+    fn apply_filter<F: Filter + ?Sized>(
+        &mut self,
+        f: &mut F,
+        conversion: &Conversion,
+    ) -> Result<(), FilterError> {
+        let failure = walks(self, f, conversion, |d, x| walk_block(d, x));
+        error_in(self, self.tag(), failure)
     }
 }
 
 impl Walkable for Inline {
-    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion) {
-        walks(self, f, conversion, |d, x| walk_inline(d, x));
+    fn apply_filter<F: Filter + ?Sized>(
+        &mut self,
+        f: &mut F,
+        conversion: &Conversion,
+    ) -> Result<(), FilterError> {
+        let failure = walks(self, f, conversion, |d, x| walk_inline(d, x));
+        error_in(self, self.tag(), failure)
     }
 }
 
 impl Walkable for Vec<Block> {
-    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion) {
-        walks(self, f, conversion, |d, xs| d.visit_blocks(xs));
+    fn apply_filter<F: Filter + ?Sized>(
+        &mut self,
+        f: &mut F,
+        conversion: &Conversion,
+    ) -> Result<(), FilterError> {
+        let failure = walks(self, f, conversion, |d, xs| d.visit_blocks(xs));
+        error_in(self, "blocks", failure)
     }
 }
 
 impl Walkable for Vec<Inline> {
-    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion) {
-        walks(self, f, conversion, |d, xs| d.visit_inlines(xs));
+    fn apply_filter<F: Filter + ?Sized>(
+        &mut self,
+        f: &mut F,
+        conversion: &Conversion,
+    ) -> Result<(), FilterError> {
+        let failure = walks(self, f, conversion, |d, xs| d.visit_inlines(xs));
+        error_in(self, "inlines", failure)
     }
 }
 
 impl Walkable for Pandoc {
-    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion) {
-        let doc = self;
-        let ctx = || Ctx::new(conversion);
-        match f.order() {
-            Order::Topdown => {
-                let mut c = ctx();
-                f.pandoc(doc, &mut c);
-                if c.skip {
-                    return;
-                }
-                let mut c = ctx();
-                f.meta(&mut doc.meta, &mut c);
-                let mut d = Driver {
-                    f,
-                    conversion,
-                    pass: Pass::All,
-                    topdown: true,
-                };
-                if !c.skip {
-                    for v in doc.meta.values_mut() {
-                        d.visit_meta_value(v);
-                    }
-                }
-                d.visit_blocks(&mut doc.blocks);
-            }
-            Order::Bottomup => {
-                let mut d = Driver {
-                    f: &mut *f,
-                    conversion,
-                    pass: Pass::All,
-                    topdown: false,
-                };
-                for v in doc.meta.values_mut() {
-                    d.visit_meta_value(v);
-                }
-                d.f.meta(&mut doc.meta, &mut ctx());
-                d.visit_blocks(&mut doc.blocks);
-                f.pandoc(doc, &mut ctx());
-            }
-            Order::Typewise => {
-                walks(doc, f, conversion, |d, doc| d.visit_pandoc(doc));
-                f.meta(&mut doc.meta, &mut ctx());
-                f.pandoc(doc, &mut ctx());
-            }
+    fn apply_filter<F: Filter + ?Sized>(
+        &mut self,
+        f: &mut F,
+        conversion: &Conversion,
+    ) -> Result<(), FilterError> {
+        let failure = walk_document(self, f, conversion);
+        error_in(self, "", failure)
+    }
+}
+
+/// A filter on a document, in its order, until a function fails.
+fn walk_document<F: Filter + ?Sized>(
+    doc: &mut Pandoc,
+    f: &mut F,
+    conversion: &Conversion,
+) -> Option<Failure> {
+    let order = f.order();
+    let passes: &[Pass] = match order {
+        Order::Typewise => &[Pass::Inline, Pass::Inlines, Pass::Block, Pass::Blocks],
+        Order::Topdown | Order::Bottomup => &[Pass::All],
+    };
+    let topdown = order == Order::Topdown;
+    if topdown {
+        let (failure, skip) = whole("pandoc", "Pandoc", doc, conversion, |doc, c| {
+            f.pandoc(doc, c)
+        });
+        if failure.is_some() || skip {
+            return failure;
         }
     }
+    // the metadata's function: first top-down, else after what is in it
+    let mut skip_meta = false;
+    if topdown {
+        let (failure, skip) = whole("meta", "Meta", &mut doc.meta, conversion, |m, c| {
+            f.meta(m, c)
+        });
+        if failure.is_some() {
+            return failure;
+        }
+        skip_meta = skip;
+    }
+    for &pass in passes {
+        // the metadata, each value lent the others (out of the map while
+        // it is walked: it can't be lent while it changes), then the
+        // blocks, lent the metadata
+        let Pandoc { meta, blocks, .. } = &mut *doc;
+        if !skip_meta {
+            let keys: Vec<Text> = meta.keys().cloned().collect();
+            for k in keys {
+                let Some(mut v) = meta.remove(&k) else {
+                    continue;
+                };
+                let mut d = Driver::new(&mut *f, conversion, Some(&*meta), pass, topdown);
+                d.visit_meta_value(&mut v);
+                let failure = d.failure;
+                meta.insert(k, v);
+                if failure.is_some() {
+                    return failure;
+                }
+            }
+        }
+        if order == Order::Bottomup {
+            let (failure, _) = whole("meta", "Meta", meta, conversion, |m, c| f.meta(m, c));
+            if failure.is_some() {
+                return failure;
+            }
+        }
+        let mut d = Driver::new(&mut *f, conversion, Some(&*meta), pass, topdown);
+        d.visit_blocks(blocks);
+        if d.failure.is_some() {
+            return d.failure;
+        }
+    }
+    if topdown {
+        return None;
+    }
+    if order == Order::Typewise {
+        let (failure, _) = whole("meta", "Meta", &mut doc.meta, conversion, |m, c| {
+            f.meta(m, c)
+        });
+        if failure.is_some() {
+            return failure;
+        }
+    }
+    whole("pandoc", "Pandoc", doc, conversion, |doc, c| {
+        f.pandoc(doc, c)
+    })
+    .0
 }
 
 /// Apply a filter to a document, as pandoc applies a Lua filter, in the
 /// filter's [`Order`], or to a fragment of one ([`Walkable`]). `format` is
 /// the output format ([`Ctx::format`]).
-pub fn apply<T: Walkable, F: Filter + ?Sized>(x: &mut T, f: &mut F, format: Option<&str>) {
+///
+/// A function that fails ([`Ctx::fail`]) stops the walk: the error is
+/// returned, with where it happened; the document is as the functions
+/// before left it.
+pub fn apply<T: Walkable, F: Filter + ?Sized>(
+    x: &mut T,
+    f: &mut F,
+    format: Option<&str>,
+) -> Result<(), FilterError> {
     let conversion = Conversion {
         format: format.map(str::to_owned),
         ..Conversion::default()
     };
-    apply_with(x, f, &conversion);
+    apply_with(x, f, &conversion)
 }
 
 /// As [`apply`], knowing the whole conversion ([`Ctx::conversion`]).
-pub fn apply_with<T: Walkable, F: Filter + ?Sized>(x: &mut T, f: &mut F, conversion: &Conversion) {
-    x.apply_filter(f, conversion);
+pub fn apply_with<T: Walkable, F: Filter + ?Sized>(
+    x: &mut T,
+    f: &mut F,
+    conversion: &Conversion,
+) -> Result<(), FilterError> {
+    let _restore = Restore(DEPTH.get());
+    x.apply_filter(f, conversion)
 }

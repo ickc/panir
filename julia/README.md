@@ -53,13 +53,26 @@ Constructors:
   out; the content one argument, as in Lua: `Cell([Para("a"), Para("b")],
   AlignRight)`). These five also take every field by keyword: `Table(;
   bodies, identifier = "t")`, `Cell(; content = "a", col_span = 2)`.
-- attributes are (key, value) tuples, in order; pairs are taken too
-  (`attributes = ["lang" => "en"]`), and a `Dict`, in the order of its
-  keys (a Lua table of them has no order either).
+- attributes are (key, value) tuples, in order, a key perhaps in two;
+  pairs are taken too (`attributes = ["lang" => "en"]`), and a `Dict`, in
+  the order of its keys (a Lua table of them has no order either).
 - a constructor copies the lists and maps it is given: a node's lists are
   its own, which the caller may go on changing or give to another node.
   The nodes in them are not copied.
 - `show` writes what makes the node again; a document a block a line.
+
+An `Attr` by key is its attributes, as Lua's `el.attributes[key]`: the
+first pair with the key is read (`attr["k"]`, `get(attr, "k", nothing)`,
+`haskey`), set (`attr["k"] = "v"`, in its place, or a pair added at the
+end) and removed (`pop!(attr, "k", nothing)` returns its value,
+`delete!`):
+
+```julia
+cell = Div("x"; attributes = ["colspan" => "2", "lang" => "en"])
+span = parse(Int, pop!(cell.attr, "colspan", "1"))  # 2
+cell.attr["lang"] = "fr"
+cell.attr.attributes  # [("lang", "fr")]
+```
 
 What converts, converts as in pandoc's Lua, in constructors and where a
 field is set:
@@ -153,6 +166,36 @@ host running filter scripts in its own process (LibPandoc.jl's
 hands `f` over instead; a function like `run_filter` of the host's own
 calls `Panir.hand_over(f, traverse)`, which does the same.
 
+### Coming from Lua
+
+What a port of a Lua filter trips over:
+
+- **`return nil` undoes a function's changes in Lua; here they stay.**
+  In pandoc's Lua a function gets a copy of its element, and what it
+  changes counts only if it returns the element: `return nil` (or no
+  `return`) leaves the element as it was, children and lists included
+  (checked with pandoc 3.14). Here the node itself is changed, and the
+  changes stay whatever the function returns. A Lua filter that changes its
+  element, then returns `nil` (pandoc-ext/list-table removes a div's class,
+  then declines an empty div) is ported by deciding first, and changing
+  after.
+- **Lua's elements are values**: `pandoc.Span(meta.title)` puts a copy in
+  the body. Here a node in a second place is a copy you make
+  (`deepcopy(x)`), or one node in two places.
+- `el.t`, `el.tag`: `nameof(typeof(el))`.
+- `el.attributes.k`, `= v`, `= nil`: `el.attr["k"]` (or `get(el.attr,
+  "k", nothing)`), `el.attr["k"] = v`, `pop!(el.attr, "k", nothing)`; the
+  first pair with the key, as in Lua. A Lua table as attributes (`{id =
+  "x", class = "a b"}`) gives the identifier and classes; here
+  `attributes = ["class" => ...]` is a pair named `class`: pass
+  `identifier` and `classes`.
+- `error(...)`: `error(...)`, or throw any exception.
+- `return el, false` (top-down): `skip_children!(ctx)`.
+- Vectors count from 1, as Lua's lists (paths in errors, as pandoc's
+  JSON, from 0).
+- The metadata a Lua filter keeps from its `Meta` function, for the
+  functions after: `ctx.doc.meta`.
+
 ### Fragments
 
 `walk!` also applies to any other node, or a `Vector{Inline}` or
@@ -182,7 +225,7 @@ about:
 |---|---|
 | `Panir.parse` | 680 / 220 / 1,000 |
 | `Panir.fromjson` | 3,100 / 1,100 / 5,100 |
-| `walk!`, every order | 7,400 / 1,400 / 7,900 |
+| `walk!`, every order | 255 / 63 / 255 (`Panir.MAX_DEPTH`) |
 | `deepcopy` | 10,000 / 2,500 / 10,000 |
 | `hash`, `==` | 18,000 / 2,800 / 26,000 |
 | `serialize`, `Panir.tojson` | 20,000 / 5,300 / 25,000 |
@@ -192,6 +235,16 @@ Beyond, `Panir.parse` raises `ASTDecodeError` (JSON.jl stops at 2,048
 levels of JSON, which comes first), and anything else Julia's own
 `StackOverflowError`. panir doesn't catch that: Julia itself warns that
 after one "program state may be corrupted".
+
+`walk!` stops sooner, by itself: at `Panir.MAX_DEPTH` (256) nodes in one
+another (as Rust's panir reads and walks; a table in a table's cell is
+four, the table, its body, row and cell), counting a walk a method starts
+on from where the walk it is in is. Deeper is an `ASTDepthError` with the
+path, so that a top-down method whose result holds what it matched (each
+result walked in turn, without end: pandocfilters' metavars with a field
+naming itself) is an error, where it ran out of stack and then didn't end.
+A method that calls itself without end is Julia's `StackOverflowError`,
+which panir can't see.
 
 ## Also
 

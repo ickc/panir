@@ -30,6 +30,6 @@ include("walk.jl")
 
 include("precompile.jl")
 
-export Node, ASTDecodeError, ASTTypeError, Context, Conversion, walk!, skip_children!, run_filter, stringify, inlines, blocks
+export Node, ASTDecodeError, ASTTypeError, ASTDepthError, Context, Conversion, walk!, skip_children!, run_filter, stringify, inlines, blocks
 
 end

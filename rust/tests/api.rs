@@ -2,7 +2,7 @@
 //! `Hash`, visitors on a document.
 
 use panir::{
-    Block, ColSpec, ColWidth, Inline, PANDOC_API_VERSION, Pandoc, Table, Visit, from_reader,
+    Attr, Block, ColSpec, ColWidth, Inline, PANDOC_API_VERSION, Pandoc, Table, Visit, from_reader,
     from_slice, from_str, to_string, walk_inline_ref,
 };
 use std::collections::HashSet;
@@ -157,4 +157,59 @@ fn lists_are_read_to_their_length() {
     assert_eq!(from_str(&bad).unwrap_err().path, "blocks[0].c[2].c[2].c");
     assert_eq!(from_str(&doc).unwrap(), read);
     assert_eq!(to_string(&read), doc);
+}
+
+#[test]
+fn attributes_by_key_as_lua() {
+    let pair = |k: &str, v: &str| (k.into(), v.into());
+    let mut attr = Attr {
+        identifier: "id".into(),
+        classes: vec!["x".into()],
+        attributes: vec![pair("k", "v"), pair("k", "w"), pair("z", "1")],
+    };
+    assert_eq!((attr.get("k"), attr.get("missing")), (Some("v"), None));
+    assert!(attr.has_class("x") && !attr.has_class("k"));
+    attr.set("k", "new"); // the first pair's value, in its place
+    assert_eq!(
+        attr.attributes,
+        vec![pair("k", "new"), pair("k", "w"), pair("z", "1")]
+    );
+    assert_eq!(attr.remove("k").as_deref(), Some("new")); // the first pair only
+    assert_eq!(attr.attributes, vec![pair("k", "w"), pair("z", "1")]);
+    attr.set("q", String::from("2")); // a new key: at the end
+    assert_eq!(
+        attr.attributes,
+        vec![pair("k", "w"), pair("z", "1"), pair("q", "2")]
+    );
+    assert_eq!(attr.remove("missing"), None);
+}
+
+#[test]
+fn attr_new_in_luas_order() {
+    let attr = Attr::new("i", &["a", "b"], &[("k", "1"), ("k", "2")]);
+    assert_eq!(
+        attr,
+        Attr {
+            identifier: "i".into(),
+            classes: vec!["a".into(), "b".into()],
+            attributes: vec![("k".into(), "1".into()), ("k".into(), "2".into())],
+        }
+    );
+    assert_eq!(Attr::new("", &[], &[]), Attr::default());
+}
+
+#[test]
+fn a_blocks_inlines() {
+    use panir::{Header, inlines};
+    let mut header: Block = Header {
+        level: 1,
+        attr: Attr::default(),
+        content: inlines("a b"),
+    }
+    .into();
+    header.inlines_mut().unwrap().pop();
+    assert_eq!(header.inlines(), Some(&inlines("a ")));
+    assert_eq!(Block::Plain(inlines("x")).inlines(), Some(&inlines("x")));
+    assert_eq!(Block::BlockQuote(vec![]).inlines(), None);
+    assert_eq!(Block::LineBlock(vec![inlines("x")]).inlines(), None); // (lines of them)
 }

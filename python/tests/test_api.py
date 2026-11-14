@@ -161,6 +161,17 @@ def test_attributes_by_key_as_lua():
     assert attrs == [("z", "1"), ("q", "2")]
 
 
+def test_attributes_pop_by_key_as_dict():
+    attrs = Attr(attributes=[("k", "1"), ("j", "2"), ("k", "3")]).attributes
+    assert attrs.pop("k") == "1"  # the first pair with the key
+    assert attrs == [("j", "2"), ("k", "3")]
+    assert attrs.pop("missing", None) is None and attrs.pop("missing", "d") == "d"
+    with pytest.raises(KeyError):
+        attrs.pop("missing")
+    assert attrs.pop() == ("k", "3") and attrs.pop(0) == ("j", "2")  # by index, as a list
+    assert attrs == []
+
+
 def test_attributes_are_attributes_however_made():
     j = (
         '{"pandoc-api-version":[1,23,1,2],"meta":{},'

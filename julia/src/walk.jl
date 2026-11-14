@@ -119,6 +119,28 @@ _kind(::Vector{Inline}) = _INLINES
 _kind(::Vector{Block}) = _BLOCKS
 _kind(::Any) = 0x00  # (other lists: no function of Lua's is for them)
 
+"""
+How deep a walk goes: `MAX_DEPTH` (256) nodes in one another, as Rust's
+panir reads and walks. Deeper, `walk!` stops with an `ASTDepthError`: a
+document that deep, or a top-down method whose result holds what it
+matched (each result walked, without end). A walk a method starts goes on
+from where the walk it is in is.
+"""
+const MAX_DEPTH = 256
+
+"""
+A walk nested deeper than `Panir.MAX_DEPTH` (256) nodes: a document that
+deep, or a top-down method whose result holds what it matched, walked
+without end. `path` is where it stopped, as in `ASTTypeError`.
+"""
+struct ASTDepthError <: Exception
+    path::Vector{Any}
+end
+
+Base.showerror(io::IO, e::ASTDepthError) = print(io, _format_path(e.path),
+    isempty(e.path) ? "" : ": ", "nested more than $MAX_DEPTH levels deep (a document that deep, ",
+    "or a top-down filter's method whose result holds what it matched, walked without end)")
+
 # Not parametric on the filter: the call into it is dynamic anyway (a method
 # per node type), and one walker compiled once serves every filter.
 mutable struct _Walker
@@ -127,6 +149,7 @@ mutable struct _Walker
     doc::Any
     conversion::Conversion
     stack::Vector{_Frame}
+    base::Int      # the depth of the walk whose method started this one
     wants::UInt8   # which nodes this walk calls `f` on (_INLINES | ...)
     lists::UInt8   # which lists
     arity::Dict{DataType, Int}   # by node type: 2 for f(x, ctx), 1 for f(x), 0 for neither
@@ -153,6 +176,13 @@ function _first(m::Method)
     length(ps) >= 2 || return Union{}
     p = Base.rewrap_unionall(Base.unwrapva(ps[2]), m.sig)
     p isa Type ? p : Any
+end
+
+# A frame for a node, no deeper than MAX_DEPTH (counting the walks this one
+# is in).
+@inline function _push!(w::_Walker, frame::_Frame)
+    w.base + length(w.stack) >= MAX_DEPTH && throw(ASTDepthError(_steps(frame[5])))
+    push!(w.stack, frame)
 end
 
 function _context(w::_Walker)
@@ -308,7 +338,7 @@ function _many(w::_Walker, list::Vector{T}, parent, field, path) where {T <: Nod
     end
     i = 1
     while i <= length(list)
-        push!(w.stack, (parent, field, list, i, _Path(path, i - 1)))
+        _push!(w, (parent, field, list, i, _Path(path, i - 1)))
         try
             node = list[i]
             w.topdown || _children(w, node)
@@ -347,7 +377,7 @@ end
 # holds them (a method each: a call decided on the value's type, which is
 # fast, where `x isa Vector{<:Node}` was a subtyping on every one).
 function _value(w::_Walker, x::Node, parent, field, path)
-    push!(w.stack, (parent, field, nothing, nothing, path))
+    _push!(w, (parent, field, nothing, nothing, path))
     try
         return _one(w, x)
     finally
@@ -371,7 +401,7 @@ function _value(w::_Walker, x::Dict, parent, field, path)
         haskey(x, k) || continue  # a method removed it
         y = x[k]
         if y isa Node  # the map is its container, the key its index
-            push!(w.stack, (parent, field, x, k, _Path(path, k)))
+            _push!(w, (parent, field, x, k, _Path(path, k)))
             z = try
                 _one(w, y)
             finally
@@ -481,13 +511,21 @@ function walk!(@nospecialize(f), x::Union{Node, Vector{Inline}, Vector{Block}};
     # With the methods there are now: `f`'s may be newer than the caller (a
     # filter script a host just included), and a walk that didn't see them
     # would call none, and say nothing.
-    Base.invokelatest(_walk!, f, x, traverse, _conversion(format))
+    # (a walk a method starts goes on from where the walk it is in is)
+    outer = get(task_local_storage(), _WALKER, nothing)
+    base = outer === nothing ? 0 : outer.base + length(outer.stack)
+    task_local_storage(_WALKER, nothing) do
+        Base.invokelatest(_walk!, f, x, traverse, _conversion(format), base)
+    end
 end
 
-function _walk!(@nospecialize(f), node, traverse::Symbol, conversion::Conversion)
+# The task's walker calling methods now, if any.
+const _WALKER = :panir_walker
+
+function _walk!(@nospecialize(f), node, traverse::Symbol, conversion::Conversion, base::Int)
     # Nothing here is compiled again for each filter (what calls it is
     # dynamic anyway): no closure holds `f`, whose type it would take.
-    s = _Walk(f, traverse === :topdown, conversion, Dict{DataType, Int}())
+    s = _Walk(f, traverse === :topdown, conversion, Dict{DataType, Int}(), base)
     nodes, lists = _INLINES | _BLOCKS | _OTHERS, _INLINES | _BLOCKS
     node isa Pandoc || return _fragment!(s, node, traverse === :typewise ? _passes(f) : [(nodes, lists)])
     doc = node
@@ -515,9 +553,15 @@ struct _Walk
     topdown::Bool
     conversion::Conversion
     arity::Dict{DataType, Int}
+    base::Int
 end
 
-_walker(s::_Walk, doc, wants, lists) = _Walker(s.f, s.topdown, doc, s.conversion, _Frame[], wants, lists, s.arity)
+# A walker for a pass, the task's current one from now on.
+function _walker(s::_Walk, doc, wants, lists)
+    w = _Walker(s.f, s.topdown, doc, s.conversion, _Frame[], s.base, wants, lists, s.arity)
+    task_local_storage(_WALKER, w)
+    w
+end
 
 # The Pandoc method: the document, or its replacement; whether to skip.
 function _root(s::_Walk, d::Pandoc)

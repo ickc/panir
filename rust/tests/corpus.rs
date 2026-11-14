@@ -220,3 +220,35 @@ fn an_errors_path_is_where_tracking_every_value_finds_it() {
     }
     assert!(errors > 3000, "{errors}");
 }
+
+#[test]
+fn a_nodes_tag_is_its_jsons() {
+    use panir::walk_meta_value_ref;
+    use panir::{Block, Inline, MetaValue, Visit, walk_block_ref, walk_inline_ref};
+    struct Tags(usize);
+    fn check<T: serde::Serialize>(x: &T, tag: &str) {
+        assert_eq!(serde_json::to_value(x).unwrap()["t"], tag);
+    }
+    impl Visit for Tags {
+        fn visit_block(&mut self, x: &Block) {
+            check(x, x.tag());
+            self.0 += 1;
+            walk_block_ref(self, x);
+        }
+        fn visit_inline(&mut self, x: &Inline) {
+            check(x, x.tag());
+            self.0 += 1;
+            walk_inline_ref(self, x);
+        }
+        fn visit_meta_value(&mut self, x: &MetaValue) {
+            check(x, x.tag());
+            self.0 += 1;
+            walk_meta_value_ref(self, x);
+        }
+    }
+    let mut tags = Tags(0);
+    for line in corpus("arbitrary.jsonl") {
+        from_str(&line).unwrap().visit(&mut tags);
+    }
+    assert!(tags.0 > 1000);
+}

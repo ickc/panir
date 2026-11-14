@@ -50,6 +50,8 @@ _P = ParamSpec("_P")
 _In = TypeVar("_In")
 _Get = TypeVar("_Get")
 _Set = TypeVar("_Set", contravariant=True)
+_D = TypeVar("_D")
+_NO_DEFAULT: Any = object()  # (a default that isn't one)
 
 
 class Field(Generic[_Get, _Set]):
@@ -556,7 +558,8 @@ class Attributes(NodeList[tuple[str, str], tuple[str, str]]):
     in two of them. Also by key, as pandoc's Lua (``el.attributes.key``):
     ``attrs["k"]`` is the value of the first pair with that key; setting it
     replaces that value, or adds a pair at the end; ``del`` removes that
-    pair; ``"k" in attrs``. Given whole, a mapping is its pairs."""
+    pair, ``pop("k", default)`` too and returns its value; ``"k" in
+    attrs``. Given whole, a mapping is its pairs."""
 
     __slots__ = ()
 
@@ -606,6 +609,26 @@ class Attributes(NodeList[tuple[str, str], tuple[str, str]]):
                 list.__delitem__(self, n)
                 return
         raise KeyError(i)
+
+    @overload
+    def pop(self, i: typing.SupportsIndex = -1, /) -> tuple[str, str]: ...
+    @overload
+    def pop(self, i: str, /) -> str: ...
+    @overload
+    def pop(self, i: str, default: _D, /) -> str | _D: ...
+    def pop(self, i: Any = -1, default: Any = _NO_DEFAULT, /) -> Any:  # type: ignore[override]
+        """By key, as ``dict.pop``: remove the first pair with ``key`` and
+        return its value, else ``default`` (``KeyError`` without one). By
+        index, as ``list.pop``."""
+        if not isinstance(i, str):
+            return list.pop(self, i)
+        for n, (k, v) in enumerate(self):
+            if k == i:
+                list.__delitem__(self, n)
+                return v
+        if default is _NO_DEFAULT:
+            raise KeyError(i)
+        return default
 
     def __contains__(self, x: object) -> bool:
         if isinstance(x, str):

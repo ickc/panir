@@ -145,6 +145,7 @@ class Gen:
             getattr(self, t["kind"])(t)
         self.visitor(True)
         self.visitor(False)
+        self.locator()
         return "".join(o)
 
     def alias(self, t: dict) -> None:
@@ -213,6 +214,18 @@ class Gen:
                 f" {write}; out.push('}}'); }}\n"
             )
         self.json_impl(t["name"], "match self {\n" + "".join(arms) + "}")
+        name = t["name"]
+        tags = "".join(
+            f'            {name}::{c["name"]} {{ .. }} => "{c["name"]}",\n'
+            for c in t["constructors"]
+        )
+        o.append(
+            f"impl {name} {{\n"
+            f"    /// The constructor's name, as in pandoc's JSON (`\"t\"`) and Lua\n"
+            f"    /// (`el.tag`, `el.t`).\n"
+            f"    pub fn tag(&self) -> &'static str {{\n"
+            f"        match self {{\n{tags}        }}\n    }}\n}}\n\n"
+        )
         for c in structs:
             o.append(
                 f"impl From<{c['name']}> for {t['name']} {{\n"
@@ -570,6 +583,105 @@ class Gen:
                     o.extend(arms)
                     o.append("        _ => {}\n    }\n")
             o.append("}\n\n")
+
+    def locate_expr(self, ty: dict, x: str, depth: int = 0) -> str | None:
+        """Whether the target is in ``x`` (a ``&`` value of type ``ty``), the
+        steps to it taken (``Path``, in path.rs)."""
+        if not self.reaches_nodes(ty):
+            return None
+        ty = self.resolve(ty)
+        v = f"x{depth}"
+        if "ref" in ty:
+            return f"({x}).locate(p)"
+        if "list" in ty:
+            return f"p.list({x}, |p, {v}| {self.locate_expr(ty['list'], v, depth + 1)})"
+        if "maybe" in ty:
+            return (
+                f"({x}).as_ref().is_some_and(|{v}| {self.locate_expr(ty['maybe'], v, depth + 1)})"
+            )
+        if "map" in ty:
+            return f"p.map({x}, |p, {v}| {self.locate_expr(ty['map'][1], v, depth + 1)})"
+        if "tuple" in ty:
+            parts = [
+                (i, self.locate_expr(t, f"&({x}).{i}", depth + 1))
+                for i, t in enumerate(ty["tuple"])
+            ]
+            return " || ".join(f"p.index({i}, |p| {e})" for i, e in parts if e)
+        return None
+
+    def reaches_nodes(self, ty: dict) -> bool:
+        """Whether a value of the type can hold a node of a sum in lists (an
+        inline, say), what a filter's error can be on: not an Attr."""
+        ty = self.resolve(ty)
+        if "ref" in ty:
+            return ty["ref"] in self.located
+        inner = [ty[k] for k in ("list", "maybe") if k in ty]
+        inner += [ty["map"][1]] if "map" in ty else []
+        return any(self.reaches_nodes(x) for x in inner + ty.get("tuple", []))
+
+    def located_types(self) -> set[str]:
+        """The sums in lists, and the types that can hold one."""
+        located = set(self.lists)
+        while True:
+            more = {
+                t["name"]
+                for t in self.node_types()
+                for c in t.get("constructors", [t])
+                for f in c["fields"]
+                if self.mentions(f["type"], located)
+            }
+            if more <= located:
+                return located
+            located |= more
+
+    def mentions(self, ty: dict, names: set[str]) -> bool:
+        ty = self.resolve(ty)
+        if "ref" in ty:
+            return ty["ref"] in names
+        inner = [ty[k] for k in ("list", "maybe") if k in ty]
+        inner += [ty["map"][1]] if "map" in ty else []
+        return any(self.mentions(x, names) for x in inner + ty.get("tuple", []))
+
+    def locate_fields(self, fields: list[dict], place: str) -> str:
+        """The fields' ``locate_expr``s, each a step (its name); ``place``
+        is the value holding them (``y`` for a constructor's only field)."""
+        parts = []
+        for f in fields:
+            x = place if len(fields) == 1 and place == "y" else f"&{place}.{ident(f['name'])}"
+            e = self.locate_expr(f["type"], x)
+            if e:
+                parts.append(f'p.field("{f["name"]}", |p| {e})')
+        return " || ".join(parts)
+
+    def locator(self) -> None:
+        """``Locate`` (path.rs) for each type holding nodes: where a filter's
+        error is, found once the walk has stopped."""
+        o = self.out
+        self.located = self.located_types()
+        for t in self.node_types():
+            name = t["name"]
+            if name not in self.located:
+                continue
+            if t["kind"] == "product":
+                body = self.locate_fields(t["fields"], "self")
+            else:
+                arms = []
+                for c in t["constructors"]:
+                    e = self.locate_fields(c["fields"], "y")
+                    if e:
+                        arms.append(f"            {name}::{c['name']}(y) => {e},\n")
+                body = (
+                    f"match self {{\n{''.join(arms)}            _ => false,\n        }}"
+                    if arms
+                    else ""
+                )
+            if not body:
+                continue
+            o.append(
+                f"impl crate::path::Locate for {name} {{\n"
+                f"    fn locate(&self, p: &mut crate::path::Path) -> bool {{\n"
+                f"        {body}\n    }}\n}}\n\n"
+            )
 
 
 HEADER = """\

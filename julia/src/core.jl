@@ -422,6 +422,30 @@ _own(::Type{Tuple{String, String}}, p::Pair) = (String(p.first), String(p.second
 _own(::Type{Vector{Tuple{String, String}}}, d::AbstractDict) =
     sort!(Tuple{String, String}[(String(k), String(v)) for (k, v) in d])
 
+# An Attr by key is its attributes, as pandoc's Lua `el.attributes[key]`:
+# the first pair with the key is the one read, set and removed.
+_attribute(a::Attr, key::AbstractString) = findfirst(p -> p[1] == key, a.attributes)
+function Base.getindex(a::Attr, key::AbstractString)
+    i = _attribute(a, key)
+    i === nothing && throw(KeyError(key))
+    a.attributes[i][2]
+end
+Base.get(a::Attr, key::AbstractString, default) = (i = _attribute(a, key); i === nothing ? default : a.attributes[i][2])
+Base.haskey(a::Attr, key::AbstractString) = _attribute(a, key) !== nothing
+function Base.setindex!(a::Attr, value::AbstractString, key::AbstractString)
+    i = _attribute(a, key)
+    pair = (String(key), String(value))
+    i === nothing ? push!(a.attributes, pair) : (a.attributes[i] = pair)
+    a
+end
+Base.pop!(a::Attr, key::AbstractString, default) = (i = _attribute(a, key); i === nothing ? default : popat!(a.attributes, i)[2])
+function Base.pop!(a::Attr, key::AbstractString)
+    i = _attribute(a, key)
+    i === nothing && throw(KeyError(key))
+    popat!(a.attributes, i)[2]
+end
+Base.delete!(a::Attr, key::AbstractString) = (i = _attribute(a, key); i === nothing || deleteat!(a.attributes, i); a)
+
 # A constructor in Lua's order (`Cite(content, citations)`) is shown so.
 function _show_call(io::IO, x, positional::Tuple, keywords::Tuple)
     print(io, nameof(typeof(x)), '(')

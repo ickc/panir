@@ -12,10 +12,15 @@
 import { Conversion } from "./conversion.ts";
 import { applyFilter } from "./walk.ts";
 import type { AnyFilter, Filter, FilterFunctions, Traverse } from "./walk.ts";
+import type { Pandoc } from "./generated.ts";
 import { parse, serialize } from "./index.ts";
 
-/** Read a document from stdin, apply the filter (or filters), write it to stdout. */
-export async function runFilter<T extends Traverse = "typewise">(filter: FilterFunctions<T> & { traverse?: T }): Promise<void>;
+/**
+ * Read a document from stdin, apply the filter (or filters), write it to
+ * stdout. A filter written in place gets a context whose `doc` is a
+ * `Pandoc`, not `undefined`: this runs on a document.
+ */
+export async function runFilter<T extends Traverse = "typewise">(filter: FilterFunctions<T, Pandoc> & { traverse?: T }): Promise<void>;
 export async function runFilter(filters: readonly AnyFilter[]): Promise<void>;
 export async function runFilter(filters: readonly Filter[]): Promise<void>;
 export async function runFilter(filter: object | readonly object[]): Promise<void> {

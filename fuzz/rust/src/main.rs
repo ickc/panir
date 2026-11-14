@@ -369,7 +369,7 @@ fn run(spec_line: &str, doc_line: &str) -> Result<String, String> {
                 log: &mut log,
                 order,
             };
-            apply(&mut doc, &mut f, None);
+            apply(&mut doc, &mut f, None).map_err(|e| e.to_string())?;
         }
         if spec.log {
             doc.blocks.push(Block::Para(vec![str_(&log.join(" "))]));

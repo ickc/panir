@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 import {
   applyFilter, ASTTypeError, Emph, Header, Para, parse, serialize, Str,
 } from "../src/index.ts";
-import type { Block, Filter, Inline, Pandoc } from "../src/index.ts";
+import type { Block, Filter, Inline, MetaValue, Pandoc } from "../src/index.ts";
+import type { runFilter } from "../src/node.ts";
 
 const doc = (): Pandoc => parse(serialize({
   "pandoc-api-version": [1, 23, 1], meta: {}, blocks: [Header(1, [Str("a")]), Para([Emph([Str("b")])])],
@@ -70,4 +71,20 @@ test("filter functions are typed by node", () => {
     Blocks: (xs: Block[]) => xs.slice(0, 1),
   };
   assert.throws(() => serialize(applyFilter(doc(), k)), ASTTypeError);
+});
+
+test("runFilter's functions have a document; a fragment's may not", () => {
+  // (only type-checked: runFilter reads stdin)
+  const checked = (run: typeof runFilter) => [
+    run({ Str: (_s, ctx) => { const title: MetaValue | undefined = ctx.doc.meta.title; return title && Str("t"); } }),
+    run({ traverse: "topdown", Para: (_p, ctx) => { ctx.skipChildren(); ctx.doc.blocks.length; } }),
+    // a filter made elsewhere still runs
+    run(anyOrder),
+  ];
+  assert.equal(typeof checked, "function");
+  const anyOrder: Filter = {
+    // @ts-expect-error: the filter may be applied to a fragment
+    Str: (_s, ctx) => { ctx.doc.meta; },
+  };
+  assert.throws(() => applyFilter(Para([Str("x")]), anyOrder), TypeError);
 });

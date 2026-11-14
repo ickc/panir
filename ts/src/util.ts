@@ -4,7 +4,7 @@ import {
   ASTTypeError, deep, describe, isNodeOf, ownerOf, productOf, resolve, setKey, tables, textInlines, toMetaValue,
 } from "./core.ts";
 import type { TypeExpr } from "./core.ts";
-import type { Block, Inline, Meta, MetaValue, MetaValueInit } from "./generated.ts";
+import type { Attr, Block, Inline, Meta, MetaValue, MetaValueInit } from "./generated.ts";
 
 /**
  * A string's words and spaces, as pandoc's Lua `pandoc.Inlines`: `Str` for
@@ -20,6 +20,40 @@ export function inlines(text: string): Inline[] {
  * words and spaces. (To parse markup, use libpandoc.) */
 export function blocks(text: string): Block[] {
   return [{ t: "Plain", content: inlines(text) }];
+}
+
+/**
+ * An attribute's value by key, as pandoc's Lua `el.attributes[key]`: that
+ * of the first pair with the key (a key may be in several), else
+ * `undefined`.
+ */
+export function getAttribute(attr: Attr, key: string): string | undefined {
+  return attr.attributes.find(([k]) => k === key)?.[1];
+}
+
+/** Whether some pair has the key. */
+export function hasAttribute(attr: Attr, key: string): boolean {
+  return attr.attributes.some(([k]) => k === key);
+}
+
+/**
+ * Set an attribute by key, as pandoc's Lua `el.attributes[key] = value`: the
+ * first pair with the key gets the value, in its place; else a pair is
+ * added at the end.
+ */
+export function setAttribute(attr: Attr, key: string, value: string): void {
+  const pair = attr.attributes.find(([k]) => k === key);
+  if (pair) pair[1] = value;
+  else attr.attributes.push([key, value]);
+}
+
+/**
+ * Remove an attribute by key, as pandoc's Lua `el.attributes[key] = nil`:
+ * the first pair with the key. Returns its value, else `undefined`.
+ */
+export function removeAttribute(attr: Attr, key: string): string | undefined {
+  const i = attr.attributes.findIndex(([k]) => k === key);
+  return i < 0 ? undefined : attr.attributes.splice(i, 1)[0][1];
 }
 
 const QUOTES: Record<string, [string, string]> = {
