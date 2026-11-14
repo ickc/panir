@@ -169,13 +169,33 @@ function scenario_fails()
     Filters([(f, :typewise)])
 end
 
+function scenario_replaced()
+    seen = String[]
+    f(x::Union{Emph, Div}) = (push!(seen, string(nameof(typeof(x)))); x.content)
+    function f(s::Strong)
+        text = stringify(s)
+        push!(seen, "Strong:$text")
+        text == "other" && return Underline(Strong(Str("in")), Emph(Str("e")))
+        text == "two" && return Inline[Strong(Str("s")), Underline(Strong(Str("u")))]
+        nothing
+    end
+    f(::Underline) = (push!(seen, "Underline"); nothing)
+    f(s::Str) = (push!(seen, "Str:$(s.text)"); nothing)
+    function f(xs::Vector{Inline})
+        !isempty(xs) && xs[1] isa Str && xs[1].text == "list" || return nothing
+        push!(seen, "Inlines")
+        Inline[Emph(Str("new")), Strong(Emph(Str("g")))]
+    end
+    Filters([(f, :topdown), (listing(seen), :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
     "bottomup" => scenario_bottomup, "skip" => scenario_skip, "toplists" => scenario_toplists,
     "once" => scenario_once, "lists" => scenario_lists, "meta" => scenario_meta,
     "newdoc" => scenario_newdoc, "twice" => scenario_twice, "metacount" => scenario_metacount,
-    "attributes" => scenario_attributes, "fails" => scenario_fails,
+    "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
 )
 
 @testset "filters as pandoc's Lua" begin

@@ -56,7 +56,9 @@ pub enum Order {
     /// As Lua's `traverse = "topdown"`, and pandocfilters: the document, the
     /// metadata, then from the root down, a list before its elements and a
     /// node before its children, which are walked in its replacement too,
-    /// unless the function calls [`Ctx::skip_children`].
+    /// unless the function calls [`Ctx::skip_children`]. What a function
+    /// returns is not given to a function again (nor its elements); their
+    /// children are walked.
     Topdown,
     /// As panflute: one walk, each node after its children, a list after
     /// its elements, the metadata after what is in it, the document last.

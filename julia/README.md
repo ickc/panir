@@ -151,7 +151,11 @@ frameworks use:
   metadata, then from the root down, a list before its elements and a
   node before its children, which are walked in the node's replacement
   too, unless the method calls `skip_children!(ctx)` (Lua's `return el,
-  false`).
+  false`). What a method returns is not given to a method again, nor, if
+  a vector, are its elements; their children are walked (as in pandoc's
+  Lua and pandocfilters: an emphasis replaced by its content keeps an
+  emphasis that was directly in it). What a list method returns is the
+  list whose elements are walked.
 - `:bottomup` (panflute's): one walk, each node after its children, a list
   after its elements, the metadata after what is in it, `Pandoc` last.
 

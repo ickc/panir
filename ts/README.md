@@ -244,9 +244,13 @@ name.
 - `"topdown"` (Lua's other order, and pandocfilters'): `Pandoc`, `Meta`,
   then from the root down, a list before its elements and a node before
   its children, which are walked in the node's replacement too, unless the
-  function calls `ctx.skipChildren()` (Lua's `return el, false`). The order
-  in which elements start, as a reader meets them: for counters and
-  nesting.
+  function calls `ctx.skipChildren()` (Lua's `return el, false`). The
+  order in which elements start, as a reader meets them: for counters and
+  nesting. What a function returns is not given to a function again, nor,
+  if a list, are its elements; their children are walked (as in pandoc's
+  Lua and pandocfilters: an emphasis replaced by its content keeps an
+  emphasis that was directly in it). What a list function returns is the
+  list whose elements are walked.
 - `"bottomup"` (panflute's): one walk, each node after its children, a list
   after its elements, `Meta` after the metadata, `Pandoc` last. The
   fastest.

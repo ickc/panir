@@ -41,11 +41,15 @@ a filter can choose it when it runs, and be a `dyn Filter`):
 - `Typewise` (as pandoc's Lua filters by default, and Haskell's `walk`): one
   walk per kind, each bottom-up: every inline, then every list of inlines,
   then every block, then every list of blocks, then `meta`, then `pandoc`.
-- `Topdown` (Lua's other order, and pandocfilters'): `pandoc`, `meta`, then
-  a node before its children, which are walked in its replacement too,
-  unless the method calls `ctx.skip_children()` (Lua's `return el,
+- `Topdown` (Lua's other order, and pandocfilters'): `pandoc`, `meta`,
+  then a node before its children, which are walked in its replacement
+  too, unless the method calls `ctx.skip_children()` (Lua's `return el,
   false`; in the other orders the children came first, and it does
-  nothing).
+  nothing). What a function returns is not given to a function again, nor,
+  if a list, are its elements; their children are walked (as in pandoc's
+  Lua and pandocfilters: an emphasis replaced by its content keeps an
+  emphasis that was directly in it). What a list function returns is the
+  list whose elements are walked.
 - `Bottomup` (panflute's): one walk, each node after its children.
 
 ```rust

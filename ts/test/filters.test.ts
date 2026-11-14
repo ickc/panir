@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
   applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, MetaBool, MetaInlines, MetaList,
-  MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, Strong, toJSON,
+  MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, stringify, Strong, toJSON, Underline,
 } from "../src/index.ts";
 import type { AnyFilter, Block, Filter, Pandoc, WalkedContext } from "../src/index.ts";
 
@@ -179,6 +179,30 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
         p.content.push(Str("!"));
       },
     }];
+  },
+
+  replaced: () => {
+    const seen: string[] = [];
+    return [{
+      traverse: "topdown",
+      Emph: (e) => { seen.push("Emph"); return e.content; },
+      Div: (d) => { seen.push("Div"); return d.content; },
+      Strong: (s) => {
+        const text = stringify(s);
+        seen.push(`Strong:${text}`);
+        if (text === "other") return Underline([Strong([Str("in")]), Emph([Str("e")])]);
+        if (text === "two") return [Strong([Str("s")]), Underline([Strong([Str("u")])])];
+        return undefined;
+      },
+      Underline: () => { seen.push("Underline"); },
+      Str: (s) => { seen.push(`Str:${s.text}`); },
+      Inlines: (xs) => {
+        const first = xs[0];
+        if (first?.t !== "Str" || first.text !== "list") return undefined;
+        seen.push("Inlines");
+        return [Emph([Str("new")]), Strong([Emph([Str("g")])])];
+      },
+    }, listing(seen)];
   },
 
   attributes: () => [{

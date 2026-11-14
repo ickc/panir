@@ -35,6 +35,7 @@ from panir import (
     Str,
     Strong,
     Table,
+    Underline,
 )
 
 FORMAT = "json"
@@ -374,10 +375,47 @@ def fails() -> list[Filter]:
     return [f]
 
 
+def replaced() -> list[Filter]:
+    seen: list[str] = []
+    f = Filter(traverse="topdown")
+
+    @f.on(Emph, Div)
+    def splice(x):
+        seen.append(type(x).__name__)
+        return x.content
+
+    @f.on(Strong)
+    def strong(s):
+        text = A.stringify(s)
+        seen.append(f"Strong:{text}")
+        if text == "other":
+            return Underline(Strong(Str("in")), Emph(Str("e")))
+        if text == "two":
+            return [Strong(Str("s")), Underline(Strong(Str("u")))]
+        return None
+
+    @f.on(Underline)
+    def underline(u):
+        seen.append("Underline")
+
+    @f.on(Str)
+    def str_(s):
+        seen.append(f"Str:{s.text}")
+
+    @f.on_inlines
+    def inlines(xs):
+        if xs and isinstance(xs[0], Str) and xs[0].text == "list":
+            seen.append("Inlines")
+            return [Emph(Str("new")), Strong(Emph(Str("g")))]
+        return None
+
+    return [f, listing(seen)]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
-    + (once, lists, meta, newdoc, twice, metacount, attributes, fails)
+    + (once, lists, meta, newdoc, twice, metacount, attributes, fails, replaced)
 }
 
 

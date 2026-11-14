@@ -436,6 +436,64 @@ impl Filter for Fails {
     }
 }
 
+/// Top-down: what a function returns is not given to a function again.
+#[derive(Default)]
+struct Replaced {
+    seen: Vec<String>,
+}
+
+impl Filter for Replaced {
+    fn order(&self) -> Order {
+        Order::Topdown
+    }
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        match x {
+            Inline::Emph(content) => {
+                self.seen.push("Emph".into());
+                Some(take(content))
+            }
+            Inline::Strong(_) => {
+                let text = panir::stringify(&*x);
+                self.seen.push(format!("Strong:{text}"));
+                match text.as_str() {
+                    "other" => Some(vec![Inline::Underline(vec![
+                        Inline::Strong(vec![str_("in")]),
+                        Inline::Emph(vec![str_("e")]),
+                    ])]),
+                    "two" => Some(vec![
+                        Inline::Strong(vec![str_("s")]),
+                        Inline::Underline(vec![Inline::Strong(vec![str_("u")])]),
+                    ]),
+                    _ => None,
+                }
+            }
+            Inline::Underline(_) => {
+                self.seen.push("Underline".into());
+                None
+            }
+            Inline::Str(s) => {
+                self.seen.push(format!("Str:{s}"));
+                None
+            }
+            _ => None,
+        }
+    }
+    fn block(&mut self, x: &mut Block, _: &mut Ctx) -> Option<Vec<Block>> {
+        let Block::Div(d) = x else { return None };
+        self.seen.push("Div".into());
+        Some(take(&mut d.content))
+    }
+    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) {
+        if matches!(xs.first(), Some(Inline::Str(s)) if s == "list") {
+            self.seen.push("Inlines".into());
+            *xs = vec![
+                Inline::Emph(vec![str_("new")]),
+                Inline::Strong(vec![Inline::Emph(vec![str_("g")])]),
+            ];
+        }
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -463,6 +521,13 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
             return Some(
                 apply(doc, &mut AddKey, FORMAT).and_then(|()| apply(doc, &mut Count(0), FORMAT)),
             );
+        }
+        "replaced" => {
+            let mut f = Replaced::default();
+            let done = apply(doc, &mut f, FORMAT);
+            doc.blocks
+                .push(Block::Para(panir::inlines(&f.seen.join(" "))));
+            return Some(done);
         }
         "typewise" | "topdown" | "bottomup" => {
             let order = match name {
