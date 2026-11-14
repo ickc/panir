@@ -100,7 +100,9 @@ jobs:
           cache: true
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      # with pixi's pandoc on PATH: the tests that ask pandoc fail without
+      # one in CI, rather than skip
+      - run: pixi run --manifest-path ../pixi.toml cargo test
       - name: The example runs as a pandoc filter
         shell: bash
         run: |

@@ -3,8 +3,9 @@
 //! The types (`Pandoc`, `Block`, `Inline`, ...) encode to and from pandoc's
 //! JSON with serde: `{"t": "Str", "c": "x"}` is `Inline::Str("x")`.
 //! [`Filter`] and [`apply`] run filters as pandoc runs Lua filters, in one of
-//! three orders; `VisitMut` walks a document any other way. `filter` runs a
-//! function as a pandoc JSON filter (`pandoc --filter`).
+//! three orders, on a document or a fragment of one; [`VisitMut`] and
+//! [`Visit`] walk a document any other way. [`filter`] runs a function as a
+//! pandoc JSON filter (`pandoc --filter`); [`stringify()`] is pandoc's.
 //!
 //! ```
 //! use panir::{Block, Inline, Pandoc};
@@ -19,6 +20,7 @@
 
 mod filter;
 mod generated;
+mod stringify;
 mod text;
 
 // the README's examples compile and run as the docs' do
@@ -28,6 +30,7 @@ struct Readme;
 
 pub use filter::{apply, apply_with, Conversion, Ctx, Filter, Order, Walkable};
 pub use generated::*;
+pub use stringify::{stringify, Stringify};
 pub use text::Text;
 
 use std::fmt;

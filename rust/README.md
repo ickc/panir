@@ -125,6 +125,12 @@ They are checked against pandoc's Lua filters, with the scenarios in
 - Strings convert as in pandoc's Lua: `inlines("hello world")` is its words
   and spaces, `blocks("...")` `Plain` text, and `"x".into()` is a `Str`
   where one inline goes, `Plain` text where one block goes.
+- `stringify(&x)` is pandoc's Lua `pandoc.utils.stringify`, exactly (both
+  corpora and metadata of every kind are checked against pandoc): the text
+  of a document, its `meta`, a block, an inline, a metadata value, a
+  citation, a table's parts, or a list of them. A map's values come in the
+  order of their keys; a whole document is the text of its inlines only
+  (in its metadata too: not its `MetaString` and `MetaBool` values).
 - `from_str`/`to_string` (and `from_slice`, `from_reader`, `to_writer`)
   for documents; `from_str` checks the `pandoc-api-version` and reports
   the path of JSON it can't read. It
