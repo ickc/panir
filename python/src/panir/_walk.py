@@ -22,7 +22,6 @@ from ._core import (
     _Spec,
     _sum_of,
     _TupleSpec,
-    add_note,
     fn_name,
     format_path,
     too_deep,
@@ -250,7 +249,7 @@ class _Walker:
         """Note on an error in what ``fn`` returned which function, and where."""
         if not getattr(e, "_panir_noted", False):
             where = self.context().where
-            add_note(e, f"returned by filter function {fn_name(fn)}, for the {what} at {where}")
+            e.add_note(f"returned by filter function {fn_name(fn)}, for the {what} at {where}")
             e._panir_noted = True  # type: ignore[attr-defined]
 
     def call(self, fn: Callable[..., Any], wants_ctx: bool, x: Any, what: str) -> tuple[Any, bool]:
@@ -265,7 +264,7 @@ class _Walker:
         except Exception as e:
             if not getattr(e, "_panir_noted", False):
                 where = (ctx or self.context()).where
-                add_note(e, f"in filter function {fn_name(fn)}, on the {what} at {where}")
+                e.add_note(f"in filter function {fn_name(fn)}, on the {what} at {where}")
                 e._panir_noted = True  # type: ignore[attr-defined]
             raise
 

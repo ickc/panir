@@ -24,7 +24,7 @@ SAMPLE = textwrap.dedent("""
 def test_pyright_sees_field_and_argument_types(tmp_path):
     (tmp_path / "sample.py").write_text(SAMPLE)
     (tmp_path / "pyrightconfig.json").write_text(
-        json.dumps({"extraPaths": [str(SRC)], "pythonVersion": "3.10"})
+        json.dumps({"extraPaths": [str(SRC)], "pythonVersion": "3.11"})
     )
     out = subprocess.run(
         [
@@ -127,7 +127,7 @@ def test_pyright_checks_filter_functions(tmp_path):
     same family (Filter.on's generated signatures)."""
     (tmp_path / "filters.py").write_text(FILTERS)
     (tmp_path / "pyrightconfig.json").write_text(
-        json.dumps({"extraPaths": [str(SRC)], "pythonVersion": "3.10"})
+        json.dumps({"extraPaths": [str(SRC)], "pythonVersion": "3.11"})
     )
     out = subprocess.run(
         [

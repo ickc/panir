@@ -7,7 +7,7 @@ name = "panir"
 dynamic = ["version"]  # panir.__version__ (scripts/version.py sets it)
 description = "pandoc's document AST, generated from pandoc-types: checked types, JSON, filters"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 authors = [{ name = "Kolen Cheung", email = "christian.kolen@gmail.com" }]
