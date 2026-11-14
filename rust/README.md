@@ -79,7 +79,7 @@ the node, its parent included. A walk that needs them is a `VisitMut`
 that keeps its own (a stack of what it is in).
 
 They are checked against pandoc's Lua filters, with the scenarios in
-[`corpus/filters/`](../corpus/filters/). For other nodes (`Cell`, `Attr`,
+[`corpus/filters/`](https://github.com/ickc/panir/tree/main/corpus/filters). For other nodes (`Cell`, `Attr`,
 ...) or any other walk, `VisitMut`.
 
 ## Types and `VisitMut`
@@ -158,4 +158,4 @@ pandoc's order. (serde's derived adjacently tagged enums lose the path
 inside `"c"`, so the sum types' `Deserialize` is generated: it reads
 `"t"`, then decodes `"c"` in place.)
 
-Status: a prototype.
+Rust 1.85 or newer (CI runs the tests on 1.85). Status: a prototype.
