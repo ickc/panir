@@ -27,7 +27,9 @@ and order, as in pandoc's Lua API: `Header(level, *content, attr=...)`.
 Where Lua's constructors take every argument in an order of their own, so
 do these: `Cite(content, citations)`, `Citation(id, mode, prefix, suffix,
 note_num, hash)`, `Table(caption, col_specs, head, bodies, foot, attr=)`,
-`TableBody(body, head, row_head_columns, attr=)`.
+`TableBody(body, head, row_head_columns, attr=)`, `Cell(content, alignment,
+row_span, col_span, attr=)` (its content one argument, as in Lua:
+`Cell([Para("a"), Para("b")], "AlignRight")`).
 
 ```python
 >>> from panir import *

@@ -29,13 +29,21 @@ PRIM = {"string": "str", "int": "int", "double": "float", "bool": "bool"}
 # pandoc's Lua constructors whose positional arguments are in an order of
 # their own, not pandoc-types' (as the other generators' LUA_ORDER):
 # `pandoc.Cite(content, citations)`, `pandoc.TableBody(body, head,
-# row_head_columns, attr)`, ... A flattened field (attr) stays keyword-only.
+# row_head_columns, attr)`, ... A flattened field (attr) stays keyword-only;
+# a variadic field is one argument, as in Lua: `pandoc.Cell(blocks, align,
+# rowspan, colspan, attr)`.
 LUA_ORDER = {
     "Cite": ["content", "citations"],
     "Table": ["caption", "col_specs", "head", "bodies", "foot"],
     "TableBody": ["body", "head", "row_head_columns"],
     "Citation": ["id", "mode", "prefix", "suffix", "note_num", "hash"],
+    "Cell": ["content", "alignment", "row_span", "col_span"],
 }
+
+
+def variadic(c: dict) -> str | None:
+    """The field the constructor takes as *args: none in Lua's order."""
+    return None if c["name"] in LUA_ORDER else c.get("variadic")
 
 
 def py_literal(value) -> str:
@@ -320,7 +328,7 @@ class Gen:
         # in the constructor's order: its positional parameters, the
         # variadic one, then the others in field order
         match_args = [*positional]
-        if c.get("variadic"):
+        if variadic(c):
             match_args.append(self.pyname(c["variadic"]))
         match_args += [n for n in fnames if n not in match_args]
         lines.append(f"    __match_args__ = {tuple(match_args)!r}")
@@ -332,7 +340,7 @@ class Gen:
         keys = {self.pyname(f["name"]): f["key"] for f in fields if "key" in f}
         if keys:
             lines.append(f"    _keys = {keys!r}")
-        if c.get("variadic"):
+        if variadic(c):
             lines.append(f"    _variadic = {self.pyname(c['variadic'])!r}")
         flatten = tuple(self.pyname(f["name"]) for f in fields if f.get("flatten"))
         if flatten:
@@ -377,14 +385,15 @@ class Gen:
         """``__init__`` and ``_positional``, in pandoc-types' field order, or
         pandoc's Lua's (``LUA_ORDER``).
 
-        Fields are positional, then the variadic field (if any) as *args,
+        Fields are positional, then the variadic field (if any, and not in
+        Lua's order) as *args,
         then keyword-only: a field with a default before *args, and any field
         after it, and a required field after one with a default. Flattened
         products are keyword-only, whole or by their fields' names.
         E.g. ``Header(level, *content, attr=, identifier=, ...)``.
         """
         fields = c["fields"]
-        variadic = c.get("variadic")
+        star_field = variadic(c)
         values = list(fnames)  # (the fields' values in field order)
         params_order = list(zip(fnames, fields))
         if c["name"] in LUA_ORDER:
@@ -400,7 +409,7 @@ class Gen:
         after_default = False
         for n, f in params_order:
             ptype = self.set_type(f["type"])
-            if f["name"] == variadic:
+            if f["name"] == star_field:
                 star = f"*{n}: {self.in_one(self.resolve(f['type'])['list'])}"
                 positional = False
                 continue
@@ -433,7 +442,7 @@ class Gen:
                 decl = f"{n}: {ptype}"
             # before *args, only required fields; and Python allows no
             # required parameter after one with a default
-            if has_default and variadic or not has_default and after_default:
+            if has_default and star_field or not has_default and after_default:
                 positional = False
             if positional:
                 params.append(decl)

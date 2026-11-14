@@ -58,8 +58,16 @@ end
           ([Plain("c")], 1, 1, [body], "t")
     @test Table(; caption = Caption("c"), col_specs = [ColSpec()], head = TableHead(Row(Cell("h"))),
                 bodies = [body], identifier = "t") == t
+    # pandoc.Cell(blocks, align, rowspan, colspan, attr): the content one argument
+    cell = Cell([Para("p"), Para("q")], AlignRight, 2, 3; identifier = "c")
+    @test (cell.content, cell.alignment, cell.row_span, cell.col_span, cell.attr.identifier) ==
+          ([Para("p"), Para("q")], AlignRight, 2, 3, "c")
+    @test Cell("a b") == Cell([Plain(words("a", "b"))]) && Cell(Str("s")) == Cell([Plain(Str("s"))])
+    @test Cell(; content = "a", col_span = 2) == Cell("a", AlignDefault, 1, 2)
+    @test Cell() == Cell(Block[]) && Cell().row_span == 1
+    @test_throws MethodError Cell(Para("a"), Para("b"))  # (a Para is no alignment)
     # shown in that order, read back
-    for x in (cite, c, body, t)
+    for x in (cite, c, body, t, cell)
         @test shown(x) == x
     end
 end

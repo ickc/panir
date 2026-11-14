@@ -36,7 +36,7 @@ Constructors:
 
 - the content as arguments, the rest by keyword: `Header(1, Str("Hi");
   identifier = "hi")`, `Link("pandoc"; url = "https://pandoc.org")`,
-  `Cell("a"; col_span = 2)`. Attributes go as `identifier`, `classes`,
+  `Div("a"; classes = ["note"])`. Attributes go as `identifier`, `classes`,
   `attributes`, or `attr` whole (as in every constructor that has them,
   and `Attr` itself); a link's target as `url` and `title`, or `target`.
   The content may also be one vector: `Div(blocks; identifier = "d")`
@@ -48,8 +48,11 @@ Constructors:
   `Cite(content, citations)`, `Citation(id, mode, prefix, suffix,
   note_num, hash)` (the last four may be left out), `Table(caption,
   col_specs, head, bodies, foot; attr)`, `TableBody(body, head,
-  row_head_columns; attr)` (all but `body` may be left out). These four
-  also take every field by keyword: `Table(; bodies, identifier = "t")`.
+  row_head_columns; attr)` (all but `body` may be left out), `Cell(content,
+  alignment, row_span, col_span; attr)` (all but `content` may be left
+  out; the content one argument, as in Lua: `Cell([Para("a"), Para("b")],
+  AlignRight)`). These five also take every field by keyword: `Table(;
+  bodies, identifier = "t")`, `Cell(; content = "a", col_span = 2)`.
 - attributes are (key, value) tuples, in order; pairs are taken too
   (`attributes = ["lang" => "en"]`), and a `Dict`, in the order of its
   keys (a Lua table of them has no order either).

@@ -2456,10 +2456,9 @@ class Cell(Node):
             "col_span",
             "content",
         )
-    __match_args__ = ("content", "attr", "alignment", "row_span", "col_span")
+    __match_args__ = ("content", "alignment", "row_span", "col_span", "attr")
     _kind = "product"
     _encoding = "array"
-    _variadic = "content"
     _flatten = ("attr",)
     _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {
@@ -2469,6 +2468,7 @@ class Cell(Node):
         "col_span": 1,
         "content": [],
     }
+    _positional = ("content", "alignment", "row_span", "col_span")
 
     if TYPE_CHECKING:
         attr: _Field[
@@ -2495,19 +2495,23 @@ class Cell(Node):
 
     def __init__(
         self,
-        *content: Block | Inline | str | Sequence[Inline | str],
-        attr: Attr
-        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
-        | None = None,
-        identifier: str = "",
-        classes: Iterable[str] = (),
-        attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
+        content: Iterable[Block | Inline | str | Sequence[Inline | str]]
+        | Block
+        | Inline
+        | str = (),
         alignment: Alignment
         | Literal[
             "AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"
         ] = Alignment.AlignDefault,
         row_span: int = 1,
         col_span: int = 1,
+        *,
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
+        identifier: str = "",
+        classes: Iterable[str] = (),
+        attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
         attr = _flat(Attr, "Cell", "attr", attr, (identifier, classes, attributes))
         _init(self, (attr, alignment, row_span, col_span, content))

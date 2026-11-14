@@ -70,13 +70,15 @@ KEYWORDS = {
 
 # pandoc's Lua constructors that take every field positionally (but a
 # flattened one), in an order of their own, and how many of them Lua
-# requires: `pandoc.Cite(content, citations)`. (As the TypeScript
-# generator's LUA_ORDER.)
+# requires: `pandoc.Cite(content, citations)`. A variadic field is then one
+# argument, as in Lua: `pandoc.Cell(blocks, align, rowspan, colspan, attr)`.
+# (As the Python generator's LUA_ORDER.)
 LUA_ORDER = {
     "Cite": (["content", "citations"], 2),
     "Table": (["caption", "col_specs", "head", "bodies", "foot"], 5),
     "TableBody": (["body", "head", "row_head_columns"], 1),
     "Citation": (["id", "mode", "prefix", "suffix", "note_num", "hash"], 2),
+    "Cell": (["content", "alignment", "row_span", "col_span"], 1),
 }
 
 
@@ -340,7 +342,8 @@ class Gen:
 
     def convenience(self, c: dict) -> str | None:
         name, fields = c["name"], c["fields"]
-        variadic = c.get("variadic")
+        # (in Lua's order the variadic field is one argument, or a keyword here)
+        variadic = None if name in LUA_ORDER else c.get("variadic")
         positional, star, kws, args, flats = [], None, [], [], []
         vector = None  # the variadic field given as one vector, when that is unambiguous
         for f in fields:

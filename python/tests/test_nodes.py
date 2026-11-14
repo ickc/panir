@@ -156,7 +156,7 @@ def test_pattern_matching():
             assert url == "u"
         case _:
             pytest.fail("no match")
-    assert Cell.__match_args__ == ("content", "attr", "alignment", "row_span", "col_span")
+    assert Cell.__match_args__ == ("content", "alignment", "row_span", "col_span", "attr")
 
 
 def test_isinstance_by_type():
