@@ -284,20 +284,19 @@ what a filter function may.
 
 ## Deep documents
 
-Reading, writing, walking, copying, comparing and `stringify` work on
-documents nested at least 256 levels deep (blocks and inlines in each
-other; the Rust crate's `MAX_DEPTH`) at Node.js's default stack, on every
-version from 16.11: 300 nested divs is a 9 kB web page. Measured, at the
-least over Node.js 16.11 to 24 (nested divs / tables in tables' cells):
+Reading, writing, walking, copying, comparing and `stringify` recurse, a
+few calls for each level of the document, and work on documents nested
+at least 256 levels deep (blocks and inlines in each other; the Rust
+crate's `MAX_DEPTH`) at Node.js's default stack: 300 nested divs is a 9
+kB web page. How much deeper depends on the engine; measured, at the
+least over Node.js 16.11 to 24 (nested divs / tables in tables' cells),
+about:
 
 | | levels |
 |---|---|
-| `parse`, `fromJSON` | 1,870 / 650 |
-| `serialize` (where `JSON.stringify` stops) | 1,060 / 300 |
-| `toJSON`, `check` | 2,170 / 700 |
-| filters, `walk` | 2,060 / 620 |
-| `copy`, `equal` | 2,490 / 900 |
-| `stringify` (a loop) | any |
+| `parse`, `fromJSON` | 1,800 / 650 |
+| `serialize` (where `JSON.stringify` stops) | 1,000 / 300 |
+| `toJSON`, `check`, filters, `walk`, `copy`, `equal`, `stringify` | 1,600 / 400 |
 
 Beyond, reading is an `ASTDecodeError`, and anything else an
 `ASTDepthError` (an `ASTError` and a `RangeError`): never the engine's bare

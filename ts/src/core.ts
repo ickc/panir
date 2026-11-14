@@ -959,22 +959,45 @@ export function returnedNodes(type: string, r: unknown): unknown[] | undefined {
 
 // -- constructors ---------------------------------------------------------------
 
-function coerce(ty: TypeExpr, v: unknown, name: string, field: string): unknown {
-  v = convert(ty, v);
-  try {
-    checkArgument(ty, v);
-  } catch (e) {
+/**
+ * A constructor's argument for a field of type `ty`, converted and checked
+ * (`ASTTypeError` saying where): made once per field. A string, an
+ * integer or a boolean is only checked.
+ */
+function coercer(ty: TypeExpr, name: string, field: string): (v: unknown) => unknown {
+  const fail = (e: unknown): never => {
     if (!(e instanceof Bad)) throw e;
     const path = [field, ...e.path.reverse()];
     throw new ASTTypeError(formatPath([name, ...path]), e.expected, e.got, path);
+  };
+  const r = resolve(ty);
+  if ("prim" in r) {
+    const prim = r.prim;
+    return (v) => {
+      if (prim === "string" && typeof v === "string" && isWellFormed(v)) return v;
+      try {
+        encodePrim(prim, v);
+      } catch (e) {
+        fail(e);
+      }
+      return v;
+    };
   }
-  return v;
+  return (v) => {
+    v = convert(ty, v);
+    try {
+      checkArgument(ty, v);
+    } catch (e) {
+      fail(e);
+    }
+    return v;
+  };
 }
 
 /** A node's fields as its constructor fills them: `flat`, a product whose fields may be given as options. */
 interface Maker {
   tag: boolean;
-  fields: { f: Field; flat: { name: string; fields: Field[] } | undefined }[];
+  fields: { f: Field; flat: { name: string; fields: Field[] } | undefined; coerce: (v: unknown) => unknown }[];
   /** The names of its options. */
   known: Set<string>;
 }
@@ -988,11 +1011,12 @@ function maker(name: string): Maker {
   const known = new Set<string>();
   const fields = node.fields.map((f) => {
     known.add(f.name);
-    if (!f.flatten) return { f, flat: undefined };
+    const coerce = coercer(f.type, name, f.name);
+    if (!f.flatten) return { f, flat: undefined, coerce };
     const product = (f.type as { ref: string }).ref;
     const parts = tables().nodes.get(product)!.fields;
     for (const g of parts) known.add(g.name);
-    return { f, flat: { name: product, fields: parts } };
+    return { f, flat: { name: product, fields: parts }, coerce };
   });
   m = { tag: node.tag, fields, known };
   makers.set(name, m);
@@ -1003,9 +1027,11 @@ function maker(name: string): Maker {
 export function make<T>(name: string, given: Record<string, unknown>,
                         opts: Record<string, unknown> = {}): T {
   const m = maker(name);
-  if (!isObject(opts)) throw new ASTTypeError(name, "an object of options", describe(opts), []);
+  if (typeof opts !== "object" || opts === null || Array.isArray(opts)) {
+    throw new ASTTypeError(name, "an object of options", describe(opts), []);
+  }
   const out: Record<string, unknown> = m.tag ? { t: name } : {};
-  for (const { f, flat } of m.fields) {
+  for (const { f, flat, coerce } of m.fields) {
     let v = given[f.name];
     if (v === undefined) v = opts[f.name];
     if (flat) {
@@ -1027,7 +1053,7 @@ export function make<T>(name: string, given: Record<string, unknown>,
       if (!("default" in f)) throw new ASTTypeError(`${name}.${f.name}`, typeName(f.type), "undefined", [f.name]);
       v = decode(f.type, f.default); // a fresh value each time
     }
-    out[f.name] = coerce(f.type, v, name, f.name);
+    out[f.name] = coerce(v);
   }
   for (const k of Object.keys(opts)) {
     if (!m.known.has(k)) {

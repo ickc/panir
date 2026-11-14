@@ -66,76 +66,76 @@ export function stringify(value: unknown): string {
   const v = value as { t?: unknown; blocks?: unknown; meta?: unknown } | null;
   const doc = typeof v === "object" && v !== null && typeof v.t !== "string" && Array.isArray(v.blocks)
     && typeof v.meta === "object" && v.meta !== null;
-  const inlinesOnly = doc; // (pandoc's Shared.stringify, which stringify is of a document)
-  // a loop, not recursion: any depth. `todo` holds what is left, the next
-  // last; a string in it is text to add
-  const out: string[] = [];
-  const todo: unknown[] = [value];
-  while (todo.length) {
-    const x = todo.pop();
-    // (plain values are found only where given: a node's fields that hold
-    // no nodes, as an Attr's, are left out)
-    if (typeof x === "string" || typeof x === "number") {
-      out.push(String(x));
-      continue;
-    }
-    if (typeof x === "boolean") {
-      out.push(x ? "true" : "false");
-      continue;
-    }
-    if (Array.isArray(x)) {
-      later(todo, x);
-      continue;
-    }
-    if (typeof x !== "object" || x === null) continue;
-    const node = x as Record<string, unknown>;
-    const t = node.t;
-    if (typeof t !== "string") {
-      // metadata, or another map (as Lua takes a table: metadata); a
-      // product, or a document: its fields, in order
-      const product = isMetaMap(node) ? undefined : productOf(node);
-      later(todo, product ? fields(node, product) : sortedKeys(node).map((k) => node[k]));
-      continue;
-    }
-    switch (t) {
-      case "Str":
-      case "Code":
-      case "Math":
-        out.push(node.text as string);
-        continue;
-      case "Space":
-      case "SoftBreak":
-      case "LineBreak":
-        out.push(" ");
-        continue;
-      case "RawInline":
-        if (node.format === "html" && String(node.text).startsWith("<br")) out.push(" ");
-        continue;
-      case "Note":
-        continue;
-      case "Cite":
-        todo.push(node.content);
-        continue;
-      case "Quoted": {
-        const [l, r] = QUOTES[node.quoteType as string] ?? ["", ""];
-        later(todo, [l, node.content, r]);
-        continue;
-      }
-      case "MetaString":
-        if (!inlinesOnly) out.push(node.text as string);
-        continue;
-      case "MetaBool":
-        if (!inlinesOnly) out.push(node.value ? "true" : "false");
-        continue;
-    }
-    later(todo, fields(node, t));
-  }
-  return out.join("");
+  return deep("stringify", () => {
+    const out: string[] = [];
+    text(value, out, doc);
+    return out.join("");
+  });
 }
 
-/** Push `xs` to be done next, in their order. */
-function later(todo: unknown[], xs: unknown[]): void {
-  for (let i = xs.length - 1; i >= 0; i--) todo.push(xs[i]);
+/**
+ * `x`'s text into `out`; `inlinesOnly`: that of its inlines only (pandoc's
+ * `Shared.stringify`, which stringify is of a document). Plain values are
+ * found only where given: a node's fields that hold no nodes, as an Attr's,
+ * are left out.
+ */
+function text(x: unknown, out: string[], inlinesOnly: boolean): void {
+  if (typeof x === "string" || typeof x === "number") {
+    out.push(String(x));
+    return;
+  }
+  if (typeof x === "boolean") {
+    out.push(x ? "true" : "false");
+    return;
+  }
+  if (Array.isArray(x)) {
+    for (const y of x) text(y, out, inlinesOnly);
+    return;
+  }
+  if (typeof x !== "object" || x === null) return;
+  const node = x as Record<string, unknown>;
+  const t = node.t;
+  if (typeof t !== "string") {
+    // metadata, or another map (as Lua takes a table: metadata); a
+    // product, or a document: its fields, in order
+    const product = isMetaMap(node) ? undefined : productOf(node);
+    for (const y of product ? fields(node, product) : sortedKeys(node).map((k) => node[k])) text(y, out, inlinesOnly);
+    return;
+  }
+  switch (t) {
+    case "Str":
+    case "Code":
+    case "Math":
+      out.push(node.text as string);
+      return;
+    case "Space":
+    case "SoftBreak":
+    case "LineBreak":
+      out.push(" ");
+      return;
+    case "RawInline":
+      if (node.format === "html" && String(node.text).startsWith("<br")) out.push(" ");
+      return;
+    case "Note":
+      return;
+    case "Cite":
+      text(node.content, out, inlinesOnly);
+      return;
+    case "Quoted": {
+      const [l, r] = QUOTES[node.quoteType as string] ?? ["", ""];
+      out.push(l);
+      text(node.content, out, inlinesOnly);
+      out.push(r);
+      return;
+    }
+    case "MetaString":
+      if (!inlinesOnly) out.push(node.text as string);
+      return;
+    case "MetaBool":
+      if (!inlinesOnly) out.push(node.value ? "true" : "false");
+      return;
+  }
+  for (const y of fields(node, t)) text(y, out, inlinesOnly);
 }
 
 /**

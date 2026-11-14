@@ -11,7 +11,7 @@
  */
 
 import {
-  ASTDepthError, ASTTypeError, deep, describe, formatPath, isNodeOf, isStackOverflow, nameOf, productOf, returnedNodes,
+  ASTTypeError, deep, describe, formatPath, isNodeOf, isStackOverflow, nameOf, productOf, returnedNodes,
   resolve, tables, toMeta,
 } from "./core.ts";
 import type { Path, TypeExpr } from "./core.ts";
@@ -456,6 +456,8 @@ class Walker {
    */
   splicing: Splice[];
   #kids = kidsTable();
+  /** Each sum's constructors, by name. */
+  #sums = tables().constructors;
 
   /** Make every list being walked what it is now. */
   mend(): void {
@@ -500,15 +502,9 @@ class Walker {
       return r;
     } catch (e) {
       // an error from it says which function it was, and where
-      if (e instanceof Error && !noted.has(e)) {
-        const text = `in filter function ${nameOfFunction(fn)}, on the ${what} at ${this.#context().where}`;
-        if (isStackOverflow(e)) {
-          // (a document deeper than the stack: say so, and where it was)
-          const deeper = new ASTDepthError(`applyFilter, ${text}`);
-          noted.add(deeper);
-          throw deeper;
-        }
-        note(e, text);
+      // (not a stack overflowed: applyFilter makes that an ASTDepthError)
+      if (e instanceof Error && !noted.has(e) && !isStackOverflow(e)) {
+        note(e, `in filter function ${nameOfFunction(fn)}, on the ${what} at ${this.#context().where}`);
       }
       throw e;
     }
@@ -558,7 +554,13 @@ class Walker {
    * (none or several), converted as pandoc's Lua converts and checked.
    */
   #replacement(r: unknown, type: string, fn: Call, what: string): unknown {
-    if (!Array.isArray(r) && isNodeOf(type, r)) return r;
+    // (the usual: one node of a sum, by its tag; an array has none)
+    const tags = this.#sums.get(type);
+    if (tags !== undefined) {
+      if (typeof r === "object" && r !== null && tags.has((r as { t?: string }).t!)) return r;
+    } else if (!Array.isArray(r) && isNodeOf(type, r)) {
+      return r;
+    }
     const items = typeof (r as { then?: unknown })?.then === "function" ? undefined : returnedNodes(type, r);
     if (items === undefined) throw this.#wrong(fn, what, `${nameOf(type)}, a list of them, or nothing`, r);
     for (let k = 0; k < items.length; k++) {

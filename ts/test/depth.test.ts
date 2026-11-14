@@ -79,12 +79,13 @@ test("deeper than the stack: panir's errors, not the engine's", () => {
   assert.throws(() => serialize(doc), depth(/^toJSON$/));
   assert.throws(() => check(doc), depth(/^toJSON$/));
   for (const traverse of ORDERS) {
-    assert.throws(() => applyFilter(doc, { traverse, Str: () => undefined }), depth(/^applyFilter/), traverse);
+    assert.throws(() => applyFilter(doc, { traverse, Str: () => undefined }), depth(/^applyFilter$/), traverse);
   }
-  assert.throws(() => applyFilter(b, { Str: () => undefined }), depth(/^applyFilter/));
+  assert.throws(() => applyFilter(b, { Str: () => undefined }), depth(/^applyFilter$/));
+  // (a function with a context too: what is noted on errors isn't on these)
+  assert.throws(() => applyFilter(doc, { Str: (_s, ctx) => { void ctx; } }), depth(/^applyFilter$/));
   assert.throws(() => walk(doc, () => undefined), depth(/^walk$/));
   assert.throws(() => copy(doc), depth(/^copy$/));
   assert.throws(() => equal(doc, made()), depth(/^equal$/));
-  // (stringify is a loop)
-  assert.equal(stringify(doc), "x");
+  assert.throws(() => stringify(doc), depth(/^stringify$/));
 });
