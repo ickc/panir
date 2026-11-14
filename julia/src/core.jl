@@ -67,21 +67,31 @@ mutable struct _Bad <: Exception
 end
 _Bad(expected, got, got_text = nothing) = _Bad(expected, got, got_text, Any[])
 
-function _at(f, key)
+# `_decode(T, j)`, with `key` in the path of what is wrong in it. `j` is a
+# value in a list or an object, of any type: decided here among those
+# JSON.parse gives, each a call known ahead; any other as it runs, which
+# takes several times as long. (Not a closure: one that holds a value of any
+# type is a new type for each, made as it runs.)
+function _at(::Type{T}, @nospecialize(j), key) where {T}
     try
-        f()
+        j isa JSON.Object{String, Any} ? _decode(T, j) :
+        j isa Vector{Any} ? _decode(T, j) :
+        j isa String ? _decode(T, j) :
+        j isa Int64 ? _decode(T, j) :
+        _decode(T, j)
     catch e
         e isa _Bad && push!(e.path, key)
         rethrow()
     end
 end
 
-const _TAGS = Dict{String, Tuple{DataType, Type}}()  # constructor name => (struct, sum)
+# constructor name => (struct, sum, its decoding as a value: `_Tagged`)
+const _TAGS = Dict{String, Tuple{DataType, Type, Any}}()
 
 function _tags()
     if isempty(_TAGS)
         for S in _SUMS, C in _constructors(S)
-            _TAGS[string(nameof(C))] = (C, S)
+            _TAGS[string(nameof(C))] = (C, S, _Tagged{C}())
         end
     end
     _TAGS
@@ -122,25 +132,27 @@ end
 
 function _decode(::Type{Vector{T}}, j) where {T}
     j isa AbstractVector || throw(_Bad("a list", j))
-    T[_at(() -> _decode(T, x), i - 1) for (i, x) in enumerate(j)]
+    T[_at(T, x, i - 1) for (i, x) in enumerate(j)]
 end
 
 function _decode(::Type{Dict{String, T}}, j) where {T}
     j isa AbstractDict || throw(_Bad("an object", j))
-    Dict{String, T}(String(k) => _at(() -> _decode(T, x), String(k)) for (k, x) in j)
+    Dict{String, T}(String(k) => _at(T, x, String(k)) for (k, x) in j)
 end
 
 function _decode(::Type{Union{Nothing, T}}, j) where {T}
     j === nothing ? nothing : _decode(T, j)
 end
 
-function _decode(T::Type{<:Tuple}, j)
+# (`::Type{T} where T`, here and below, for a method compiled for each type:
+# `T::Type` would be one for all, deciding every field's type as it runs)
+function _decode(::Type{T}, j) where {T <: Tuple}
     n = fieldcount(T)
     j isa AbstractVector && length(j) == n || throw(_Bad("a list of $n", j))
-    Tuple(_at(() -> _decode(fieldtype(T, i), j[i]), i - 1) for i in 1:n)
+    ntuple(i -> _at(fieldtype(T, i), j[i], i - 1), Val(n))
 end
 
-function _decode(T::Type{<:Enum}, j)
+function _decode(::Type{T}, j) where {T <: Enum}
     if j isa AbstractDict && get(j, "t", nothing) isa AbstractString
         for v in instances(T)
             string(v) == j["t"] && return v
@@ -149,17 +161,13 @@ function _decode(T::Type{<:Enum}, j)
     throw(_Bad(_article(string(nameof(T))), j))
 end
 
-function _decode(T::Type{<:Node}, j)
+function _decode(::Type{T}, j) where {T <: Node}
     if isabstracttype(T) || supertype(T) in _SUMS  # a sum type: the constructor from "t"
         S = isabstracttype(T) ? T : supertype(T)
         t = j isa AbstractDict ? get(j, "t", nothing) : nothing
         entry = t isa AbstractString ? get(_tags(), t, nothing) : nothing
         (entry === nothing || !(entry[1] <: T)) && throw(_Bad(T === S ? _sumname(S) : _article(string(nameof(T))), j))
-        C = entry[1]
-        enc = _encoding(C)
-        enc === :none && return C()
-        haskey(j, "c") || throw(_Bad("$C with contents", j, "$C without"))
-        return _decode_fields(C, enc, j["c"])
+        return entry[3](j)  # (the one call decided as it runs)
     end
     enc = _encoding(T)
     if enc === :root
@@ -175,23 +183,33 @@ function _decode(T::Type{<:Node}, j)
     _decode_fields(T, enc, j)
 end
 
-function _decode_fields(T, enc, c)
+# A constructor's decoding, from its tagged object, as a value: a call
+# decided as it runs is decided faster on a value than on a type.
+struct _Tagged{C} end
+function (::_Tagged{C})(j) where {C}
+    enc = _encoding(C)
+    enc === :none && return C()
+    haskey(j, "c") || throw(_Bad("$C with contents", j, "$C without"))
+    _decode_fields(C, enc, j["c"])
+end
+
+function _decode_fields(::Type{T}, enc, c) where {T}
     names = fieldnames(T)
-    n = length(names)
+    n = fieldcount(T)
     if enc === :value
-        return T(_FIELDS, _at(() -> _decode(fieldtype(T, 1), c), names[1]))
+        return T(_FIELDS, _at(fieldtype(T, 1), c, names[1]))
     elseif enc === :array
         if !(c isa AbstractVector && length(c) == n)
             got = c isa AbstractVector ? "$T with $(length(c))" : _describe(c)
             throw(_Bad("$T with $n fields", c, got))
         end
-        return T(_FIELDS, (_at(() -> _decode(fieldtype(T, i), c[i]), names[i]) for i in 1:n)...)
+        return T(_FIELDS, ntuple(i -> _at(fieldtype(T, i), c[i], names[i]), Val(n))...)
     end
     c isa AbstractDict || throw(_Bad("an object ($T)", c))
     keys = enc === :root ? string.(names) : _keys(T)
-    vals = map(1:n) do i
+    vals = ntuple(Val(n)) do i
         haskey(c, keys[i]) || throw(_Bad("$T with $(repr(keys[i]))", c, "one without"))
-        _at(() -> _decode(fieldtype(T, i), c[keys[i]]), names[i])
+        _at(fieldtype(T, i), c[keys[i]], names[i])
     end
     T(_FIELDS, vals...)
 end
