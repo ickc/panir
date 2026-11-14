@@ -328,12 +328,18 @@ What a port of a Lua filter trips over:
   true, as is the text `no`. A node is an object, always true in
   JavaScript, `MetaBool(false)` too: `if (meta.x)` is true for `x: false`.
   `truthy(meta.x)` is Lua's.
+- **A nested option**, Lua's `((meta.a or {}).b or {}).c`: `lookup(meta,
+  "a", "b", "c")`, `undefined` where a key is missing or a value on the
+  way is not a map (where Lua would fail, on `true`, or find a method, on
+  a string or a list). It starts from the metadata or a `MetaMap`, and
+  reads a map's own keys only.
 
 ```ts
-import { truthy } from "panir";
+import { lookup, truthy } from "panir";
 
-const meta = Pandoc([], { meta: { draft: false, title: "" } }).meta;
+const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" } } }).meta;
 assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
+assert.deepEqual([lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")], [MetaString("2"), undefined]);
 ```
 
 ### Fragments

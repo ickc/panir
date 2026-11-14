@@ -484,11 +484,39 @@ def truthy() -> list[Filter]:
     return [f]
 
 
+LOOKUP_PATHS = [
+    ("toc",),
+    ("toc", "depth"),
+    ("toc", "style", "name"),
+    ("toc", "missing"),
+    ("missing", "depth"),
+    ("flag", "depth"),
+    ("list", "a"),
+    ("text", "map"),
+    ("toc", "depth", "x"),
+    ("toc", "style", "name", "x"),
+]
+
+
+def lookup() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def paths(doc):
+        words = []
+        for path in LOOKUP_PATHS:
+            v = A.lookup(doc.meta, *path)
+            words.append(f"{'.'.join(path)}={'none' if v is None else A.stringify(v)}")
+        doc.blocks.append(Para(" ".join(words)))
+
+    return [f]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
     + (once, lists, meta, newdoc, twice, metacount, attributes, fails)
-    + (replaced, metavalues, metadelete, truthy)
+    + (replaced, metavalues, metadelete, truthy, lookup)
 }
 
 

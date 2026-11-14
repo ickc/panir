@@ -359,7 +359,7 @@ end
     m = Module()
     Core.eval(m, :(using Panir))
     for name in (:Str, :Para, :Inline, :MetaValue, :InlineMath, :DoubleQuote, :AlignLeft, :LowerRoman, :OneParen,
-                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify, :check_unique, :truthy)
+                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify, :check_unique, :truthy, :lookup)
         @test isdefined(m, name)
     end
     # the common words, the aliases and the enums' types: as Panir.X
@@ -423,4 +423,17 @@ end
     end
     @test !truthy(MetaBool(false)) && !truthy(nothing)
     @test_throws TypeError (MetaBool(false) ? 1 : 2)  # (a node in `if` is an error, not true)
+end
+
+@testset "a nested option, through maps" begin
+    meta = Pandoc(; meta = Dict("toc" => Dict("depth" => "2", "style" => Dict("name" => "x")), "flag" => true,
+                                "l" => ["a"])).meta
+    @test lookup(meta, "toc", "depth") == MetaString("2")
+    @test lookup(meta, "toc", "style", "name") == MetaString("x")
+    @test lookup(meta["toc"], "depth") == MetaString("2")  # from a MetaMap
+    @test lookup(meta, "toc") === meta["toc"]
+    for path in (("toc", "missing"), ("missing", "depth"), ("flag", "x"), ("l", "a"), ("toc", "depth", "x"))
+        @test lookup(meta, path...) === nothing
+    end
+    @test lookup(nothing, "x") === nothing
 end

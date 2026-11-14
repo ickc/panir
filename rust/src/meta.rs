@@ -1,6 +1,6 @@
-//! Metadata as pandoc's Lua filters read and write it: Lua's truth, and
-//! metadata made from plain Rust values, as pandoc's Lua converts plain Lua
-//! values.
+//! Metadata as pandoc's Lua filters read and write it: Lua's truth, a
+//! lookup through maps, and metadata made from plain Rust values, as
+//! pandoc's Lua converts plain Lua values.
 
 use crate::{Block, Inline, Meta, MetaValue, Text};
 
@@ -20,6 +20,32 @@ use crate::{Block, Inline, Meta, MetaValue, Text};
 /// ```
 pub fn truthy(value: Option<&MetaValue>) -> bool {
     !matches!(value, None | Some(MetaValue::MetaBool(false)))
+}
+
+/// The value at a path of keys, each but the last in a map (`MetaMap`):
+/// Lua's `((meta.a or {}).b or {}).c`, `None` where a key is missing or a
+/// value on the way is not a map (where Lua would fail, on `true`, or find a
+/// method, on a string or a list). A `MetaMap`'s content is a [`Meta`] too.
+///
+/// ```
+/// use panir::{MetaValue, lookup};
+///
+/// let mut meta = panir::Meta::new();
+/// meta.insert("a".into(), [("b", "c")].into_iter().collect());
+/// assert_eq!(lookup(&meta, &["a", "b"]), Some(&MetaValue::from("c")));
+/// assert_eq!(lookup(&meta, &["a", "b", "c"]), None); // (a string has no fields)
+/// assert_eq!(lookup(&meta, &["x", "b"]), None);
+/// ```
+pub fn lookup<'a>(meta: &'a Meta, path: &[&str]) -> Option<&'a MetaValue> {
+    let (last, path) = path.split_last()?;
+    let mut map = meta;
+    for key in path {
+        match map.get(*key)? {
+            MetaValue::MetaMap(m) => map = m,
+            _ => return None,
+        }
+    }
+    map.get(*last)
 }
 
 // Plain values as metadata, as pandoc's Lua converts them: a string is a

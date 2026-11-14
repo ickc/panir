@@ -16,3 +16,28 @@ truthy(get(doc.meta, "draft", nothing))
 truthy(::Nothing) = false
 truthy(v::MetaBool) = v.value
 truthy(::MetaValue) = true
+
+"""
+    lookup(v, key, keys...) -> MetaValue or nothing
+
+The metadata value at a path of keys, each but the last in a map: Lua's
+`((meta.a or {}).b or {}).c`, `nothing` where a key is missing or a value
+on the way is not a map (where Lua would fail, on `true`, or find a
+method, on a string or a list). `v` is the metadata (`doc.meta`), a
+`MetaMap`, or `nothing`.
+
+```julia
+depth = lookup(doc.meta, "toc", "depth")
+```
+"""
+function lookup(v, key::AbstractString, keys::AbstractString...)
+    for k in (key, keys...)
+        map = _entries(v)
+        map === nothing && return nothing
+        v = get(map, k, nothing)
+    end
+    v
+end
+_entries(m::AbstractDict) = m
+_entries(m::MetaMap) = m.content
+_entries(_) = nothing

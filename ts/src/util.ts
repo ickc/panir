@@ -224,6 +224,26 @@ export function truthy(value: MetaValue | null | undefined): boolean {
   return value != null && !(value.t === "MetaBool" && !value.value);
 }
 
+/**
+ * The metadata value at a path of keys, each but the last in a map: Lua's
+ * `((meta.a or {}).b or {}).c`, `undefined` where a key is missing or a value
+ * on the way is not a map (where Lua would fail, on `true`, or find a method,
+ * on a string or a list). `value` is the metadata, a `MetaMap`, or nothing.
+ * Only a map's own keys: `lookup(meta, "constructor")` is a field so named.
+ */
+export function lookup(value: Meta | MetaValue | null | undefined, key: string, ...keys: string[]): MetaValue | undefined {
+  let v: Meta | MetaValue | null | undefined = value;
+  for (const k of [key, ...keys]) {
+    if (v == null) return undefined;
+    // (a MetaValue's t is a string; the metadata's, if it has a field t, a node)
+    const node = typeof (v as { t?: unknown }).t === "string" ? (v as MetaValue) : undefined;
+    const map: Meta | undefined = node === undefined ? (v as Meta) : node.t === "MetaMap" ? node.content : undefined;
+    if (map === undefined) return undefined;
+    v = Object.hasOwn(map, k) ? map[k] : undefined;
+  }
+  return v as MetaValue | undefined;
+}
+
 /** Metadata as plain values: string, boolean, array, object. `MetaInlines` and `MetaBlocks` become their text (`stringify`). */
 export function toPlain(value: MetaValue | Meta): unknown {
   return deep("toPlain", () => plain(value));

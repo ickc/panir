@@ -189,3 +189,18 @@ def test_lua_truth():
     assert not meta.get("off") and not meta.get("missing")
     assert (meta.get("off") or MetaString("d")) == MetaString("d")  # Lua's `meta.off or "d"`
     assert (meta.get("empty") or MetaString("d")) == MetaString("")
+
+
+def test_lookup():
+    """A nested option, through maps: None where a key is missing or a value
+    on the way is not a map."""
+    toc = {"depth": "2", "style": {"name": "x"}}
+    meta = Pandoc(meta={"toc": toc, "flag": True, "l": ["a"]}).meta
+    assert panir.lookup(meta, "toc", "depth") == MetaString("2")
+    assert panir.lookup(meta, "toc", "style", "name") == MetaString("x")
+    assert panir.lookup(meta["toc"], "depth") == MetaString("2")  # from a MetaMap
+    assert panir.lookup(meta, "toc") is meta["toc"]
+    missing = [("toc", "missing"), ("missing", "depth"), ("flag", "x"), ("l", "a")]
+    for path in [*missing, ("toc", "depth", "x")]:
+        assert panir.lookup(meta, *path) is None
+    assert panir.lookup(None, "x") is None

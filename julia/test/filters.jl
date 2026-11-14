@@ -225,6 +225,20 @@ function scenario_truthy()
     Filters([(f, :typewise)])
 end
 
+function scenario_lookup()
+    paths = [["toc"], ["toc", "depth"], ["toc", "style", "name"], ["toc", "missing"], ["missing", "depth"],
+             ["flag", "depth"], ["list", "a"], ["text", "map"], ["toc", "depth", "x"], ["toc", "style", "name", "x"]]
+    function f(d::Pandoc)
+        words = map(paths) do path
+            v = lookup(d.meta, path...)
+            "$(join(path, "."))=$(v === nothing ? "none" : stringify(v))"
+        end
+        push!(d.blocks, Para(join(words, " ")))
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
@@ -233,7 +247,7 @@ const SCENARIOS = Dict(
     "newdoc" => scenario_newdoc, "twice" => scenario_twice, "metacount" => scenario_metacount,
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
     "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete,
-    "truthy" => scenario_truthy,
+    "truthy" => scenario_truthy, "lookup" => scenario_lookup,
 )
 
 @testset "filters as pandoc's Lua" begin

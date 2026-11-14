@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
   ASTTypeError, Attr, Citation, Code, copy, Div, Emph, equal, fromJSON, fromPlain, getAttribute, hasAttribute,
-  LineBreak, ListAttributes, removeAttribute, setAttribute,
+  LineBreak, ListAttributes, lookup, removeAttribute, setAttribute,
   MetaBlocks, MetaBool, MetaInlines, MetaList, MetaMap, MetaString, Note, Pandoc, Para, parse, Plain, Quoted, RawInline,
   serialize, Str, stringify, toPlain, truthy,
 } from "../src/index.ts";
@@ -125,6 +125,21 @@ test("Lua's truth of metadata values: false only for a missing one and MetaBool(
   assert.equal(truthy(undefined), false);
   assert.equal(truthy(null), false);
   assert.equal(truthy(Pandoc([], { meta: { off: false } }).meta.off), false);
+});
+
+test("a nested option, through maps: undefined where a key is missing or a value on the way is not a map", () => {
+  const meta = Pandoc([], { meta: { toc: { depth: "2", style: { name: "x" } }, flag: true, l: ["a"] } }).meta;
+  assert.deepEqual(lookup(meta, "toc", "depth"), MetaString("2"));
+  assert.deepEqual(lookup(meta, "toc", "style", "name"), MetaString("x"));
+  assert.deepEqual(lookup(meta.toc, "depth"), MetaString("2")); // from a MetaMap
+  assert.equal(lookup(meta, "toc"), meta.toc);
+  for (const [key, ...keys] of [["toc", "missing"], ["missing", "depth"], ["flag", "x"], ["l", "a"], ["toc", "depth", "x"],
+    ["toc", "constructor"], ["toc", "__proto__"]]) {
+    assert.equal(lookup(meta, key!, ...keys), undefined, [key, ...keys].join("."));
+  }
+  assert.equal(lookup(undefined, "x"), undefined);
+  // a field named t is a field
+  assert.deepEqual(lookup(Pandoc([], { meta: { t: { u: "v" } } }).meta, "t", "u"), MetaString("v"));
 });
 
 test("attributes by key, as pandoc's Lua", () => {

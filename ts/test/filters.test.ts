@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
-  applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, MetaBool, MetaInlines, MetaList,
+  applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, lookup, MetaBool, MetaInlines, MetaList,
   MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, stringify, Strong, toJSON, truthy,
   Underline,
 } from "../src/index.ts";
@@ -239,6 +239,20 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
       const words = keys.map((k) => `${k}=${truthy(doc.meta[k])}`);
       const or = (v: MetaValue | undefined) => (truthy(v) ? v : MetaString("d"));
       words.push(`no-or=${stringify(or(doc.meta.no))}`, `text-or=${stringify(or(doc.meta.text))}`);
+      doc.blocks.push(Para(words.join(" ")));
+    },
+  }],
+
+  lookup: () => [{
+    Pandoc: (doc) => {
+      const paths = [
+        ["toc"], ["toc", "depth"], ["toc", "style", "name"], ["toc", "missing"], ["missing", "depth"],
+        ["flag", "depth"], ["list", "a"], ["text", "map"], ["toc", "depth", "x"], ["toc", "style", "name", "x"],
+      ] as const;
+      const words = paths.map(([key, ...keys]) => {
+        const v = lookup(doc.meta, key, ...keys);
+        return `${[key, ...keys].join(".")}=${v === undefined ? "none" : stringify(v)}`;
+      });
       doc.blocks.push(Para(words.join(" ")));
     },
   }],

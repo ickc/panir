@@ -203,18 +203,26 @@ What a port of a Lua filter trips over:
 - **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
   missing field and for `false` only; an empty string, list or map is
   true, as is the text `no`: `truthy(meta.get("x"))`.
+- **A nested option**, Lua's `((meta.a or {}).b or {}).c`: `lookup(&meta,
+  &["a", "b", "c"])`, `None` where a key is missing or a value on the way
+  is not a map (where Lua would fail, on `true`, or find a method, on a
+  string or a list). It starts from the metadata or a `MetaMap`'s content
+  (a `Meta` too).
 
 ```rust
-use panir::{Pandoc, truthy};
+use panir::{MetaValue, Pandoc, lookup, truthy};
 
 let mut doc = Pandoc::new(vec![]);
 doc.meta.insert("draft".into(), false.into());
 doc.meta.insert("title".into(), "".into());
+doc.meta.insert("toc".into(), [("depth", "2")].into_iter().collect());
 let meta = &doc.meta;
 assert_eq!(
     [truthy(meta.get("draft")), truthy(meta.get("title")), truthy(meta.get("missing"))],
     [false, true, false]
 );
+assert_eq!(lookup(meta, &["toc", "depth"]), Some(&MetaValue::from("2")));
+assert_eq!(lookup(meta, &["title", "depth"]), None);
 ```
 
 ## Types and `VisitMut`

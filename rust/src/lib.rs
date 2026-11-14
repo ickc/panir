@@ -33,7 +33,7 @@ struct Readme;
 
 pub use filter::{Conversion, Ctx, Filter, FilterError, Order, Walkable, apply, apply_with};
 pub use generated::*;
-pub use meta::truthy;
+pub use meta::{lookup, truthy};
 pub use stringify::{Stringify, stringify};
 pub use text::Text;
 

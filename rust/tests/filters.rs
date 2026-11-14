@@ -3,7 +3,7 @@
 
 use panir::{
     Attr, Block, Ctx, Div, Filter, FilterError, Header, Inline, Meta, MetaValue, Order, Pandoc,
-    apply, from_str, to_string, truthy,
+    apply, from_str, lookup, to_string, truthy,
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -590,6 +590,39 @@ impl Filter for Truthy {
     }
 }
 
+/// What each path of keys finds, in a paragraph.
+struct Lookup(Order);
+
+impl Filter for Lookup {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let paths: [&[&str]; 10] = [
+            &["toc"],
+            &["toc", "depth"],
+            &["toc", "style", "name"],
+            &["toc", "missing"],
+            &["missing", "depth"],
+            &["flag", "depth"],
+            &["list", "a"],
+            &["text", "map"],
+            &["toc", "depth", "x"],
+            &["toc", "style", "name", "x"],
+        ];
+        let words: Vec<String> = paths
+            .iter()
+            .map(|path| {
+                let found = lookup(&doc.meta, path).map_or("none".into(), panir::stringify);
+                format!("{}={found}", path.join("."))
+            })
+            .collect();
+        doc.blocks
+            .push(Block::Para(panir::inlines(&words.join(" "))));
+        Some(())
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -615,6 +648,7 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "fails" => Box::new(Fails(0)),
         "metadelete" => Box::new(MetaDelete(order)),
         "truthy" => Box::new(Truthy(order)),
+        "lookup" => Box::new(Lookup(order)),
         "metacount" => {
             return Some(
                 apply(doc, &mut AddKey, FORMAT).and_then(|()| apply(doc, &mut Count(0), FORMAT)),

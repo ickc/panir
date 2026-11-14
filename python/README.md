@@ -245,13 +245,19 @@ What a port of a Lua filter trips over:
   true, as is the text `no`. So is every metadata value here but
   `MetaBool(False)`, so that `if meta.get("x"):` and `meta.get("x") or d`
   are Lua's as written.
+- **A nested option**, Lua's `((meta.a or {}).b or {}).c`: `lookup(meta,
+  "a", "b", "c")`, `None` where a key is missing or a value on the way is
+  not a map (where Lua would fail, on `true`, or find a method, on a
+  string or a list). It starts from the metadata or a `MetaMap`.
 
 ```python
->>> meta = Pandoc(meta={"draft": False, "title": ""}).meta
+>>> meta = Pandoc(meta={"draft": False, "title": "", "toc": {"depth": "2"}}).meta
 >>> bool(meta.get("draft")), bool(meta.get("title")), bool(meta.get("missing"))
 (False, True, False)
 >>> meta.get("draft") or MetaString("final")
 MetaString('final')
+>>> lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")
+(MetaString('2'), None)
 ```
 
 ### Fragments

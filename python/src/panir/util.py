@@ -32,7 +32,15 @@ from ._types import (
 )
 from ._walk import Context, _walk_fields, walk
 
-__all__ = ["blocks", "check_unique", "from_python", "inlines", "stringify", "to_python"]
+__all__ = [
+    "blocks",
+    "check_unique",
+    "from_python",
+    "inlines",
+    "lookup",
+    "stringify",
+    "to_python",
+]
 
 _QUOTES = {QuoteType.SingleQuote: ("‘", "’"), QuoteType.DoubleQuote: ("“", "”")}
 
@@ -116,6 +124,29 @@ def _text(value: Any, out: list[str], inlines_only: bool) -> None:
     else:
         for f, _ in _walk_fields(type(value)):
             _text(getattr(value, f), out, inlines_only)
+
+
+def lookup(
+    value: Mapping[str, MetaValue] | MetaValue | None, key: str, /, *keys: str
+) -> MetaValue | None:
+    """The metadata value at a path of keys, each but the last in a map:
+    Lua's ``((meta.a or {}).b or {}).c``, ``None`` where a key is missing or
+    a value on the way is not a map (where Lua would fail, on ``true``, or
+    find a method, on a string or a list). ``value`` is the metadata, a
+    ``MetaMap``, or ``None``.
+
+        depth = lookup(doc.meta, "toc", "depth")
+    """
+    found: MetaValue | None = None
+    for k in (key, *keys):
+        if isinstance(value, MetaMap):
+            found = value.content.get(k)
+        elif isinstance(value, Mapping):
+            found = value.get(k)
+        else:
+            return None
+        value = found
+    return found
 
 
 @too_deep("to_python")

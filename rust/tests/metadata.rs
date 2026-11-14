@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use panir::{Block, Inline, MetaValue, truthy};
+use panir::{Block, Inline, MetaValue, lookup, truthy};
 
 #[test]
 fn metadata_from_plain_values() {
@@ -67,4 +67,34 @@ fn lua_truth() {
     }
     assert!(!truthy(Some(&false.into())));
     assert!(!truthy(None));
+}
+
+#[test]
+fn a_nested_option() {
+    let mut meta = panir::Meta::new();
+    let style: MetaValue = [("name", "x")].into_iter().collect();
+    let toc: MetaValue = [("depth", MetaValue::from("2")), ("style", style)]
+        .into_iter()
+        .collect();
+    meta.insert("toc".into(), toc);
+    meta.insert("flag".into(), true.into());
+    meta.insert("l".into(), ["a"].into_iter().collect());
+    assert_eq!(lookup(&meta, &["toc", "depth"]), Some(&"2".into()));
+    assert_eq!(lookup(&meta, &["toc", "style", "name"]), Some(&"x".into()));
+    assert_eq!(lookup(&meta, &["toc"]), meta.get("toc"));
+    for path in [
+        &["toc", "missing"][..],
+        &["missing", "depth"],
+        &["flag", "x"],
+        &["l", "a"],
+        &["toc", "depth", "x"],
+        &[],
+    ] {
+        assert_eq!(lookup(&meta, path), None, "{path:?}");
+    }
+    // from a MetaMap: its content is a Meta too
+    let Some(MetaValue::MetaMap(toc)) = meta.get("toc") else {
+        panic!()
+    };
+    assert_eq!(lookup(toc, &["depth"]), Some(&"2".into()));
 }
