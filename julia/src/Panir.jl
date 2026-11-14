@@ -25,6 +25,7 @@ const _FIELDS = _Fields()
 
 include("generated.jl")
 include("core.jl")
+include("onepass.jl")
 include("walk.jl")
 
 include("precompile.jl")

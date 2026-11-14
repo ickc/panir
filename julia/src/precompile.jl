@@ -2,7 +2,7 @@
 # JSON and walking, for a document with every kind of node, so that a
 # filter's first document isn't seconds of compiling.
 
-# A value of type `T`: lists hold one of each kind (`depth` levels deep),
+# A value of type `T`: lists and maps hold one of each kind (`depth` levels deep),
 # a sum type is its first kind.
 function _example(T::Type, depth::Int)
     T === String && return "x"
@@ -16,7 +16,7 @@ function _example(T::Type, depth::Int)
     end
     if T <: Dict
         V = valtype(T)
-        return depth <= 0 ? T() : T("k" => first(_examples(V, depth - 1)))
+        return depth <= 0 ? T() : T(string(i) => x for (i, x) in enumerate(_examples(V, depth - 1)))
     end
     T isa Union && return _example(Base.typesplit(T, Nothing), depth)
     T <: Tuple && return T(Tuple(_example(F, depth) for F in fieldtypes(T)))
@@ -50,6 +50,7 @@ _pc_wrong(s::Str) = 42
     doc = _example(Pandoc, 3)
     @compile_workload begin
         d = parse(serialize(doc))
+        fromjson(JSON.parse(serialize(doc)))  # (as `parse` reads what isn't the plain case)
         for traverse in (:typewise, :topdown, :bottomup)
             walk!(_pc, d; traverse, format = Conversion(; format = "html"))
         end
