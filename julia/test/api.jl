@@ -375,6 +375,23 @@ end
     @test Panir.handoff(() -> Panir.hand_over(f, :bottomup)) == (f, :bottomup)
     @test Panir.hand_over(f, :typewise) == false  # (not in handoff: the runner goes on)
     @test Panir.handoff(() -> run_filter(f; traverse = :topdown)) == (f, :topdown)
+    # a list of filters, handed over as it is: walk! takes it
+    @test Panir.handoff(() -> run_filter([f, f => :topdown])) == ([f, f => :topdown], :typewise)
+end
+
+@testset "a list of filters, in turn" begin
+    marks = String[]
+    configure(m::Panir.Meta) = (push!(marks, stringify(m["mark"])); nothing)
+    mark(s::Str) = Str(s.text * marks[1])
+    doc = Pandoc(Para("a b"); meta = Dict("mark" => "!"))
+    # the second uses what the first read: in one typewise walk, the inlines
+    # come before the metadata
+    @test stringify(walk!([configure, mark => :topdown], doc).blocks) == "a! b!"
+    @test stringify(walk!([mark], Emph("x"))) == "x!"  # (a fragment too)
+    out = IOBuffer()
+    Panir._run([configure, mark], :typewise, IOBuffer(serialize(Pandoc(Para("c"); meta = Dict("mark" => "?")))), out,
+               ["html"], Dict{String, String}())
+    @test stringify(Panir.parse(String(take!(out))).blocks) == "c!"  # (marks[1]: the first read)
 end
 
 @testset "the README's examples run" begin

@@ -187,6 +187,42 @@ What a port of a Lua filter trips over:
   `ctx.apply(&mut el, &mut filter)?`, in every function (each returns an
   `Option`).
 - `return el, false` (top-down): `ctx.skip_children()`.
+- A Lua file returning a list of filters (`return {configure, quotes}`):
+  `apply` after `apply` in `panir::filter`'s function, `?` between; what a
+  later one needs of an earlier one (a Lua upvalue) is a field it is given:
+
+  ```rust,no_run
+  use panir::{Ctx, Filter, Inline, Meta, stringify};
+
+  #[derive(Default)]
+  struct Configure(Option<String>);
+
+  impl Filter for Configure {
+      fn meta(&mut self, meta: &mut Meta, _: &mut Ctx) -> Option<()> {
+          self.0 = Some(stringify(meta.get("mark")?));
+          Some(())
+      }
+  }
+
+  struct Mark(String);
+
+  impl Filter for Mark {
+      fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+          let Inline::Str(s) = x else { return None };
+          s.push_str(&self.0);
+          None
+      }
+  }
+
+  fn main() {
+      panir::filter(|doc, format| {
+          let mut configure = Configure::default();
+          panir::apply(doc, &mut configure, format)?;
+          let mark = configure.0.unwrap_or_else(|| "!".into());
+          panir::apply(doc, &mut Mark(mark), format)
+      });
+  }
+  ```
 - Lists count from 0, Lua's from 1 (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
   functions after: `ctx.meta()`. Inside the metadata, it lacks the field

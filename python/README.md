@@ -202,8 +202,32 @@ is a Lua filter, and its Python version must make exactly the same
 document.
 
 `f.main()` runs a filter under pandoc; `f(doc)` on a document; `run(doc,
-[f, g])` several in turn. Under pandoc, a function's `print` goes to
-stderr: stdout is the document.
+[f, g])` several in turn, each a whole walk, as a Lua filter file returning
+a list of filters does, and `main([f, g])` so under pandoc. Under pandoc,
+a function's `print` goes to stderr: stdout is the document.
+
+```python
+from panir import Filter, Meta, Quoted, Str, main, stringify
+
+configure, quotes = Filter(), Filter()
+marks = {"left": "«", "right": "»"}
+
+
+@configure.on_meta
+def read(meta: Meta) -> None:
+    if "quote-marks" in meta:
+        left, right = stringify(meta["quote-marks"])
+        marks.update(left=left, right=right)
+
+
+@quotes.on(Quoted)
+def mark(q: Quoted) -> list:
+    return [Str(marks["left"]), *q.content, Str(marks["right"])]
+
+
+if __name__ == "__main__":
+    main([configure, quotes])  # the metadata first, then every quotation
+```
 
 ### Coming from Lua
 
@@ -230,6 +254,9 @@ What a port of a Lua filter trips over:
 - `error(...)`: raise; the exception gets a note naming the function and
   the place.
 - `return el, false` (top-down): `ctx.skip_children()`.
+- A Lua file returning a list of filters (`return {configure, quotes}`):
+  `main([configure, quotes])` (or `run(doc, [...])`), each a whole walk,
+  in turn.
 - Lists count from 0 here, from 1 in Lua (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
   functions after: `ctx.doc.meta`.

@@ -526,11 +526,26 @@ def items() -> list[Filter]:
     return [f]
 
 
+def chain() -> list[Filter]:
+    mark = ["?"]
+    configure, add = Filter(), Filter()
+
+    @configure.on_meta
+    def read(m):
+        mark[0] = A.stringify(m.get("mark") or MetaString("!"))
+
+    @add.on(Str)
+    def marked(s):
+        return Str(s.text + mark[0])
+
+    return [configure, add]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
     + (once, lists, meta, newdoc, twice, metacount, attributes, fails)
-    + (replaced, metavalues, metadelete, truthy, lookup, items)
+    + (replaced, metavalues, metadelete, truthy, lookup, items, chain)
 }
 
 

@@ -268,6 +268,14 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
     },
   }],
 
+  chain: () => {
+    let mark = "?";
+    return [
+      { Meta: (m) => { mark = stringify(truthy(m.mark) ? m.mark : "!"); } },
+      { Str: (s) => Str(s.text + mark) },
+    ];
+  },
+
   attributes: () => [{
     Span: (s) => {
       const k = getAttribute(s.attr, "k");

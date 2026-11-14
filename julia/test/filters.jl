@@ -251,6 +251,13 @@ function scenario_items()
     Filters([(f, :typewise)])
 end
 
+function scenario_chain()
+    mark = Ref("?")
+    configure(m::Panir.Meta) = (mark[] = stringify(truthy(get(m, "mark", nothing)) ? m["mark"] : "!"); nothing)
+    add(s::Str) = Str(s.text * mark[])
+    Filters([(configure, :typewise), (add, :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
@@ -259,7 +266,7 @@ const SCENARIOS = Dict(
     "newdoc" => scenario_newdoc, "twice" => scenario_twice, "metacount" => scenario_metacount,
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
     "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete,
-    "truthy" => scenario_truthy, "lookup" => scenario_lookup, "items" => scenario_items,
+    "truthy" => scenario_truthy, "lookup" => scenario_lookup, "items" => scenario_items, "chain" => scenario_chain,
 )
 
 @testset "filters as pandoc's Lua" begin
@@ -267,9 +274,8 @@ const SCENARIOS = Dict(
     lua = sort([splitext(f)[1] for f in readdir(joinpath(CORPUS, "filters")) if endswith(f, ".lua")])
     @test sort([l["name"] for l in lines]) == lua  # else run scripts/filters-corpus.sh
     @test sort(collect(keys(SCENARIOS))) == lua
-    run(filters, input) = foldl(filters; init = fromjson(input)) do doc, (f, traverse)
-        walk!(f, doc; traverse, format = FORMAT)
-    end
+    # (each scenario's filters in one call, as a Lua file returning a list)
+    run(filters, input) = walk!([f => traverse for (f, traverse) in filters], fromjson(input); format = FORMAT)
     @testset "$(l["name"])" for l in lines
         if l["output"] === nothing  # pandoc fails on it: so must the filter
             @test_throws Exception run(SCENARIOS[l["name"]](), l["input"])

@@ -1,6 +1,7 @@
 """Filters and walking."""
 
 import json
+import runpy
 import shutil
 import subprocess
 import sys
@@ -232,6 +233,49 @@ def test_main_speaks_pandoc_json(tmp_path):
     d = A.loads(out)
     assert d.blocks[0].level == 2
     assert d.blocks[0].content[-1] == Str("html")
+
+
+TWO = textwrap.dedent("""
+    from panir import Filter, Str, main, stringify
+
+    configure, mark = Filter(), Filter()
+    marks = []
+
+    @configure.on_meta
+    def read(meta):
+        marks.append(stringify(meta.get("mark")))
+
+    @mark.on(Str)
+    def add(s):
+        return Str(s.text + marks[0])
+
+    if __name__ == "__main__":
+        main([configure, mark])  # as a Lua file returning {configure, mark}
+""")
+
+
+def test_main_runs_a_list_of_filters_in_turn(tmp_path):
+    # the second uses what the first read: in one typewise filter, the
+    # inlines would come before the metadata
+    script = tmp_path / "two.py"
+    script.write_text(TWO)
+    d = Pandoc(Para("a b"), meta={"mark": "!"})
+    out = subprocess.run(
+        [sys.executable, str(script), "html"],
+        check=True,
+        input=A.dumps(d).encode(),
+        capture_output=True,
+    ).stdout
+    assert A.stringify(A.loads(out).blocks) == "a! b!"
+    # a host running the script in its process gets each filter, in order
+    handed: list[Filter] = []
+    token = A.filter.handoff.set(handed.append)
+    try:
+        runpy.run_path(str(script), run_name="__main__")
+    finally:
+        A.filter.handoff.reset(token)
+    assert len(handed) == 2
+    assert A.stringify(A.run(d, handed).blocks) == "a! b!"
 
 
 @pytest.mark.skipif(shutil.which("pandoc") is None, reason="needs pandoc")

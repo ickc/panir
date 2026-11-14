@@ -31,7 +31,7 @@ from ._types import *  # noqa: F403  the AST classes
 from ._types import Pandoc
 from ._walk import Context, walk
 from .conversion import Conversion
-from .filter import Filter, run
+from .filter import Filter, main, run
 from .util import (
     blocks,
     check_unique,
@@ -98,6 +98,7 @@ __all__ = [
     "load",
     "loads",
     "lookup",
+    "main",
     "run",
     "stringify",
     "to_python",

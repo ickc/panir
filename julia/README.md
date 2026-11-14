@@ -171,11 +171,27 @@ They are checked against pandoc's Lua filters: each scenario in
 is a Lua filter, and its Julia version must make exactly the same document.
 
 `run_filter(f)` runs `f` as a pandoc JSON filter: a document on stdin, to
-stdout, `ctx.conversion` read from pandoc's arguments and environment. A
-host running filter scripts in its own process (LibPandoc.jl's
-`pandocjl`) runs the script inside `Panir.handoff`, and then `run_filter`
-hands `f` over instead; a function like `run_filter` of the host's own
-calls `Panir.hand_over(f, traverse)`, which does the same.
+stdout, `ctx.conversion` read from pandoc's arguments and environment.
+`walk!` and `run_filter` also take a vector of filters, run in turn, each
+a whole walk (as a Lua filter file returning a list of filters), each a
+function or `f => traverse`: `run_filter([configure, quotes])`. A host
+running filter scripts in its own process (LibPandoc.jl's `pandocjl`)
+runs the script inside `Panir.handoff`, and then `run_filter` hands `f`
+(or the vector, which `walk!` takes) over instead; a function like
+`run_filter` of the host's own calls `Panir.hand_over(f, traverse)`, which
+does the same.
+
+```julia
+marks = Ref(("«", "»"))
+function configure(meta::Panir.Meta)
+    m = get(meta, "quote-marks", nothing)
+    m === nothing || (marks[] = Tuple(string.(collect(stringify(m)))))
+    nothing
+end
+quotes(q::Quoted) = [Str(marks[][1]); q.content; Str(marks[][2])]
+
+run_filter([configure, quotes])  # the metadata first, then every quotation
+```
 
 ### Coming from Lua
 
@@ -202,6 +218,9 @@ What a port of a Lua filter trips over:
   `identifier` and `classes`.
 - `error(...)`: `error(...)`, or throw any exception.
 - `return el, false` (top-down): `skip_children!(ctx)`.
+- A Lua file returning a list of filters (`return {configure, quotes}`):
+  `run_filter([configure, quotes])` (or `walk!([...], doc)`), each a whole
+  walk, in turn.
 - Vectors count from 1, as Lua's lists (paths in errors, as pandoc's
   JSON, from 0).
 - The metadata a Lua filter keeps from its `Meta` function, for the

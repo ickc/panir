@@ -650,6 +650,36 @@ impl Filter for Items {
     }
 }
 
+/// Reads the mark from the metadata, for `Mark`.
+struct Configure(Order, String);
+
+impl Filter for Configure {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn meta(&mut self, meta: &mut Meta, _: &mut Ctx) -> Option<()> {
+        self.1 = match meta.get("mark") {
+            v @ Some(_) if truthy(v) => panir::stringify(v?),
+            _ => "!".into(),
+        };
+        Some(())
+    }
+}
+
+/// Marks every Str.
+struct Mark(Order, String);
+
+impl Filter for Mark {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        let Inline::Str(s) = x else { return None };
+        s.push_str(&self.1);
+        None
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -677,6 +707,14 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "truthy" => Box::new(Truthy(order)),
         "lookup" => Box::new(Lookup(order)),
         "items" => Box::new(Items(order)),
+        "chain" => {
+            // (a Lua file's list of filters: one apply after the other)
+            let mut configure = Configure(order, "?".into());
+            return Some(
+                apply(doc, &mut configure, FORMAT)
+                    .and_then(|()| apply(doc, &mut Mark(order, configure.1), FORMAT)),
+            );
+        }
         "metacount" => {
             return Some(
                 apply(doc, &mut AddKey, FORMAT).and_then(|()| apply(doc, &mut Count(0), FORMAT)),

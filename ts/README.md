@@ -313,6 +313,9 @@ What a port of a Lua filter trips over:
 - `error(...)`: throw; the error gets a note naming the function and the
   place.
 - `return el, false` (top-down): `ctx.skipChildren()`.
+- A Lua file returning a list of filters (`return {configure, quotes}`):
+  `runFilter([configure, quotes])` (or `applyFilter(doc, [...])`), each a
+  whole walk, in turn.
 - Arrays count from 0, Lua's lists from 1 (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
   functions after: `ctx.doc.meta`.
