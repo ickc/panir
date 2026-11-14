@@ -31,7 +31,7 @@ from ._types import Pandoc
 from ._walk import Context, walk
 from .conversion import Conversion
 from .filter import Filter, run
-from .util import blocks, from_python, inlines, stringify, to_python
+from .util import blocks, check_unique, from_python, inlines, stringify, to_python
 
 __version__ = "0.1.0"
 
@@ -79,6 +79,7 @@ __all__ = [
     "NodeDict",
     "NodeList",
     "blocks",
+    "check_unique",
     "dump",
     "dumps",
     "from_python",

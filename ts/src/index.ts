@@ -15,9 +15,9 @@ export {
   ASTDecodeError, ASTDepthError, ASTError, ASTTypeError, check, formatPath, fromJSON, toJSON,
 } from "./core.ts";
 export type { JSONValue, Path } from "./core.ts";
-export { applyFilter, Context, walk } from "./walk.ts";
+export { applyFilter, checkUnique, Context, walk } from "./walk.ts";
 export type {
-  AnyFilter, Filter, FilterFunctions, Traverse, Walkable, WalkAction, WalkedContext,
+  AnyFilter, Filter, FilterFunctions, ParentNode, Traverse, Walkable, WalkAction, WalkedContext,
 } from "./walk.ts";
 export { Conversion } from "./conversion.ts";
 export type { ConversionInit } from "./conversion.ts";

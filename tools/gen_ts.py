@@ -266,11 +266,39 @@ class Gen:
         def sibling(owner: str) -> str:
             return self.ts_name[owner] if owner in self.in_lists else "never"
 
+        # the nodes (constructors, products) whose fields hold each type,
+        # through lists, maps, tuples and aliases: a function's ctx.parent
+        holders: dict[str, list[str]] = {}
+
+        def note(holder: str, ty: dict) -> None:
+            ty = self.resolve(ty)
+            if "ref" in ty:
+                if self.types[ty["ref"]]["kind"] in ("sum", "product"):
+                    names = holders.setdefault(ty["ref"], [])
+                    if holder not in names:
+                        names.append(holder)
+            for key in ("list", "maybe"):
+                if key in ty:
+                    note(holder, ty[key])
+            if "map" in ty:
+                note(holder, ty["map"][1])
+            for t in ty.get("tuple", []):
+                note(holder, t)
+
+        for t in self.schema["types"]:
+            for c in t.get("constructors", []) + ([t] if t["kind"] == "product" else []):
+                for f in c["fields"]:
+                    note(c["name"], f["type"])
+
+        def parent(owner: str) -> str:
+            return union(holders.get(owner, [])) if owner in holders else "never"
+
         lines = [
             "/**\n"
             " * The functions a filter can have, by name: the node each gets, what is\n"
-            " * beside it in a list (`never`: it is never in one), and what it may\n"
-            " * return besides nothing (converted as pandoc's Lua converts it).\n"
+            " * beside it in a list (`never`: it is never in one), the nodes that can\n"
+            " * hold it (`never`: none), and what it may return besides nothing\n"
+            " * (converted as pandoc's Lua converts it).\n"
             " */\n",
             "export interface FilterTypes {\n",
         ]
@@ -279,7 +307,7 @@ class Gen:
             if t["kind"] == "sum":
                 ts = self.ts_name[name]
                 lines.append(
-                    f"  {name}: {{ node: {ts}; sibling: {sibling(name)}; "
+                    f"  {name}: {{ node: {ts}; sibling: {sibling(name)}; parent: {parent(name)}; "
                     f"returns: {returns(name)} }};\n"
                 )
                 for c in t["constructors"]:
@@ -287,11 +315,12 @@ class Gen:
                         continue  # (ColWidth: the type's entry serves)
                     lines.append(
                         f"  {c['name']}: {{ node: {c['name']}; sibling: {sibling(name)}; "
+                        f"parent: {parent(name)}; "
                         f"returns: {returns(name)} }};\n"
                     )
             elif t["kind"] == "product":
                 lines.append(
-                    f"  {name}: {{ node: {name}; sibling: {sibling(name)}; "
+                    f"  {name}: {{ node: {name}; sibling: {sibling(name)}; parent: {parent(name)}; "
                     f"returns: {returns(name)} }};\n"
                 )
         lines.append("}\n\n")

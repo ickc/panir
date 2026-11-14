@@ -33,19 +33,29 @@ where pandoc (or libpandoc) tells them, as in Python. A function finds it in
 
 A `Filter` has pandoc's Lua filter functions, each a method with a default
 that does nothing: `inline` and `block` (a `match` on the constructor),
-`inlines` and `blocks` (every list of them), `meta`, `pandoc`. Its
+`inlines` and `blocks` (every list of them), `meta`, `pandoc`; and, as the
+other languages and panflute, `meta_value`, on each metadata value (in a
+`MetaList`, it deletes or splices as `inline` does; a map's value, a field
+of the metadata or of a `MetaMap`, is replaced by one value: to delete a
+key, `meta` or the `MetaMap`'s function removes it; `ctx.in_list()` says
+which). Its
 `order()`, as Lua's `traverse`, is one of the three orders filter
 frameworks use, `Order::Typewise` unless the filter says another (a value:
 a filter can choose it when it runs, and be a `dyn Filter`):
 
 - `Typewise` (as pandoc's Lua filters by default, and Haskell's `walk`): one
   walk per kind, each bottom-up: every inline, then every list of inlines,
-  then every block, then every list of blocks, then `meta`, then `pandoc`.
-- `Topdown` (Lua's other order, and pandocfilters'): `pandoc`, `meta`, then
-  a node before its children, which are walked in its replacement too,
-  unless the method calls `ctx.skip_children()` (Lua's `return el,
+  then every block, then every list of blocks, then every metadata value,
+  then `meta`, then `pandoc`.
+- `Topdown` (Lua's other order, and pandocfilters'): `pandoc`, `meta`,
+  then a node before its children, which are walked in its replacement
+  too, unless the method calls `ctx.skip_children()` (Lua's `return el,
   false`; in the other orders the children came first, and it does
-  nothing).
+  nothing). What a function returns is not given to a function again, nor,
+  if a list, are its elements; their children are walked (as in pandoc's
+  Lua and pandocfilters: an emphasis replaced by its content keeps an
+  emphasis that was directly in it). What a list function returns is the
+  list whose elements are walked.
 - `Bottomup` (panflute's): one walk, each node after its children.
 
 ```rust
@@ -70,6 +80,39 @@ impl Filter for NoNotes {
 `Inline`, a `Vec<Block>` or a `Vec<Inline>`, changed in place. As in Lua,
 the functions apply to what is in a node, not to the node itself; a list's
 function also to the list itself; `meta` and `pandoc` only to a document.
+From inside a function, `ctx.apply(x, &mut filter)` walks a fragment with
+the walk's conversion, as deep as the walk already is, and, if a function
+of that filter fails, fails with its error (where it was in the fragment:
+`inlines[2]`, as the other languages say) and returns `None`, for `?`:
+
+```rust
+use panir::{Ctx, Filter, Inline, Order};
+
+struct Caps;
+
+impl Filter for Caps {
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        if let Inline::Str(s) = x {
+            *s = s.to_uppercase().into();
+        }
+        None
+    }
+}
+
+/// An emphasis becomes its content, in capitals (pandocfilters' deemph).
+struct Deemph;
+
+impl Filter for Deemph {
+    fn order(&self) -> Order {
+        Order::Topdown
+    }
+    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+        let Inline::Emph(content) = x else { return None };
+        ctx.apply(content, &mut Caps)?;
+        Some(std::mem::take(content))
+    }
+}
+```
 
 A function fails with `ctx.fail(error)` (an error of any type, or a
 string), which returns `None`: the walk stops when the function returns,
@@ -101,12 +144,11 @@ assert_eq!(
 );
 ```
 
-The context (`Ctx`) has the conversion, `skip_children`, `fail` and the
-metadata (`ctx.meta()`; while a metadata value is walked, the other
-fields, as the value can't be lent while it changes; `None` in a
-fragment), and no more: not the node's
-parent, siblings or path, which panir's Python and TypeScript contexts
-have (pandoc's Lua functions have no context). A function has its node as
+The context (`Ctx`) has the conversion, `skip_children`, `fail`, `apply`,
+`in_list` and the metadata (`ctx.meta()`; while a metadata value is
+walked, the other fields, as the value can't be lent while it changes;
+`None` in a fragment), and no more: not the node's parent, siblings or
+path, which panir's Python and TypeScript contexts have (pandoc's Lua functions have no context). A function has its node as
 `&mut`, and while it does nothing else may reach the node, its parent
 included. A walk that needs them is a `VisitMut` that keeps its own (a
 stack of what it is in).
@@ -137,10 +179,18 @@ What a port of a Lua filter trips over:
   classes: `Attr::new("x", &["a", "b"], &[])` (a pair named `class` is an
   attribute named `class`).
 - `error(...)`: `return ctx.fail(...)`.
+- `el:walk{...}` in a function: `ctx.apply(&mut el, &mut filter)?`.
 - `return el, false` (top-down): `ctx.skip_children()`.
 - Lists count from 0, Lua's from 1 (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
-  functions after: `ctx.meta()`.
+  functions after: `ctx.meta()`. Inside the metadata, it lacks the field
+  being walked (out of the map while it changes): a field that names
+  itself, as pandocfilters' metavars allows, looks missing there, where
+  the other languages, whose `ctx.doc.meta` is the whole map, walk it
+  until the walk is too deep.
+- pandoc's Lua has no function for a metadata value (its values are
+  plain Lua values, reached through the `Meta` function or `doc.meta`);
+  here, as in panflute, `meta_value` is called on each one.
 
 ## Types and `VisitMut`
 
@@ -212,10 +262,11 @@ What a port of a Lua filter trips over:
   reads a document down to `MAX_DEPTH` (256) levels of blocks and inlines in
   each other, and as far as 640 kB of stack allow (a level takes five times
   the stack unoptimized); a deeper one is an error, not a crash. A filter
-  walks as deep, counting the walks its functions start (`apply` on a
-  fragment) from where they are: deeper, as a top-down function whose
-  result holds what it matched makes it (each result walked, without
-  end), is a `FilterError` (`function` `None`), with the path. A function
+  walks as deep, counting the walks its functions start (`ctx.apply`, or
+  `apply` on a fragment) from where they are: deeper, as a top-down
+  function whose result holds what it matched makes it (each result
+  walked, without end), is a `FilterError` (`function` `None`), with the
+  path. A function
   that calls itself without end is Rust's stack overflow (the process
   aborts): panir can't see it.
 - A `ColWidth` that isn't finite is read and written as pandoc does (`null`,

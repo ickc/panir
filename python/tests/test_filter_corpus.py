@@ -23,9 +23,11 @@ from panir import (
     Image,
     Inline,
     Link,
+    MetaBlocks,
     MetaBool,
     MetaInlines,
     MetaList,
+    MetaMap,
     MetaString,
     Note,
     Pandoc,
@@ -35,6 +37,7 @@ from panir import (
     Str,
     Strong,
     Table,
+    Underline,
 )
 
 FORMAT = "json"
@@ -374,10 +377,102 @@ def fails() -> list[Filter]:
     return [f]
 
 
+def replaced() -> list[Filter]:
+    seen: list[str] = []
+    f = Filter(traverse="topdown")
+
+    @f.on(Emph, Div)
+    def splice(x):
+        seen.append(type(x).__name__)
+        return x.content
+
+    @f.on(Strong)
+    def strong(s):
+        text = A.stringify(s)
+        seen.append(f"Strong:{text}")
+        if text == "other":
+            return Underline(Strong(Str("in")), Emph(Str("e")))
+        if text == "two":
+            return [Strong(Str("s")), Underline(Strong(Str("u")))]
+        return None
+
+    @f.on(Underline)
+    def underline(u):
+        seen.append("Underline")
+
+    @f.on(Str)
+    def str_(s):
+        seen.append(f"Str:{s.text}")
+
+    @f.on_inlines
+    def inlines(xs):
+        if xs and isinstance(xs[0], Str) and xs[0].text == "list":
+            seen.append("Inlines")
+            return [Emph(Str("new")), Strong(Emph(Str("g")))]
+        return None
+
+    return [f, listing(seen)]
+
+
+def metavalues() -> list[Filter]:
+    seen: list[str] = []
+
+    def functions(f: Filter) -> Filter:
+        @f.on(MetaInlines)
+        def inlines(v):
+            text = A.stringify(v)
+            seen.append(f"MetaInlines:{text}")
+            if text == "drop":
+                return []
+            if text == "two":
+                return [MetaString("two-a"), MetaString("two-b")]
+            return None
+
+        @f.on(MetaBlocks)
+        def blocks(v):
+            seen.append("MetaBlocks")
+
+        @f.on(MetaList)
+        def list_(v):
+            seen.append(f"MetaList:{len(v.content)}")
+
+        @f.on(MetaMap)
+        def map_(v):
+            seen.append("MetaMap")
+
+        @f.on(MetaString)
+        def string(v):
+            seen.append(f"MetaString:{v.text}")
+
+        @f.on(MetaBool)
+        def bool_(v):
+            seen.append("MetaBool")
+            return MetaString("true" if v.value else "false")
+
+        @f.on(Str)
+        def str_(s):
+            seen.append(f"Str:{s.text}")
+
+        return f
+
+    return [functions(Filter()), functions(Filter(traverse="topdown")), listing(seen)]
+
+
+def metadelete() -> list[Filter]:
+    f = Filter()
+
+    @f.on(MetaBool)
+    def delete(b):
+        return []
+
+    return [f]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
     + (once, lists, meta, newdoc, twice, metacount, attributes, fails)
+    + (replaced, metavalues, metadelete)
 }
 
 

@@ -26,11 +26,20 @@ import type {
 let skipped: (ctx: Context) => boolean;
 
 /**
+ * A node that holds another, as a context's `parent`: a product, which has
+ * no `t`, as one whose `t` is undefined, so that `ctx.parent?.t ===
+ * "MetaList"` reads, and narrows.
+ */
+export type ParentNode<N = ASTNode> = N extends { t: string } ? N : N & { readonly t?: undefined };
+
+/**
  * Where a node is: its parent, its place in it, the document, the
  * conversion. `S` is the type of the nodes beside it in a list (`next`,
- * `prev`, `container`): `Inline` for an inline's function.
+ * `prev`, `container`): `Inline` for an inline's function; `P`, the nodes
+ * that can hold it (`parent`): for a `MetaValue`'s, `Pandoc`, `MetaMap`
+ * or `MetaList`.
  */
-export class Context<S = unknown> {
+export class Context<S = unknown, P = ASTNode> {
   /** That field's name (the field of `parent` that holds this node). */
   field: string | undefined;
   /** This node's index in `container` (or its key in the map). */
@@ -77,8 +86,8 @@ export class Context<S = unknown> {
   }
 
   /** The node whose field holds this one (undefined for a fragment's list's nodes, and the document). */
-  get parent(): ASTNode | undefined {
-    return this.#parent as ASTNode | undefined;
+  get parent(): ParentNode<P> | undefined {
+    return this.#parent as ParentNode<P> | undefined;
   }
 
   /** The list holding this node, if in one (or the map). */
@@ -170,14 +179,14 @@ interface Frame {
 export type Traverse = "typewise" | "topdown" | "bottomup";
 
 /** The context a function gets when it can't skip children (not top-down: the children came first). */
-export type WalkedContext<S = unknown> = Omit<Context<S>, "skipChildren">;
+export type WalkedContext<S = unknown, P = ASTNode> = Omit<Context<S, P>, "skipChildren">;
 
 /**
  * A function's context: top-down, one that can skip children; `D`, the
  * document's type (`Pandoc` where the filter always runs on one).
  */
-type ContextFor<S, T extends Traverse, D> =
-  ([T] extends ["topdown"] ? Context<S> : WalkedContext<S>) & ([D] extends [Pandoc] ? { readonly doc: Pandoc } : unknown);
+type ContextFor<S, P, T extends Traverse, D> =
+  ([T] extends ["topdown"] ? Context<S, P> : WalkedContext<S, P>) & ([D] extends [Pandoc] ? { readonly doc: Pandoc } : unknown);
 
 /** What a function may return: nothing to keep the node, or what converts to its replacement. */
 type Returned<R> = R | void | undefined | null;
@@ -194,11 +203,13 @@ type Fn<N, C, R> = { fn(node: N, ctx: C): Returned<R> }["fn"];
  * that always run on a document (`runFilter`'s): their `ctx.doc` is one.
  */
 export type FilterFunctions<T extends Traverse = Traverse, D = Pandoc | undefined> = {
-  [K in keyof FilterTypes]?: Fn<FilterTypes[K]["node"], ContextFor<FilterTypes[K]["sibling"], T, D>, FilterTypes[K]["returns"]>;
+  [K in keyof FilterTypes]?: Fn<
+    FilterTypes[K]["node"], ContextFor<FilterTypes[K]["sibling"], FilterTypes[K]["parent"], T, D>, FilterTypes[K]["returns"]
+  >;
 } & {
-  Inlines?: Fn<Inline[], ContextFor<never, T, D>, Inlines>;
-  Blocks?: Fn<Block[], ContextFor<never, T, D>, Blocks>;
-  Meta?: Fn<Meta, ContextFor<never, T, D>, { readonly [key: string]: MetaValueInit }>;
+  Inlines?: Fn<Inline[], ContextFor<never, FilterTypes["Inline"]["parent"], T, D>, Inlines>;
+  Blocks?: Fn<Block[], ContextFor<never, FilterTypes["Block"]["parent"], T, D>, Blocks>;
+  Meta?: Fn<Meta, ContextFor<never, Pandoc, T, D>, { readonly [key: string]: MetaValueInit }>;
 };
 
 /**
@@ -431,11 +442,18 @@ class Walker {
     return (tag) => (tag === undefined ? ofType : fns.get(tag) ?? ofType);
   }
 
-  /** What a function returned for a position that holds one node of `type`: the node there now. */
-  #single(r: unknown, node: unknown, type: string, fn: Call, what: string): unknown {
+  /**
+   * What a function returned for a position that holds one node of `type`
+   * (a map's value, if `inMap`): the node there now.
+   */
+  #single(r: unknown, node: unknown, type: string, fn: Call, what: string, inMap: boolean): unknown {
     if (r === undefined || r === null || r === node) return node;
     if (isNodeOf(type, r)) return r;
-    const expected = Array.isArray(r) ? `one ${type} (this position holds one)` : nameOf(type);
+    const expected = !Array.isArray(r)
+      ? nameOf(type)
+      : inMap
+        ? `one ${type} (a map's value: to delete its key, remove it in the function of the Meta or MetaMap holding it)`
+        : `one ${type} (this position holds one)`;
     throw this.#wrong(fn, what, expected, r);
   }
 
@@ -461,8 +479,8 @@ class Walker {
     return out.length === 1 ? out[0] : out;
   }
 
-  /** A node in a position holding one node; returns it or its replacement. */
-  one(node: unknown, type: string): unknown {
+  /** A node in a position holding one node (a map's value, if `inMap`); returns it or its replacement. */
+  one(node: unknown, type: string, inMap = false): unknown {
     const sum = tables().types.get(type)!.kind === "sum";
     const tag = sum ? (node as { t?: string }).t : undefined;
     const fn = this.#find(type)(tag);
@@ -470,14 +488,14 @@ class Walker {
     if (this.topDown) {
       let skip = false;
       if (fn) {
-        node = this.#single(this.call(fn, tag ?? type, node), node, type, fn, tag ?? type);
+        node = this.#single(this.call(fn, tag ?? type, node), node, type, fn, tag ?? type, inMap);
         skip = this.skipped;
       }
       if (!skip) this.children(node, kidsOf(node));
       return node;
     }
     this.children(node, kidsOf(node));
-    return fn ? this.#single(this.call(fn, tag ?? type, node), node, type, fn, tag ?? type) : node;
+    return fn ? this.#single(this.call(fn, tag ?? type, node), node, type, fn, tag ?? type, inMap) : node;
   }
 
   /**
@@ -627,7 +645,7 @@ class Walker {
           // a node in a map: the map is its container, the key its index
           this.frames.push({ parent, field, outer, container: obj, index: k });
           try {
-            y = this.one(obj[k], (item as { ref: string }).ref);
+            y = this.one(obj[k], (item as { ref: string }).ref, true);
           } finally {
             this.frames.pop();
           }
@@ -789,6 +807,36 @@ export function walk<W extends Walkable>(target: W, action: WalkAction,
     if (kind.kind === "list") return w.many(target as unknown[], kind.type, undefined, undefined, TOP) as W;
     return w.one(target, kind.kind === "doc" ? SCHEMA.root : kind.type) as W;
   });
+}
+
+/**
+ * Check that no node is in two places of `target` (a document, a node, or
+ * an array of them): an error naming the first such node and both places.
+ * A node put in a second place must be a copy (`copy`), or whatever changes
+ * one later changes both; that is the filter's to get right, and this is
+ * for its tests and for debugging (nothing in panir calls it).
+ *
+ * By identity: two equal nodes are fine. An array in two places is found
+ * by the nodes in it; an empty one, holding none, is not. Strings and
+ * numbers can't be changed in place, nor can nodes without fields
+ * (`Space`): they don't count.
+ */
+export function checkUnique(target: Walkable): void {
+  const seen = new Map<object, string>();
+  // (top-down: a node in itself is found before the walk goes round it)
+  walk(target, (node, ctx, type) => {
+    if (Object.keys(node).length <= 1 && "t" in node) return; // (a Space: nothing in it to change)
+    const here = ctx.where;
+    const first = seen.get(node);
+    if (first === undefined) {
+      seen.set(node, here);
+      return;
+    }
+    const e = new Error(`the ${"t" in node ? node.t : type} at ${first} is also at ${here}: ` +
+                        "copy it before putting it in a second place");
+    noted.add(e); // (it says where)
+    throw e;
+  }, { topDown: true });
 }
 
 function applyOne(target: unknown, filter: Filter, conversion: Conversion): unknown {

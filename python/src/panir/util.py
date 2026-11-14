@@ -30,9 +30,9 @@ from ._types import (
     Space,
     Str,
 )
-from ._walk import _walk_fields
+from ._walk import Context, _walk_fields, walk
 
-__all__ = ["blocks", "from_python", "inlines", "stringify", "to_python"]
+__all__ = ["blocks", "check_unique", "from_python", "inlines", "stringify", "to_python"]
 
 _QUOTES = {QuoteType.SingleQuote: ("‘", "’"), QuoteType.DoubleQuote: ("“", "”")}
 
@@ -176,3 +176,31 @@ def _meta(value: Any) -> Any:
 
 
 MetaValue._convert = staticmethod(from_python)  # type: ignore[attr-defined]
+
+
+def check_unique(x: Any) -> None:
+    """Check that no node is in two places of ``x`` (a document, a node, or
+    a list of them): ``ValueError`` naming the first such node and both
+    places. A node put in a second place must be a copy, or whatever changes
+    one later changes both; that is the filter's to get right, and this is
+    for its tests and for debugging (it is called by nothing in panir).
+
+    By identity: two equal nodes are fine. A list (or a map) in two places
+    is found by the nodes in it; an empty one, holding none, is not. Strings
+    and numbers can't be changed in place, nor can nodes without fields
+    (``Space``): they don't count."""
+    seen: dict[int, str] = {}
+
+    def check(node: Node, ctx: Context) -> None:
+        if not node._fields:  # (a Space: nothing in it to change)
+            return
+        here = ctx.where
+        first = seen.setdefault(id(node), here)
+        if first != here:
+            raise ValueError(
+                f"the {type(node).__name__} at {first} is also at {here}: "
+                "copy it before putting it in a second place"
+            )
+
+    # (top-down: a node in itself is found before the walk goes round it)
+    walk(x, check, top_down=True)

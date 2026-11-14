@@ -116,7 +116,9 @@ reports `h.level = "2"` and `Para(Header(1))`, and accepts
 
 A function per node type, which returns `None` to keep the node (changed in
 place or not), a node to replace it, or a list to splice in its place (`[]`
-deletes it). A second parameter, if the function has one (without a
+deletes it); a metadata value in a map (a field of the metadata, or of a
+`MetaMap`) is replaced by one value (`[]` there is an error: a key is
+deleted by the function of the metadata or of the `MetaMap`). A second parameter, if the function has one (without a
 default), is the node's `Context`: its `parent`, the `container` it is in
 and its `index` there, its `next`/`prev` siblings, `path`, the `doc`, and
 the output `format`. They are right after earlier nodes of the list were
@@ -145,7 +147,11 @@ blocks[0].content[0]`; an exception raised in a function gets the same.
 As in Lua, what a function returns are values: `return [el, el]` puts two
 nodes in the document, the second a copy. Elsewhere a node belongs in one
 place: to put it in a second, copy it (`copy.deepcopy(el)`), or whatever
-changes one later changes both.
+changes one later changes both. That is the filter's author's to get
+right, as anything a program does; for tests and debugging,
+`check_unique(doc)` raises a `ValueError` naming a node it finds in two
+places, and both (by identity: equal nodes are fine; a list in two places
+by what is in it).
 
 ```python
 @f.on(Str)
@@ -181,7 +187,11 @@ use:
   before its children, which are walked in the node's replacement too,
   unless the function calls `ctx.skip_children()` (Lua's `return el,
   false`). The order in which elements start, as a reader meets them: for
-  counters and nesting.
+  counters and nesting. What a function returns is not given to a function
+  again, nor, if a list, are its elements; their children are walked (as
+  in pandoc's Lua and pandocfilters: an emphasis replaced by its content
+  keeps an emphasis that was directly in it). What a list function returns
+  is the list whose elements are walked.
 - `"bottomup"` (panflute's): one walk, each node after its children, a
   list after its elements, the metadata after what is in it, `Pandoc`
   last. The fastest.
@@ -223,6 +233,10 @@ What a port of a Lua filter trips over:
 - Lists count from 0 here, from 1 in Lua (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
   functions after: `ctx.doc.meta`.
+- pandoc's Lua has no function for a metadata value (its values are
+  plain Lua values, reached through the `Meta` function or `doc.meta`);
+  here, as in panflute, `@f.on(MetaValue)` (or `MetaList`, ...) is called
+  on each one.
 
 ### Fragments
 

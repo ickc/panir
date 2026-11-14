@@ -172,9 +172,11 @@ A filter is an object of functions by constructor (`Str`, `Header`), type
 (`Inline`, `Block`, `MetaValue`) or product (`Cell`, `Pandoc`); a node gets
 its constructor's, or else its type's. A function returns nothing to keep
 the node (changed in place or not), a node to replace it, or an array to
-splice in its place (`[]` deletes it). A function under a capitalised name
-no node has (`Strr`) is an error. A function is called as a method of its
-filter (`this`).
+splice in its place (`[]` deletes it); a metadata value in a map (a field
+of `Meta`, or of a `MetaMap`) is replaced by one value (`[]` there is an
+error: a key is deleted by the function of `Meta` or of the `MetaMap`). A
+function under a capitalised name no node has (`Strr`) is an error. A
+function is called as a method of its filter (`this`).
 
 What a function returns converts as pandoc's Lua converts it: for an
 inline, a string is its words (`return "two words"`), and a list's
@@ -198,7 +200,10 @@ An error thrown in a function gets the same note (`in filter function
 As in Lua, what a function returns are values: `[el, el]` puts two nodes
 in the document, the second a copy. Elsewhere a node belongs in one place:
 to put it in a second, copy it (`copy(el)`), or whatever changes one later
-changes both.
+changes both. That is the filter's author's to get right, as anything a
+program does; for tests and debugging, `checkUnique(doc)` throws an error
+naming a node it finds in two places, and both (by identity: equal nodes
+are fine; an array in two places by what is in it).
 
 As in Lua, `Inlines` and `Blocks` get every list of them, and `Meta` the
 metadata; each returns a replacement, or nothing (converted as Lua does: a
@@ -214,9 +219,12 @@ its `index` there, `next`/`prev`, `path` and `where`, the `doc`,
 nodes of the list were deleted or spliced: a node replaced by none or
 several is spliced in place, so a list is as it is now however it is
 reached. Its types follow the function's: `ctx.next` of an inline is an
-`Inline`; `ctx.doc` is a `Pandoc` in a filter written in `runFilter`'s
-call (which runs on a document), elsewhere perhaps `undefined` (a
-fragment has none).
+`Inline`; `ctx.parent` of a metadata value is a `MetaList`, a `MetaMap`
+or the `Pandoc`, the nodes that can hold one, each with a `t` to test
+(`ctx.parent?.t === "MetaList"`; a product's, as the `Pandoc`'s, is
+`undefined`); `ctx.doc` is a `Pandoc` in a filter written in
+`runFilter`'s call (which runs on a document), elsewhere perhaps
+`undefined` (a fragment has none).
 
 ```ts
 const shout: Filter = {
@@ -244,9 +252,13 @@ name.
 - `"topdown"` (Lua's other order, and pandocfilters'): `Pandoc`, `Meta`,
   then from the root down, a list before its elements and a node before
   its children, which are walked in the node's replacement too, unless the
-  function calls `ctx.skipChildren()` (Lua's `return el, false`). The order
-  in which elements start, as a reader meets them: for counters and
-  nesting.
+  function calls `ctx.skipChildren()` (Lua's `return el, false`). The
+  order in which elements start, as a reader meets them: for counters and
+  nesting. What a function returns is not given to a function again, nor,
+  if a list, are its elements; their children are walked (as in pandoc's
+  Lua and pandocfilters: an emphasis replaced by its content keeps an
+  emphasis that was directly in it). What a list function returns is the
+  list whose elements are walked.
 - `"bottomup"` (panflute's): one walk, each node after its children, a list
   after its elements, `Meta` after the metadata, `Pandoc` last. The
   fastest.
@@ -304,6 +316,10 @@ What a port of a Lua filter trips over:
 - Arrays count from 0, Lua's lists from 1 (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
   functions after: `ctx.doc.meta`.
+- pandoc's Lua has no function for a metadata value (its values are
+  plain Lua values, reached through the `Meta` function or `doc.meta`);
+  here, as in panflute, `MetaValue` (or `MetaList`, ...) is called on each
+  one.
 
 ### Fragments
 

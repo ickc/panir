@@ -284,12 +284,15 @@ _expected(T) = "$(nameof(T)), a vector of them, " * (T <: Union{Inline, Block} ?
 # The type of node that goes where `x` is: its sum type, or itself.
 _family(::Type{T}) where {T} = supertype(T) in _SUMS ? supertype(T) : T
 
-# What a method returned for `x`, a single node: `x` for nothing, or a node of its family.
-function _replacement(w::_Walker, x, r)
+# What a method returned for `x`, a single node (a map's value, if `inmap`):
+# `x` for nothing, or a node of its family.
+function _replacement(w::_Walker, x, r, inmap::Bool = false)
     r === nothing && return x
     F = _family(typeof(x))
-    r isa F || throw(_wrong(w, x, r, "$(nameof(F)) or nothing"))
-    r
+    r isa F && return r
+    throw(_wrong(w, x, r, inmap && r isa AbstractVector ?
+        "one $(nameof(F)) (a map's value: to delete its key, remove it in the method for the Meta or MetaMap holding it)" :
+        "$(nameof(F)) or nothing"))
 end
 
 # Where `node` is in a list its method changed (`ctx.container`).
@@ -301,16 +304,16 @@ function _find(list::Vector, node)
     i
 end
 
-function _one(w::_Walker, x::Node)
+function _one(w::_Walker, x::Node, inmap::Bool = false)
     if w.topdown
         r, skip = _call(w, x)
-        r === nothing || (x = _replacement(w, x, r))
+        r === nothing || (x = _replacement(w, x, r, inmap))
         skip || _children(w, x)
         return x
     end
     _children(w, x)
     r, _ = _call(w, x)
-    r === nothing ? x : _replacement(w, x, r)
+    r === nothing ? x : _replacement(w, x, r, inmap)
 end
 
 # The list function on `list`: the list, or a new one of what it returned
@@ -403,7 +406,7 @@ function _value(w::_Walker, x::Dict, parent, field, path)
         if y isa Node  # the map is its container, the key its index
             _push!(w, (parent, field, x, k, _Path(path, k)))
             z = try
-                _one(w, y)
+                _one(w, y, true)
             finally
                 pop!(w.stack)
             end
@@ -521,6 +524,36 @@ end
 
 # The task's walker calling methods now, if any.
 const _WALKER = :panir_walker
+
+"""
+    check_unique(x)
+
+Check that no node is in two places of `x` (a document, a node, or a
+vector of them): an `ArgumentError` naming the first such node and both
+places. A node put in a second place must be a copy (`deepcopy`), or
+whatever changes one later changes both; that is the filter's to get
+right, and this is for its tests and for debugging (nothing in Panir calls
+it).
+
+By identity (`===`): two equal nodes are fine. A vector in two places is
+found by the nodes in it; an empty one, holding none, is not. Strings and
+numbers can't be changed in place, nor can nodes without fields (`Space`):
+they don't count.
+"""
+function check_unique(x::Union{Node, Vector{Inline}, Vector{Block}})
+    seen = IdDict{Node, String}()
+    function check(node::Node, ctx)
+        fieldcount(typeof(node)) == 0 && return nothing  # (a Space: nothing in it to change)
+        here = _format_path(ctx.path)
+        first = get!(seen, node, here)
+        first == here || throw(ArgumentError("the $(nameof(typeof(node))) at $first is also at $here: " *
+                                             "copy it before putting it in a second place"))
+        nothing
+    end
+    # (top-down: a node in itself is found before the walk goes round it)
+    walk!(check, x; traverse = :topdown)
+    nothing
+end
 
 function _walk!(@nospecialize(f), node, traverse::Symbol, conversion::Conversion, base::Int)
     # Nothing here is compiled again for each filter (what calls it is

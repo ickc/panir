@@ -295,10 +295,8 @@ impl Filter for Reentering {
             attr: Default::default(),
             content: vec![x.clone()],
         }))];
-        match apply(&mut span, self, None) {
-            Ok(()) => Some(span),
-            Err(e) => ctx.fail(e),
-        }
+        ctx.apply(&mut span, self)?;
+        Some(span)
     }
 }
 
@@ -311,11 +309,12 @@ fn walks_started_by_functions_count_from_where_they_are() {
         .unwrap()
         .join()
         .unwrap();
-    // the outermost function's error holds the inner ones, down to the walk
-    // too deep
+    // the error is the walk's that went too deep, where it was in its
+    // fragment (the fragment itself), passed up unchanged by the functions
+    // that started the walks
     assert_eq!(
-        (e.function, e.path.as_str()),
-        (Some("inline"), "blocks[0].content[0]")
+        (e.function, e.node, e.path.as_str()),
+        (None, "Inlines", "inlines")
     );
     assert!(
         e.to_string()

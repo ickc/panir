@@ -33,7 +33,9 @@ from panir import (
     Inline,
     Link,
     MetaBool,
+    MetaInlines,
     MetaList,
+    MetaMap,
     MetaString,
     NodeList,
     Pandoc,
@@ -467,11 +469,32 @@ def test_a_wrong_return_in_a_position_of_one_node():
         return [m, m]
 
     d = Pandoc(meta={"x": True})
-    with pytest.raises(ASTTypeError, match=r"Pandoc.meta\['x'\]: expected one node") as e:
+    with pytest.raises(ASTTypeError, match=r"Pandoc.meta\['x'\]: expected one MetaValue") as e:
         f(d)
     assert e.value.__notes__ == [
         f"returned by filter function {wrong.__qualname__}, for the MetaBool at meta.x"
     ]
+
+
+@pytest.mark.parametrize("traverse", ["typewise", "topdown", "bottomup"])
+def test_an_empty_list_for_a_maps_value_is_an_error(traverse):
+    # in a list, [] deletes a metadata value; a map's value (a field, a
+    # MetaMap's entry) is replaced by one: its key is deleted by the
+    # function of the Meta or MetaMap holding it, as in every language
+    f = Filter(traverse=traverse)
+
+    @f.on(MetaBool)
+    def drop(m):
+        return []
+
+    d = Pandoc(meta={"x": True, "l": [True, "a"], "m": {"k": True}})
+    with pytest.raises(ASTTypeError, match="to delete its key, remove it") as e:
+        f(d)
+    assert "got []" in str(e.value)
+    assert d.meta["x"] == MetaBool(True)
+    d = Pandoc(meta={"l": [True, "a"], "m": MetaMap({"k": MetaString("s")})})
+    f(d)
+    assert d.meta["l"] == MetaList(MetaString("a"))
 
 
 # -- filters on fragments, as Lua's el:walk{} -------------------------------------
@@ -644,3 +667,29 @@ def test_walk_on_a_list():
 
 def test_types_of_fragments():
     assert isinstance(Para(), Block) and isinstance(Str(""), Inline)
+
+
+def test_check_unique_finds_a_node_in_two_places():
+    s = Str("x")
+    d = Pandoc(Para(s, Space(), Str("y")), meta={"title": MetaInlines("t")})
+    panir.check_unique(d)  # (nothing to say)
+    panir.check_unique(Pandoc(Para("a"), Para("a")))  # equal, not the same
+    d.meta["title"].content.append(s)
+    with pytest.raises(ValueError) as e:
+        panir.check_unique(d)
+    assert str(e.value) == (
+        "the Str at meta.title.content[1] is also at blocks[0].content[0]: "
+        "copy it before putting it in a second place"
+    )
+    # a node in itself, before the walk goes round it
+    em = Emph("a")
+    em.content.append(em)
+    with pytest.raises(ValueError, match=r"the Emph at Para.content\[0\] is also at Para"):
+        panir.check_unique(Para(em))
+    # a list in two places, by what is in it; a fragment's paths from it
+    p = Para("a")
+    with pytest.raises(ValueError, match=r"Str at blocks\[0\].content\[0\] is also at blocks\[1\]"):
+        panir.check_unique([p, Plain(*p.content)])
+    # a node with nothing in it can't change: one Space in two places is fine
+    sp = Space()
+    panir.check_unique(Para("a", sp, "b", sp, "c"))

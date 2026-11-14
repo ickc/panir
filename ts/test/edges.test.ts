@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyFilter, ASTDecodeError, ASTDepthError, ASTTypeError, check, ColSpec, ColWidth, Div, Emph, fromJSON, fromPlain,
-  Header, MetaInlines, Pandoc, Para, parse, RawBlock, serialize, Space, Str, stringify, Table, toJSON,
+  Header, MetaBool, MetaInlines, MetaMap, Pandoc, Para, parse, RawBlock, serialize, Space, Str, stringify, Table, toJSON,
 } from "../src/index.ts";
 import type { Filter, Inline } from "../src/index.ts";
 
@@ -481,7 +481,9 @@ test("what a function may not return", () => {
     [() => applyFilter(Pandoc([Para("a")]), { Str: (async () => undefined) as never }),
      /^blocks\[0\]\.content\[0\]: expected Inline, a list of them, or nothing, got \{\} \(a promise: filter functions can't be async\)\n/],
     [() => applyFilter(Pandoc([], { meta: { title: MetaInlines("t") } }), { MetaValue: (() => []) as never }),
-     /^meta\.title: expected one MetaValue \(this position holds one\), got \[\]\n {2}returned by filter function MetaValue, for the MetaInlines at meta\.title$/],
+     /^meta\.title: expected one MetaValue \(a map's value: to delete its key, remove it in the function of the Meta or MetaMap holding it\), got \[\]\n {2}returned by filter function MetaValue, for the MetaInlines at meta\.title$/],
+    [() => applyFilter(Pandoc([], { meta: { m: MetaMap({ k: MetaBool(true) }) } }), { traverse: "topdown", MetaBool: () => [] }),
+     /^meta\.m\.content\.k: expected one MetaValue \(a map's value: to delete its key/],
     [() => applyFilter(Pandoc([Para("a")]), { Inlines: (() => 42) as never }),
      /^blocks\[0\]\.content: expected a list of Inlines, got 42\n {2}returned by filter function Inlines, for the Inlines at blocks\[0\]\.content$/],
   ];

@@ -536,67 +536,68 @@ export interface Types {
 
 /**
  * The functions a filter can have, by name: the node each gets, what is
- * beside it in a list (`never`: it is never in one), and what it may
- * return besides nothing (converted as pandoc's Lua converts it).
+ * beside it in a list (`never`: it is never in one), the nodes that can
+ * hold it (`never`: none), and what it may return besides nothing
+ * (converted as pandoc's Lua converts it).
  */
 export interface FilterTypes {
-  Pandoc: { node: Pandoc; sibling: never; returns: Pandoc };
-  Block: { node: Block; sibling: Block; returns: Blocks };
-  Plain: { node: Plain; sibling: Block; returns: Blocks };
-  Para: { node: Para; sibling: Block; returns: Blocks };
-  LineBlock: { node: LineBlock; sibling: Block; returns: Blocks };
-  CodeBlock: { node: CodeBlock; sibling: Block; returns: Blocks };
-  RawBlock: { node: RawBlock; sibling: Block; returns: Blocks };
-  BlockQuote: { node: BlockQuote; sibling: Block; returns: Blocks };
-  OrderedList: { node: OrderedList; sibling: Block; returns: Blocks };
-  BulletList: { node: BulletList; sibling: Block; returns: Blocks };
-  DefinitionList: { node: DefinitionList; sibling: Block; returns: Blocks };
-  Header: { node: Header; sibling: Block; returns: Blocks };
-  HorizontalRule: { node: HorizontalRule; sibling: Block; returns: Blocks };
-  Table: { node: Table; sibling: Block; returns: Blocks };
-  Figure: { node: Figure; sibling: Block; returns: Blocks };
-  Div: { node: Div; sibling: Block; returns: Blocks };
-  MetaValue: { node: MetaValue; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
-  MetaMap: { node: MetaMap; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
-  MetaList: { node: MetaList; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
-  MetaBool: { node: MetaBool; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
-  MetaString: { node: MetaString; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
-  MetaInlines: { node: MetaInlines; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
-  MetaBlocks: { node: MetaBlocks; sibling: MetaValue; returns: MetaValue | readonly MetaValue[] };
-  Inline: { node: Inline; sibling: Inline; returns: Inlines };
-  Str: { node: Str; sibling: Inline; returns: Inlines };
-  Emph: { node: Emph; sibling: Inline; returns: Inlines };
-  Underline: { node: Underline; sibling: Inline; returns: Inlines };
-  Strong: { node: Strong; sibling: Inline; returns: Inlines };
-  Strikeout: { node: Strikeout; sibling: Inline; returns: Inlines };
-  Superscript: { node: Superscript; sibling: Inline; returns: Inlines };
-  Subscript: { node: Subscript; sibling: Inline; returns: Inlines };
-  SmallCaps: { node: SmallCaps; sibling: Inline; returns: Inlines };
-  Quoted: { node: Quoted; sibling: Inline; returns: Inlines };
-  Cite: { node: Cite; sibling: Inline; returns: Inlines };
-  Code: { node: Code; sibling: Inline; returns: Inlines };
-  Space: { node: Space; sibling: Inline; returns: Inlines };
-  SoftBreak: { node: SoftBreak; sibling: Inline; returns: Inlines };
-  LineBreak: { node: LineBreak; sibling: Inline; returns: Inlines };
-  Math: { node: Math; sibling: Inline; returns: Inlines };
-  RawInline: { node: RawInline; sibling: Inline; returns: Inlines };
-  Link: { node: Link; sibling: Inline; returns: Inlines };
-  Image: { node: Image; sibling: Inline; returns: Inlines };
-  Note: { node: Note; sibling: Inline; returns: Inlines };
-  Span: { node: Span; sibling: Inline; returns: Inlines };
-  Attr: { node: Attr; sibling: never; returns: Attr };
-  ListAttributes: { node: ListAttributes; sibling: never; returns: ListAttributes };
-  Caption: { node: Caption; sibling: never; returns: Caption };
-  ColSpec: { node: ColSpec; sibling: ColSpec; returns: ColSpec | readonly ColSpec[] };
-  TableHead: { node: TableHead; sibling: never; returns: TableHead };
-  TableBody: { node: TableBody; sibling: TableBody; returns: TableBody | readonly TableBody[] };
-  TableFoot: { node: TableFoot; sibling: never; returns: TableFoot };
-  Citation: { node: Citation; sibling: Citation; returns: Citation | readonly Citation[] };
-  Target: { node: Target; sibling: never; returns: Target };
-  ColWidth: { node: ColWidthBase; sibling: never; returns: ColWidthBase };
-  ColWidthDefault: { node: ColWidthDefault; sibling: never; returns: ColWidthBase };
-  Row: { node: Row; sibling: Row; returns: Row | readonly Row[] };
-  Cell: { node: Cell; sibling: Cell; returns: Cell | readonly Cell[] };
+  Pandoc: { node: Pandoc; sibling: never; parent: never; returns: Pandoc };
+  Block: { node: Block; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  Plain: { node: Plain; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  Para: { node: Para; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  LineBlock: { node: LineBlock; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  CodeBlock: { node: CodeBlock; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  RawBlock: { node: RawBlock; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  BlockQuote: { node: BlockQuote; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  OrderedList: { node: OrderedList; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  BulletList: { node: BulletList; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  DefinitionList: { node: DefinitionList; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  Header: { node: Header; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  HorizontalRule: { node: HorizontalRule; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  Table: { node: Table; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  Figure: { node: Figure; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  Div: { node: Div; sibling: Block; parent: Pandoc | BlockQuote | OrderedList | BulletList | DefinitionList | Figure | Div | MetaBlocks | Note | Caption | Cell; returns: Blocks };
+  MetaValue: { node: MetaValue; sibling: MetaValue; parent: Pandoc | MetaMap | MetaList; returns: MetaValue | readonly MetaValue[] };
+  MetaMap: { node: MetaMap; sibling: MetaValue; parent: Pandoc | MetaMap | MetaList; returns: MetaValue | readonly MetaValue[] };
+  MetaList: { node: MetaList; sibling: MetaValue; parent: Pandoc | MetaMap | MetaList; returns: MetaValue | readonly MetaValue[] };
+  MetaBool: { node: MetaBool; sibling: MetaValue; parent: Pandoc | MetaMap | MetaList; returns: MetaValue | readonly MetaValue[] };
+  MetaString: { node: MetaString; sibling: MetaValue; parent: Pandoc | MetaMap | MetaList; returns: MetaValue | readonly MetaValue[] };
+  MetaInlines: { node: MetaInlines; sibling: MetaValue; parent: Pandoc | MetaMap | MetaList; returns: MetaValue | readonly MetaValue[] };
+  MetaBlocks: { node: MetaBlocks; sibling: MetaValue; parent: Pandoc | MetaMap | MetaList; returns: MetaValue | readonly MetaValue[] };
+  Inline: { node: Inline; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Str: { node: Str; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Emph: { node: Emph; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Underline: { node: Underline; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Strong: { node: Strong; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Strikeout: { node: Strikeout; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Superscript: { node: Superscript; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Subscript: { node: Subscript; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  SmallCaps: { node: SmallCaps; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Quoted: { node: Quoted; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Cite: { node: Cite; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Code: { node: Code; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Space: { node: Space; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  SoftBreak: { node: SoftBreak; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  LineBreak: { node: LineBreak; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Math: { node: Math; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  RawInline: { node: RawInline; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Link: { node: Link; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Image: { node: Image; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Note: { node: Note; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Span: { node: Span; sibling: Inline; parent: Plain | Para | LineBlock | DefinitionList | Header | MetaInlines | Emph | Underline | Strong | Strikeout | Superscript | Subscript | SmallCaps | Quoted | Cite | Link | Image | Span | Caption | Citation; returns: Inlines };
+  Attr: { node: Attr; sibling: never; parent: CodeBlock | Header | Table | Figure | Div | Code | Link | Image | Span | TableHead | TableBody | TableFoot | Row | Cell; returns: Attr };
+  ListAttributes: { node: ListAttributes; sibling: never; parent: OrderedList; returns: ListAttributes };
+  Caption: { node: Caption; sibling: never; parent: Table | Figure; returns: Caption };
+  ColSpec: { node: ColSpec; sibling: ColSpec; parent: Table; returns: ColSpec | readonly ColSpec[] };
+  TableHead: { node: TableHead; sibling: never; parent: Table; returns: TableHead };
+  TableBody: { node: TableBody; sibling: TableBody; parent: Table; returns: TableBody | readonly TableBody[] };
+  TableFoot: { node: TableFoot; sibling: never; parent: Table; returns: TableFoot };
+  Citation: { node: Citation; sibling: Citation; parent: Cite; returns: Citation | readonly Citation[] };
+  Target: { node: Target; sibling: never; parent: Link | Image; returns: Target };
+  ColWidth: { node: ColWidthBase; sibling: never; parent: ColSpec; returns: ColWidthBase };
+  ColWidthDefault: { node: ColWidthDefault; sibling: never; parent: ColSpec; returns: ColWidthBase };
+  Row: { node: Row; sibling: Row; parent: TableHead | TableBody | TableFoot; returns: Row | readonly Row[] };
+  Cell: { node: Cell; sibling: Cell; parent: Row; returns: Cell | readonly Cell[] };
 }
 
 /** pandoc's `Pandoc`. */

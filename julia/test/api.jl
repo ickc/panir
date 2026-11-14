@@ -155,6 +155,7 @@ doc_para(d::Pandoc) = Para("x")
 meta_int(m::Panir.Meta) = 42
 meta_bad(m::Panir.Meta) = Dict("k" => :symbol)
 metavalue_str(m::MetaValue) = Str("x")
+metavalue_none(m::MetaString) = MetaValue[]
 cell_para(c::Cell) = Para("x")
 end
 
@@ -171,6 +172,9 @@ end
             (Wrong.meta_int, doc(), [:meta], "metadata (a Dict) or nothing", "Int64 42"),
             (Wrong.meta_bad, doc(), [:meta], "metadata (a Dict of what converts to a MetaValue) or nothing", "Dict{String, Symbol} Dict(\"k\" => :symbol)"),
             (Wrong.metavalue_str, doc(), [:meta, "k"], "MetaValue or nothing", "Str (an Inline)"),
+            # a map's value is replaced by one: [] doesn't delete its key
+            (Wrong.metavalue_none, doc(), [:meta, "k"], "one MetaValue (a map's value: to delete its key, remove it in the method for the Meta or MetaMap holding it)", "Vector{MetaValue} MetaValue[]"),
+            (Wrong.metavalue_none, Pandoc(; meta = Dict("m" => Dict("k" => "v"))), [:meta, "m", :content, "k"], "one MetaValue (a map's value: to delete its key, remove it in the method for the Meta or MetaMap holding it)", "Vector{MetaValue} MetaValue[]"),
             (Wrong.cell_para, table(), [:blocks, 0, :bodies, 0, :body, 0, :cells, 0], "Cell, a vector of them, or nothing", "Para (a Block)"),
         ]
             e = try
@@ -355,7 +359,7 @@ end
     m = Module()
     Core.eval(m, :(using Panir))
     for name in (:Str, :Para, :Inline, :MetaValue, :InlineMath, :DoubleQuote, :AlignLeft, :LowerRoman, :OneParen,
-                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify)
+                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify, :check_unique)
         @test isdefined(m, name)
     end
     # the common words, the aliases and the enums' types: as Panir.X
@@ -384,4 +388,29 @@ end
     m = Module()
     Base.include_string(m, "using Panir\n" * blocks[end])
     @test Core.eval(m, :(walk!(loud, Emph("a", Str("b"))))) == Emph(Str("A"), Str("B"))
+end
+
+@testset "check_unique finds a node in two places" begin
+    s = Str("x")
+    d = Pandoc(Para(s, Space(), Str("y")); meta = Dict("title" => MetaInlines(Str("t"))))
+    @test check_unique(d) === nothing
+    @test check_unique(Pandoc(Para("a"), Para("a"))) === nothing  # equal, not the same
+    push!(d.meta["title"].content, s)
+    e = try check_unique(d) catch e; e end
+    @test e isa ArgumentError && e.msg ==
+          "the Str at meta.title.content[1] is also at blocks[0].content[0]: copy it before putting it in a second place"
+    # a node in itself, before the walk goes round it
+    em = Emph("a")
+    push!(em.content, em)
+    e = try check_unique(Para(em)) catch e; e end
+    @test e isa ArgumentError && startswith(e.msg, "the Emph at content[0] is also at content[0].content[1]")
+    # a vector in two places, by what is in it
+    p = Para("a")
+    q = Plain()
+    q.content = p.content
+    e = try check_unique(Block[p, q]) catch e; e end
+    @test e isa ArgumentError && startswith(e.msg, "the Str at [0].content[0] is also at [1].content[0]")
+    # a node with nothing in it can't change: one Space in two places is fine
+    sp = Space()
+    @test check_unique(Para(Str("a"), sp, Str("b"), sp)) === nothing
 end
