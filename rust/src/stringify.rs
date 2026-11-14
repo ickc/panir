@@ -1,8 +1,8 @@
 //! [`stringify`]: the text of a node, as pandoc's Lua `pandoc.utils.stringify`.
 
 use crate::{
-    walk_inline_ref, walk_meta_value_ref, Block, Caption, Cell, Citation, Inline, Meta, MetaValue,
-    Pandoc, QuoteType, Row, TableBody, TableFoot, TableHead, Visit,
+    Block, Caption, Cell, Citation, Inline, Meta, MetaValue, Pandoc, QuoteType, Row, TableBody,
+    TableFoot, TableHead, Visit, walk_inline_ref, walk_meta_value_ref,
 };
 
 /// The text of a node (or of a list of them), without markup, exactly as

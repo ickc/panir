@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -115,11 +116,11 @@ jobs:
           echo "$out"
           [ "$out" = "SOME TEXT" ]
       # the oldest Rust Cargo.toml's rust-version claims
-      - name: The tests on Rust 1.85
+      - name: The tests on Rust 1.97
         if: matrix.os == 'ubuntu-latest'
         run: |
-          rustup toolchain install 1.85 --profile minimal
-          pixi run --manifest-path ../pixi.toml cargo +1.85 test
+          rustup toolchain install 1.97 --profile minimal
+          pixi run --manifest-path ../pixi.toml cargo +1.97 test
       - name: The example builds for wasm32-wasip1
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -224,7 +225,7 @@ jobs:
           name: fuzz-failures
           path: fuzz/failures
 
-  # What the registries would get, on every push: one version everywhere,
+  # What the registries would get, on every change: one version everywhere,
   # and each package as it would be published (nothing is published here;
   # see release.yml and RELEASING.md)
   package:

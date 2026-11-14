@@ -1,6 +1,6 @@
 //! Strings convert as in pandoc's Lua.
 
-use panir::{blocks, inlines, Block, Inline};
+use panir::{Block, Inline, blocks, inlines};
 
 #[test]
 fn inlines_are_words_and_spaces() {

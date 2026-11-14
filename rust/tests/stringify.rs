@@ -2,8 +2,8 @@
 //! pandoc itself (on both corpora and on metadata of every kind) where
 //! pandoc can be run: `$PANDOC`, or `pandoc` on `PATH`.
 
-use panir::{from_str, stringify, Pandoc};
-use serde_json::{json, Value};
+use panir::{Pandoc, from_str, stringify};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 

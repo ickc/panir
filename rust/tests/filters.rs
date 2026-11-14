@@ -2,11 +2,11 @@
 //! Rust filters, must make of its input what pandoc's Lua filter made.
 
 use panir::{
-    apply, from_str, to_string, Attr, Block, Ctx, Div, Filter, Header, Inline, Meta, MetaValue,
-    Order, Pandoc,
+    Attr, Block, Ctx, Div, Filter, Header, Inline, Meta, MetaValue, Order, Pandoc, apply, from_str,
+    to_string,
 };
-use serde_json::value::RawValue;
 use serde_json::Value;
+use serde_json::value::RawValue;
 use std::mem::take;
 use std::path::PathBuf;
 
@@ -196,11 +196,10 @@ impl Filter for Twice {
         }
     }
     fn block(&mut self, x: &mut Block, _: &mut Ctx) -> Option<Vec<Block>> {
-        if let Block::Para(content) = x {
-            if let Some(Inline::Code(c)) = content.iter_mut().find(|i| matches!(i, Inline::Code(_)))
-            {
-                c.text = "changed".into();
-            }
+        if let Block::Para(content) = x
+            && let Some(Inline::Code(c)) = content.iter_mut().find(|i| matches!(i, Inline::Code(_)))
+        {
+            c.text = "changed".into();
         }
         None
     }
@@ -336,11 +335,13 @@ impl Filter for Skip {
             }
             Block::BlockQuote(q) => {
                 ctx.skip_children();
-                Some(vec![Div {
-                    attr: Attr::default(),
-                    content: take(q),
-                }
-                .into()])
+                Some(vec![
+                    Div {
+                        attr: Attr::default(),
+                        content: take(q),
+                    }
+                    .into(),
+                ])
             }
             _ => None,
         }

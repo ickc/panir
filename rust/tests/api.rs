@@ -2,8 +2,8 @@
 //! `Hash`, visitors on a document.
 
 use panir::{
-    from_reader, from_slice, from_str, to_string, walk_inline_ref, Block, ColSpec, ColWidth,
-    Inline, Pandoc, Table, Visit, PANDOC_API_VERSION,
+    Block, ColSpec, ColWidth, Inline, PANDOC_API_VERSION, Pandoc, Table, Visit, from_reader,
+    from_slice, from_str, to_string, walk_inline_ref,
 };
 use std::collections::HashSet;
 
