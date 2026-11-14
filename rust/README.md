@@ -71,7 +71,37 @@ impl Filter for NoNotes {
 the functions apply to what is in a node, not to the node itself; a list's
 function also to the list itself; `meta` and `pandoc` only to a document.
 
-The context (`Ctx`) has the conversion and `skip_children`, and no more:
+A function fails with `ctx.fail(error)` (an error of any type, or a
+string), which returns `None`: the walk stops when the function returns,
+and `apply` returns a `FilterError` with the error, the method that
+failed, the node's constructor and its path (in the other languages' form:
+`blocks[2].content[0]`), shown as they show theirs. `panir::filter` prints
+it and exits with status 1, as pandoc expects of a JSON filter.
+
+```rust
+use panir::{Block, Ctx, Filter, Inline, Pandoc};
+
+struct NoEmph;
+
+impl Filter for NoEmph {
+    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+        match x {
+            Inline::Emph(_) => ctx.fail("no emphasis, please"),
+            _ => None,
+        }
+    }
+}
+
+let mut doc = Pandoc::new(vec![Block::Para(vec!["a".into(), Inline::Emph(vec![])])]);
+let e = panir::apply(&mut doc, &mut NoEmph, None).unwrap_err();
+assert_eq!(e.path, "blocks[0].content[1]");
+assert_eq!(
+    e.to_string(),
+    "no emphasis, please\n  in filter function inline, on the Emph at blocks[0].content[1]"
+);
+```
+
+The context (`Ctx`) has the conversion, `skip_children` and `fail`, and no more:
 not the node's parent, siblings or path, which panir's Python and
 TypeScript contexts have (pandoc's Lua functions have no context). A
 function has its node as `&mut`, and while it does nothing else may reach

@@ -22,12 +22,12 @@ fn the_conversion() {
         ..Conversion::default()
     };
     let mut seen = Seen::default();
-    apply_with(&mut doc(), &mut seen, &c);
+    apply_with(&mut doc(), &mut seen, &c).unwrap();
     assert_eq!(seen.0, Some((Some("html5".into()), c)));
 
     // a format alone is a conversion knowing only that
     let mut seen = Seen::default();
-    apply(&mut doc(), &mut seen, Some("latex"));
+    apply(&mut doc(), &mut seen, Some("latex")).unwrap();
     let (format, c) = seen.0.unwrap();
     assert_eq!(format.as_deref(), Some("latex"));
     assert_eq!(c.input_format, None);

@@ -171,6 +171,16 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
     ];
   },
 
+  fails: () => {
+    let n = 0;
+    return [{
+      Para: (p) => {
+        if (++n === 2) throw new Error("the second paragraph");
+        p.content.push(Str("!"));
+      },
+    }];
+  },
+
   attributes: () => [{
     Span: (s) => {
       const k = getAttribute(s.attr, "k");
@@ -197,7 +207,15 @@ test("every scenario in corpus/filters has a TypeScript filter, and every filter
 
 for (const { name, input, output, also } of lines) {
   const scenario = SCENARIOS[name];
-  const run = (filters: readonly Filter[]) => toJSON(applyFilter(fromJSON(input) as Pandoc, filters, FORMAT));
+  // (a scenario pandoc fails on, output null: the filter must fail too)
+  const run = (filters: readonly Filter[]) => {
+    const doc = fromJSON(input) as Pandoc;
+    if (output === null) {
+      assert.throws(() => applyFilter(doc, filters, FORMAT));
+      return null;
+    }
+    return toJSON(applyFilter(doc, filters, FORMAT));
+  };
   test(`as pandoc's Lua: ${name}`, () => {
     assert.ok(scenario, `no TypeScript filter for corpus/filters/${name}.lua`);
     assert.deepEqual(run(scenario()), output);

@@ -198,7 +198,7 @@ fn many_replacements_in_a_long_list_take_no_longer() {
     let mut results = Vec::new();
     for order in [Order::Typewise, Order::Topdown, Order::Bottomup] {
         let mut doc = make();
-        apply(&mut doc, &mut Thin(0, order), None);
+        apply(&mut doc, &mut Thin(0, order), None).unwrap();
         // a third deleted, a third kept, a third doubled
         assert_eq!(doc.blocks.len(), n + 1 - (n + 1) / 3 + (n + 1).div_ceil(3));
         assert_eq!(doc.blocks[0], Block::Para(vec![Inline::Str("0".into())]));

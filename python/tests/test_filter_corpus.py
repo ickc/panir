@@ -359,10 +359,25 @@ def attributes() -> list[Filter]:
     return [f]
 
 
+def fails() -> list[Filter]:
+    f = Filter()
+    n = 0
+
+    @f.on(Para)
+    def second(p):
+        nonlocal n
+        n += 1
+        if n == 2:
+            raise ValueError("the second paragraph")
+        p.content.append(Str("!"))
+
+    return [f]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
-    + (once, lists, meta, newdoc, twice, metacount, attributes)
+    + (once, lists, meta, newdoc, twice, metacount, attributes, fails)
 }
 
 
@@ -388,5 +403,9 @@ def test_as_pandocs_lua(line, traverse):
         for f in filters:
             assert f.traverse == "typewise", "marked stateless but sets traverse"
             f.traverse = traverse
+    if line["output"] is None:  # pandoc fails on it: so must the filter
+        with pytest.raises(Exception):  # noqa: B017 (any error: as pandoc's Lua)
+            A.run(Pandoc.from_json(line["input"]), filters, FORMAT)
+        return
     doc = A.run(Pandoc.from_json(line["input"]), filters, FORMAT)
     assert doc.to_json() == line["output"]

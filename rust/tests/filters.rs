@@ -2,8 +2,8 @@
 //! Rust filters, must make of its input what pandoc's Lua filter made.
 
 use panir::{
-    Attr, Block, Ctx, Div, Filter, Header, Inline, Meta, MetaValue, Order, Pandoc, apply, from_str,
-    to_string,
+    Attr, Block, Ctx, Div, Filter, FilterError, Header, Inline, Meta, MetaValue, Order, Pandoc,
+    apply, from_str, to_string,
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -421,9 +421,24 @@ impl Filter for Attributes {
     }
 }
 
+/// Fails on the second paragraph, after changing the first.
+struct Fails(usize);
+
+impl Filter for Fails {
+    fn block(&mut self, x: &mut Block, ctx: &mut Ctx) -> Option<Vec<Block>> {
+        let Block::Para(content) = x else { return None };
+        self.0 += 1;
+        if self.0 == 2 {
+            return ctx.fail("the second paragraph");
+        }
+        content.push(str_("!"));
+        None
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
-fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<()> {
+fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
     let order = if bottomup {
         Order::Bottomup
     } else {
@@ -443,10 +458,11 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<()> {
         "newdoc" => Box::new(NewDoc),
         "twice" => Box::new(Twice(order)),
         "attributes" => Box::new(Attributes(order)),
+        "fails" => Box::new(Fails(0)),
         "metacount" => {
-            apply(doc, &mut AddKey, FORMAT);
-            apply(doc, &mut Count(0), FORMAT);
-            return Some(());
+            return Some(
+                apply(doc, &mut AddKey, FORMAT).and_then(|()| apply(doc, &mut Count(0), FORMAT)),
+            );
         }
         "typewise" | "topdown" | "bottomup" => {
             let order = match name {
@@ -455,14 +471,13 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<()> {
                 _ => Order::Bottomup,
             };
             let mut f = Noting::new(order, name == "bottomup");
-            apply(doc, &mut f, FORMAT);
+            let done = apply(doc, &mut f, FORMAT);
             doc.blocks.push(f.listing());
-            return Some(());
+            return Some(done);
         }
         _ => return None,
     };
-    apply(doc, f.as_mut(), FORMAT);
-    Some(())
+    Some(apply(doc, f.as_mut(), FORMAT))
 }
 
 #[test]
@@ -512,9 +527,13 @@ fn as_pandocs_lua() {
         }));
         for bottomup in runs {
             let mut doc = from_str(line.input.get()).unwrap();
-            scenario(name, &mut doc, bottomup)
+            let done = scenario(name, &mut doc, bottomup)
                 .unwrap_or_else(|| panic!("no Rust filter for {name}"));
-            let out: Value = serde_json::from_str(&to_string(&doc)).unwrap();
+            // (a scenario pandoc fails on: null, and the filter fails too)
+            let out = match done {
+                Ok(()) => serde_json::from_str(&to_string(&doc)).unwrap(),
+                Err(_) => Value::Null,
+            };
             if out != line.output {
                 failed.push(format!(
                     "{name}{}",
