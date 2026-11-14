@@ -57,6 +57,15 @@ struct Context
     format::Union{Nothing, String}
     topdown::Bool
     skip::Base.RefValue{Bool}
+    _walker::Any  # the walk (a _Walker), or nothing
+end
+
+# The lists being walked made what they are now before any is looked at
+# (`_many` makes a list's result aside: `_Splice`).
+function _mend(ctx::Context)
+    w = getfield(ctx, :_walker)
+    w === nothing || isempty(w.splicing) || _mend!(w)
+    nothing
 end
 
 "The neighbour of a node in its list, `step` after it, or `nothing`."
@@ -64,12 +73,26 @@ function sibling(ctx::Context, step::Integer)
     container, index = getfield(ctx, :container), getfield(ctx, :index)
     container isa AbstractVector && index isa Integer || return nothing
     i = index + step
-    1 <= i <= length(container) ? container[i] : nothing
+    i >= 1 || return nothing
+    w = getfield(ctx, :_walker)
+    if w !== nothing
+        for sp in w.splicing
+            sp.list === container || continue
+            # changed from elsewhere
+            length(container) == length((sp::_Splice).was) || (_mend!(w); break)
+            return _at(sp, i)  # the list as it is now, without making it so
+        end
+    end
+    i <= length(container) ? container[i] : nothing
 end
 
-Base.propertynames(::Context) = (fieldnames(Context)..., :next, :prev)
-Base.getproperty(ctx::Context, name::Symbol) =
-    name === :next ? sibling(ctx, 1) : name === :prev ? sibling(ctx, -1) : getfield(ctx, name)
+Base.propertynames(::Context) = (filter(!=(:_walker), fieldnames(Context))..., :next, :prev)
+function Base.getproperty(ctx::Context, name::Symbol)
+    name === :next && return sibling(ctx, 1)
+    name === :prev && return sibling(ctx, -1)
+    (name === :parent || name === :container || name === :doc) && _mend(ctx)
+    getfield(ctx, name)
+end
 
 """
     skip_children!(ctx)
@@ -88,7 +111,35 @@ end
 Base.show(io::IO, ctx::Context) =
     print(io, "Context(at ", _format_path(ctx.path), ", parent ", typeof(ctx.parent), ")")
 
-const _Frame = Tuple{Any, Symbol, Any, Any, Vector{Any}}  # parent, field, container, index, path
+# Where the walk is, a step at a time: a field or an index, after what came
+# before. (A vector copied and extended for every node took time by the
+# depth of the document: a second for 8,000 nested Emph.)
+struct _Path
+    before::Union{Nothing, _Path}
+    step::Any
+end
+
+function _steps(path::Union{Nothing, _Path})
+    steps = Any[]
+    while path !== nothing
+        push!(steps, path.step)
+        path = path.before
+    end
+    reverse!(steps)
+end
+
+const _Frame = Tuple{Any, Symbol, Any, Any, Union{Nothing, _Path}}  # parent, field, container, index, path
+
+# Which nodes a walk calls the filter on, and which lists: bits. (As
+# closures they were compiled again for every type of node.)
+const _INLINES, _BLOCKS, _OTHERS, _DOCUMENT = 0x01, 0x02, 0x04, 0x08
+_kind(::Inline) = _INLINES
+_kind(::Block) = _BLOCKS
+_kind(::Pandoc) = _DOCUMENT
+_kind(::Node) = _OTHERS
+_kind(::Vector{Inline}) = _INLINES
+_kind(::Vector{Block}) = _BLOCKS
+_kind(::Any) = 0x00  # (other lists: no function of Lua's is for them)
 
 # Not parametric on the filter: the call into it is dynamic anyway (a method
 # per node type), and one walker compiled once serves every filter.
@@ -98,9 +149,97 @@ mutable struct _Walker
     doc::Any
     conversion::Conversion
     stack::Vector{_Frame}
-    wants::Any   # which nodes this walk calls `f` on
-    lists::Any   # which lists
+    wants::UInt8   # which nodes this walk calls `f` on (_INLINES | ...)
+    lists::UInt8   # which lists
     arity::Dict{DataType, Int}   # by node type: 2 for f(x, ctx), 1 for f(x), 0 for neither
+    # the lists being walked whose result is made aside (`_Splice`): those of
+    # every pass of a walk (a context may be kept from one to the next)
+    splicing::Vector{Any}
+end
+
+# The walk of a list once one of its nodes was replaced by none or several
+# (`_aside!`): the list keeps its nodes (but for those replaced by one) while
+# the result is made aside, in `out`; `list[at:end]` are the nodes not in it
+# yet, the first perhaps being walked. The list as it is now is `out` and
+# then those: it becomes that (`_mend!`) at the end of its walk, or when
+# anything reaches it through a Context; `out` is then `nothing`.
+#
+# `was` is what the list holds as the walk left it, and the nodes it went
+# through: something else may have changed it meanwhile (a method, through
+# the document it closed over). `marks`, in pairs: from the k-th of those
+# nodes on, the results of each begin `off` after its own place, from where
+# that changes.
+mutable struct _Splice
+    list::Vector
+    out::Union{Nothing, Vector}
+    at::Int
+    was::Vector
+    marks::Vector{Int}
+end
+
+# Make every list being walked what it is now.
+function _mend!(w::_Walker)
+    for sp in w.splicing
+        _mend!(sp::_Splice)
+    end
+    empty!(w.splicing)
+end
+
+function _mend!(sp::_Splice)
+    out = sp.out
+    out === nothing && return
+    list, was = sp.list, sp.was
+    if length(list) == length(was) && all(k -> list[k] === was[k], eachindex(list))
+        splice!(list, 1:sp.at - 1, out)
+    else
+        merged = _merged(sp, out)
+        empty!(list)
+        append!(list, merged)
+    end
+    sp.out = nothing
+end
+
+# The list as changed from elsewhere, each node the walk went through
+# replaced by what it made of it.
+function _merged(sp::_Splice, out::Vector)
+    at, was, marks = sp.at, sp.was, sp.marks
+    starts = Int[]
+    off, m = 0, 1
+    for k in 1:at
+        while m <= length(marks) && marks[m] <= k
+            off = marks[m + 1]
+            m += 2
+        end
+        push!(starts, k + off)
+    end
+    walked = IdDict{Any, Int}(was[k] => k for k in 1:at - 1)
+    merged = empty(out)
+    for x in sp.list
+        k = get(walked, x, 0)
+        k == 0 ? push!(merged, x) : append!(merged, @view out[starts[k]:starts[k + 1] - 1])
+    end
+    merged
+end
+
+# Make the list `sp` is of what it is now; its walk goes on in place.
+function _unsplice!(w::_Walker, sp::_Splice)
+    sp.out === nothing && return
+    _mend!(sp)
+    _forget!(w, sp)
+end
+
+# The node at `p` in the list as it is now (`out` being made), or `nothing`.
+function _at(sp::_Splice, p::Int)
+    out = sp.out::Vector
+    p <= length(out) && return out[p]
+    k = sp.at + p - length(out) - 1
+    k <= length(sp.list) ? sp.list[k] : nothing
+end
+
+function _forget!(w::_Walker, sp::_Splice)
+    for k in lastindex(w.splicing):-1:1
+        w.splicing[k] === sp && return (deleteat!(w.splicing, k); nothing)
+    end
 end
 
 # `f`'s method for `x`: with the context (2), without (1), or none (0);
@@ -127,15 +266,15 @@ function _first(m::Method)
 end
 
 function _context(w::_Walker)
-    parent, field, container, index, path = isempty(w.stack) ? (nothing, :_, nothing, nothing, Any[]) : w.stack[end]
-    Context(parent, isempty(w.stack) ? nothing : field, container, index, copy(path), w.doc, w.conversion,
-            w.conversion.format, w.topdown, Ref(false))
+    parent, field, container, index, path = isempty(w.stack) ? (nothing, :_, nothing, nothing, nothing) : w.stack[end]
+    Context(parent, isempty(w.stack) ? nothing : field, container, index, _steps(path), w.doc, w.conversion,
+            w.conversion.format, w.topdown, Ref(false), w)
 end
 
 # `f` on `x` (with the context if it has such a method); the result, and
 # whether to skip the children
 function _call(w::_Walker, x)
-    w.wants(x) || return nothing, false
+    w.wants & _kind(x) == 0x00 && return nothing, false
     n = _arity(w, x)
     n == 0 && return nothing, false
     n == 1 && return w.f(x), false
@@ -207,55 +346,157 @@ function _one(w::_Walker, x::Node)
     r
 end
 
-# The list function on `list`, replacing what is in it; whether to skip its elements.
+# The list function on `list`: the list, or a new one of what it returned
+# (its nodes may hold the old one: Emph(xs) has xs itself); whether to skip
+# the elements.
 function _whole(w::_Walker, list::Vector, parent, field, path)
-    w.lists(list) || return false
+    w.lists & _kind(list) == 0x00 && return list, false
     push!(w.stack, (parent, field, nothing, nothing, path))
     try
         r, skip = _call_whole(w, list)
-        if r !== nothing && r !== list
-            # (a string, as in pandoc's Lua: its words, or Plain text)
-            r isa Union{AbstractVector, AbstractString} || throw(ArgumentError(
-                "a filter returned $(typeof(r)) for a list of $(eltype(list))s"))
-            items = _distinct(convert(typeof(list), r isa AbstractString ? r : collect(r)))
-            items === list || (empty!(list); append!(list, items))
-        end
-        skip
+        (r === nothing || r === list) && return list, skip
+        # (a string, as in pandoc's Lua: its words, or Plain text)
+        r isa Union{AbstractVector, AbstractString} || throw(ArgumentError(
+            "a filter returned $(typeof(r)) for a list of $(eltype(list))s"))
+        items = _distinct(convert(typeof(list), r isa AbstractString ? r : collect(r)))
+        (items === list ? copy(items) : items), skip
     finally
         pop!(w.stack)
     end
 end
 
+# Walk a list's nodes; returns the list, or the one a list method made.
 function _many(w::_Walker, list::Vector{T}, parent, field, path) where {T <: Node}
-    w.topdown && _whole(w, list, parent, field, path) && return
+    if w.topdown
+        list, skip = _whole(w, list, parent, field, path)
+        skip && return list
+    end
+    rest, rskip = nothing, false
     i = 1
     while i <= length(list)
-        push!(w.stack, (parent, field, list, i, Any[path..., i - 1]))
+        push!(w.stack, (parent, field, list, i, _Path(path, i - 1)))
         try
             node = list[i]
             w.topdown || _children(w, node)
             r, skip = _call(w, node)
             # the method may have changed the list itself (ctx.container)
-            (i <= length(list) && list[i] === node) || (i = _find(list, node))
+            if !(i <= length(list) && list[i] === node)
+                i = _find(list, node)
+                w.stack[end] = (parent, field, list, i, _Path(path, i - 1))  # (for what is below it)
+            end
             if r === nothing
                 w.topdown && !skip && _children(w, node)
                 i += 1
                 continue
             end
             items = r isa Node ? T[r] : _distinct(convert(Vector{T}, r))
-            splice!(list, i, items)
-            if w.topdown && !skip
-                for k in 0:length(items) - 1
-                    w.stack[end] = (parent, field, list, i + k, Any[path..., i - 1 + k])
-                    _children(w, list[i + k])
-                end
+            if length(items) != 1
+                # none or several: the rest of the walk makes the list aside
+                rest, rskip = items, skip
+                break
             end
-            i += length(items)
+            list[i] = items[1]
+            w.topdown && !skip && _children(w, list[i])
+            i += 1
         finally
             pop!(w.stack)
         end
     end
-    w.topdown || _whole(w, list, parent, field, path)
+    rest === nothing || _aside!(w, list, parent, field, path, i, rest, rskip)
+    w.topdown ? list : first(_whole(w, list, parent, field, path))
+end
+
+# The rest of `_many`'s walk once `list[i]` was replaced by `items` (none or
+# several nodes): the result is made aside, in `out`.
+#
+# Replacing in place moved all that follows, every time (quadratic).
+# Meanwhile the list keeps the nodes still to walk, whoever looks at it, and
+# it becomes `out` and then those at the end, after an error too. Anything
+# that reaches it through a Context makes it that first (`_mend!`:
+# `sp.out` is then `nothing`), and the walk goes on in place (`aside`
+# false), as before; and so does a change to it from elsewhere (seen by its
+# length, or the node's place). `i` is the node's place in the result;
+# aside, the node is `list[sp.at]`, and `i == length(out) + 1` until it is
+# in `out`.
+@noinline function _aside!(w::_Walker, list::Vector{T}, parent, field, path, i::Int, items::Vector{T},
+                           skip::Bool) where {T <: Node}
+    out = list[1:i - 1]
+    append!(out, items)
+    sp = _Splice(list, out, i + 1, copy(list), [i + 1, length(out) - i])
+    push!(w.splicing, sp)
+    n0 = length(list)  # (as long as nothing else changes it)
+    aside = true
+    try
+        # (the first node's replacements, then each node's)
+        n = length(items)
+        while true
+            if w.topdown && !skip
+                for k in 0:n - 1
+                    push!(w.stack, (parent, field, list, i + k, _Path(path, i - 1 + k)))
+                    try
+                        _children(w, aside ? out[i + k] : list[i + k])
+                    finally
+                        pop!(w.stack)
+                    end
+                    if aside && (sp.out === nothing || length(list) != n0)
+                        _unsplice!(w, sp)
+                        aside = false  # mended: in place
+                    end
+                end
+            end
+            i += n
+            # the next node
+            j = aside ? sp.at : i
+            j <= length(list) || break
+            push!(w.stack, (parent, field, list, i, _Path(path, i - 1)))
+            try
+                node = list[j]
+                aside && (sp.was[j] = node)  # (another may have put it there)
+                w.topdown || _children(w, node)
+                r, skip = _call(w, node)
+                if aside && (sp.out === nothing || length(list) != n0 || list[sp.at] !== node)
+                    _unsplice!(w, sp)
+                    aside = false  # mended (below, or by the method): in place
+                end
+                if !aside && !(i <= length(list) && list[i] === node)
+                    # the method changed the list itself (ctx.container)
+                    i = _find(list, node)
+                    w.stack[end] = (parent, field, list, i, _Path(path, i - 1))  # (for what is below it)
+                end
+                if r === nothing
+                    if aside
+                        push!(out, node)
+                        sp.at += 1
+                    end
+                    if w.topdown && !skip
+                        _children(w, node)
+                        if aside && (sp.out === nothing || length(list) != n0)
+                            _unsplice!(w, sp)
+                            aside = false  # mended: in place
+                        end
+                    end
+                    n, skip = 0, true
+                    i += 1
+                    continue
+                end
+                items = r isa Node ? T[r] : _distinct(convert(Vector{T}, r))
+                n = length(items)
+                if !aside
+                    n == 1 ? (list[i] = items[1]) : splice!(list, i, items)
+                else
+                    n == 1 && (list[sp.at] = sp.was[sp.at] = items[1])  # in the list too
+                    append!(out, items)
+                    sp.at += 1
+                    n == 1 || push!(sp.marks, sp.at, length(out) + 1 - sp.at)
+                end
+            finally
+                pop!(w.stack)
+            end
+        end
+    finally
+        # (all walked, or an error: the list whole either way)
+        _unsplice!(w, sp)
+    end
     nothing
 end
 
@@ -268,10 +509,10 @@ function _value(w::_Walker, @nospecialize(x), parent, field, path)
             pop!(w.stack)
         end
     elseif x isa Vector{<:Node}
-        _many(w, x, parent, field, path)
+        return _many(w, x, parent, field, path)
     elseif x isa Vector
         for (i, y) in enumerate(x)
-            z = _value(w, y, parent, field, Any[path..., i - 1])
+            z = _value(w, y, parent, field, _Path(path, i - 1))
             z === y || (x[i] = z)
         end
     elseif x isa Dict
@@ -279,19 +520,19 @@ function _value(w::_Walker, @nospecialize(x), parent, field, path)
             haskey(x, k) || continue  # a method removed it
             y = x[k]
             if y isa Node  # the map is its container, the key its index
-                push!(w.stack, (parent, field, x, k, Any[path..., k]))
+                push!(w.stack, (parent, field, x, k, _Path(path, k)))
                 z = try
                     _one(w, y)
                 finally
                     pop!(w.stack)
                 end
             else
-                z = _value(w, y, parent, field, Any[path..., k])
+                z = _value(w, y, parent, field, _Path(path, k))
             end
             z === y || (x[k] = z)
         end
     elseif x isa Tuple
-        ys = Any[_value(w, y, parent, field, Any[path..., i - 1]) for (i, y) in enumerate(x)]
+        ys = Any[_value(w, y, parent, field, _Path(path, i - 1)) for (i, y) in enumerate(x)]
         all(ys[i] === x[i] for i in eachindex(ys)) || return typeof(x)(Tuple(ys))
     end
     x
@@ -303,7 +544,7 @@ function _children(w::_Walker, x::T; skip::Union{Nothing, Symbol} = nothing,
         f === skip && continue
         v = getfield(x, f)
         if v isa Union{Node, Vector, Dict, Tuple}
-            z = _value(w, v, x, f, isempty(w.stack) ? Any[f] : Any[w.stack[end][5]..., f])
+            z = _value(w, v, x, f, _Path(isempty(w.stack) ? nothing : w.stack[end][5], f))
             z === v || setfield!(x, f, z)
         end
         f === after && then(x)
@@ -318,8 +559,6 @@ _handles_other(@nospecialize(f)) = any(methods(f)) do m
     p = _first(m)
     typeintersect(p, Node) !== Union{} && !(p <: Union{Inline, Block, Pandoc})
 end
-
-_isnot(T...) = x -> !any(t -> x isa t, T)
 
 """
     walk!(f, node; traverse = :typewise, format = nothing)
@@ -366,24 +605,24 @@ end
 
 function _walk!(@nospecialize(f), node::Node, traverse::Symbol, conversion::Conversion)
     # not compiled again for each filter: what calls it is dynamic anyway
+    splicing = Any[]  # every pass's
     topdown = traverse === :topdown
     arity = Dict{DataType, Int}()
-    walker(doc, wants, lists) = _Walker(f, topdown, doc, conversion, _Frame[], wants, lists, arity)
-    anylist = _ -> true
-    nolist = _ -> false
+    walker(doc, wants, lists) = _Walker(f, topdown, doc, conversion, _Frame[], wants, lists, arity, splicing)
+    every, nodes, lists = 0xff, _INLINES | _BLOCKS | _OTHERS, _INLINES | _BLOCKS
     node isa Pandoc || return traverse === :typewise ?
         foldl((x, (wants, lists)) -> _one(walker(node, wants, lists), x), _passes(f); init = node) :
-        _one(walker(node, _ -> true, anylist), node)
+        _one(walker(node, every, lists), node)
     doc = node
     function root(d)
-        r, skip = _call(walker(d, _ -> true, nolist), d)
+        r, skip = _call(walker(d, every, 0x00), d)
         r === nothing && return d, skip
         r isa Pandoc || throw(ArgumentError("a filter returned $(typeof(r)) for the Pandoc"))
         r, skip
     end
     function meta(d)
-        w = walker(d, _ -> true, nolist)
-        push!(w.stack, (d, :meta, nothing, nothing, Any[:meta]))
+        w = walker(d, every, 0x00)
+        push!(w.stack, (d, :meta, nothing, nothing, _Path(nothing, :meta)))
         r, skip = _call_whole(w, d.meta)
         r === nothing || (d.meta = r)
         skip
@@ -392,11 +631,11 @@ function _walk!(@nospecialize(f), node::Node, traverse::Symbol, conversion::Conv
         doc, skip = root(doc)  # the method's document, if it returned one, is the one walked
         skip && return doc
         skipmeta = meta(doc)
-        _children(walker(doc, _isnot(Pandoc), anylist), doc; skip = skipmeta ? :meta : nothing)
+        _children(walker(doc, nodes, lists), doc; skip = skipmeta ? :meta : nothing)
         return doc
     end
     if traverse === :bottomup
-        _children(walker(doc, _isnot(Pandoc), anylist), doc; after = :meta, then = meta)
+        _children(walker(doc, nodes, lists), doc; after = :meta, then = meta)
         return first(root(doc))
     end
     for (wants, lists) in _passes(f)
@@ -406,15 +645,17 @@ function _walk!(@nospecialize(f), node::Node, traverse::Symbol, conversion::Conv
     first(root(doc))
 end
 
-# The typewise walks `f` needs: which nodes, and which lists, each calls it on.
+# The typewise walks `f` needs: which nodes, and which lists, each calls it
+# on. A list's walk only for a method that is the list's own: one for
+# anything isn't called on lists (`_specific`).
 function _passes(@nospecialize(f))
-    none = _ -> false
+    own(T) = any(m -> (p = _first(m); p !== Any && typeintersect(p, T) !== Union{}), methods(f))
     passes = [
-        (x -> x isa Inline, none, _handles(f, Inline)),
-        (none, x -> x isa Vector{Inline}, _handles(f, Vector{Inline})),
-        (x -> x isa Block, none, _handles(f, Block)),
-        (none, x -> x isa Vector{Block}, _handles(f, Vector{Block})),
-        (_isnot(Inline, Block, Pandoc), none, _handles_other(f)),
+        (_INLINES, 0x00, _handles(f, Inline)),
+        (0x00, _INLINES, own(Vector{Inline})),
+        (_BLOCKS, 0x00, _handles(f, Block)),
+        (0x00, _BLOCKS, own(Vector{Block})),
+        (_OTHERS, 0x00, _handles_other(f)),
     ]
     [(wants, lists) for (wants, lists, needed) in passes if needed]
 end

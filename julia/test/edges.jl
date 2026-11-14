@@ -127,6 +127,9 @@ end
     # a list method may return its own list, changed
     more(xs::Vector{Inline}) = push!(xs, Str("e"))
     @test walk!(more, Pandoc(Para(Str("d")))).blocks == [Para(Str("d"), Str("e"))]
+    # its nodes may hold the list (Emph(xs) has xs itself)
+    wrap(xs::Vector{Inline}) = Inline[Emph(xs)]
+    @test walk!(exclaim, walk!(wrap, Pandoc(Para("a b")))).blocks == [Para(Emph("a! b!"))]
     # or a string, as in pandoc's Lua
     words(xs::Vector{Inline}) = "two words"
     @test walk!(words, Pandoc(Para(Str("d")))).blocks == [Para("two words")]
@@ -163,6 +166,12 @@ end
         Str(uppercase(s.text))
     end
     @test walk!(merge, Pandoc(Para("a b c d"))).blocks == [Para(Str("A"), Str("B"), Str("C"), Str("D"))]
+    # top-down, what is below such a node is where the node is now
+    paths = Any[]
+    drop(p::Para, ctx) = (ctx.index > 1 && deleteat!(ctx.container, ctx.index - 1); nothing)
+    drop(s::Str, ctx) = (push!(paths, (s.text, ctx.path)); nothing)
+    walk!(drop, Pandoc(Para(Str("a")), Para(Str("b"))); traverse = :topdown)
+    @test paths == [("a", Any[:blocks, 0, :content, 0]), ("b", Any[:blocks, 0, :content, 0])]
     gone(s::Str, ctx) = (empty!(ctx.container); nothing)
     @test_throws ArgumentError walk!(gone, Pandoc(Para("a b")))
     later(m::MetaValue, ctx) = (delete!(ctx.container, "b"); nothing)
@@ -173,4 +182,202 @@ end
 @testset "stringify goes through a map in the order of its keys" begin
     meta = Dict{String, MetaValue}(k => MetaString(k) for k in split("theta alpha epsilon gamma zeta eta delta beta"))
     @test stringify(meta) == "alphabetadeltaepsilonetagammathetazeta"
+end
+
+# A long list whose nodes are deleted, kept, replaced by one and by several
+# (once quadratic: each replacement by none or several moved the rest).
+const LONG = 30_000
+
+# By its number: deleted, kept, replaced by one, by several (an Emph among
+# them), returned twice. Top-down, the Emph's Str is walked too.
+function splice_rule(s::Str)
+    startswith(s.text, "x") && return Str(uppercase(s.text))
+    all(isdigit, s.text) || return nothing
+    k = Base.parse(Int, s.text)
+    (Inline[], nothing, Str("$(k)r"), Inline[Str("$(k)a"), Space(), Emph(Str("x$k"))], Inline[s, s])[k % 5 + 1]
+end
+
+# What the walk should make of the k-th Str (from 0), written plainly.
+spliced(k, topdown) = (Inline[], Inline[Str("$k")], Inline[Str("$(k)r")],
+                       Inline[Str("$(k)a"), Space(), Emph(Str((topdown ? "X" : "x") * "$k"))],
+                       Inline[Str("$k"), Str("$k")])[k % 5 + 1]
+
+numbered(n) = Inline[Str("$k") for k in 0:n - 1]
+
+@testset "a long list spliced, $traverse" for traverse in (:bottomup, :topdown, :typewise)
+    topdown = traverse === :topdown
+    original = numbered(LONG)
+    doc = Pandoc(Para(copy(original)))
+    content = doc.blocks[1].content
+    out = walk!(splice_rule, doc; traverse).blocks[1].content
+    @test out == reduce(vcat, (spliced(k, topdown) for k in 0:LONG - 1))
+    @test out === content  # the same list
+    @test out[1] === original[2]  # kept: the node itself
+    @test out[6] == out[7] == original[5] && out[6] !== out[7]  # twice: two nodes
+end
+
+@testset "a long list spliced, with contexts, $traverse" for traverse in (:bottomup, :topdown)
+    # the context is right after earlier nodes were deleted and multiplied:
+    # looked at first halfway (until then the list is spliced the fast way)
+    topdown = traverse === :topdown
+    original = numbered(LONG)
+    looked = [0, LONG ÷ 2, LONG ÷ 2 + 1, LONG ÷ 2 + 3, LONG ÷ 2 + 4, LONG - 1]
+    seen = Dict{Int, Any}()
+    function f(s::Str, ctx)
+        if all(isdigit, s.text) && Base.parse(Int, s.text) in looked
+            seen[Base.parse(Int, s.text)] = (ctx.index, ctx.prev, ctx.next, ctx.container)
+        end
+        splice_rule(s)
+    end
+    out = walk!(f, Pandoc(Para(copy(original))); traverse).blocks[1].content
+    @test out == reduce(vcat, (spliced(k, topdown) for k in 0:LONG - 1))
+    for k in looked
+        index, prev, next, container = seen[k]
+        before = sum((length(spliced(j, topdown)) for j in 0:k - 1); init = 0)
+        @test index == before + 1
+        @test container === out
+        @test prev === (before > 0 ? out[before] : nothing)
+        @test next === (k + 1 < LONG ? original[k + 2] : nothing)
+    end
+end
+
+@testset "a long list seen from below, and after an error, $traverse" for traverse in (:bottomup, :topdown)
+    # a method below the list sees it whole, through its context
+    n = 2_000
+    lengths = Any[]
+    halve(s) = iseven(Base.parse(Int, s.text)) ? Inline[] : Inline[s, Str(s.text)]
+    function f(s::Str, ctx)
+        startswith(s.text, "in") || return halve(s)
+        push!(lengths, (s.text, length(ctx.doc.blocks[1].content)))
+        nothing
+    end
+    items = Inline[k % 100 == 50 ? Emph(Str("in$k")) : Str("$k") for k in 0:n - 1]
+    doc = walk!(f, Pandoc(Para(items)); traverse)
+    # before the k-th: half of those deleted, half doubled (Emph: one)
+    made(k) = sum((j % 100 == 50 ? 1 : iseven(j) ? 0 : 2 for j in 0:k - 1); init = 0)
+    @test lengths == [("in$k", made(k) + n - k) for k in 50:100:n - 1]
+    @test length(doc.blocks[1].content) == made(n)
+
+    # an error halfway: the list as far as it went, then the rest as it was
+    original = numbered(n)
+    failing = Pandoc(Para(copy(original)))
+    stop(s::Str) = s.text == "1001" ? error("stop") : halve(s)
+    @test_throws ErrorException walk!(stop, failing; traverse)
+    kept = reduce(vcat, (Inline[s, s] for (k, s) in enumerate(original[1:1001]) if iseven(k)))
+    @test failing.blocks[1].content == vcat(kept, original[1002:end])
+end
+
+# Whether two lists hold the same nodes (not equal ones), in order.
+same(xs, ys) = length(xs) == length(ys) && all(x === y for (x, y) in zip(xs, ys))
+
+# The nodes of `xs` from `node` (itself, not an equal one) on.
+function from_node(xs, node)
+    k = findfirst(x -> x === node, xs)
+    k === nothing && error("the node is not in the list")
+    xs[k:end]
+end
+
+@testset "a list being walked seen from a closure, $traverse" for traverse in (:bottomup, :topdown, :typewise)
+    # A method deletes or doubles blocks; a later one looks at the document
+    # it closed over (not ctx): its block and every one after it are there,
+    # in order. (Earlier deletions and doublings may show only at the end.)
+    original = Block[RawBlock("html", "del"), Para("p1"), RawBlock("html", "dbl"), Para("p3"),
+                     RawBlock("html", "del"), Para("p5"), Header(1, Attr(), Inline[Str("h")])]
+    doc = Pandoc(original...)
+    seen = String[]
+    f(b::RawBlock) = b.text == "del" ? Block[] : Block[b, RawBlock("html", "dbl2")]
+    function f(p::Para)
+        push!(seen, stringify(p))
+        @test same(from_node(doc.blocks, p), from_node(original, p))
+        nothing
+    end
+    walk!(f, doc; traverse)
+    @test seen == ["p1", "p3", "p5"]
+    @test doc.blocks == Block[Para("p1"), RawBlock("html", "dbl"), RawBlock("html", "dbl2"), Para("p3"),
+                              Para("p5"), Header(1, Attr(), Inline[Str("h")])]
+
+    # one level down: a Para's inlines, seen from a method on them
+    para = Para("a b c d e")
+    inlines = copy(para.content)
+    doc2 = Pandoc(para)
+    texts = String[]
+    g(::Space) = Inline[]
+    function g(s::Str)
+        push!(texts, s.text)
+        @test same(from_node(para.content, s), from_node(inlines, s))
+        @test doc2.blocks[1].content === para.content
+        s.text == "c" ? Inline[s, Str("C")] : nothing
+    end
+    walk!(g, doc2; traverse)
+    @test texts == ["a", "b", "c", "d", "e"]
+    @test doc2.blocks == Block[Para(Inline[Str(t) for t in ["a", "b", "c", "C", "d", "e"]])]
+end
+
+@testset "neighbours while a long list is spliced, $traverse" for traverse in (:bottomup, :topdown)
+    # ctx.prev and ctx.next, of the node's context and of contexts kept from
+    # earlier nodes, while nodes are deleted and doubled: as the list is now
+    # (the nodes made so far, then the rest), which ctx.container then shows
+    n = 3_000
+    original = numbered(n)
+    made = Inline[]  # what the walk made of the nodes so far
+    kept = Any[]
+    right(c, now) = (i = c.index; c.prev === (i > 1 ? now[i - 1] : nothing) &&
+                                  c.next === (i < length(now) ? now[i + 1] : nothing))
+    wrong = Ref(0)
+    function f(s::Str, ctx)
+        k = Base.parse(Int, s.text)
+        now = vcat(made, original[k + 1:end])
+        ctx.index == length(made) + 1 || (wrong[] += 1)
+        right(ctx, now) || (wrong[] += 1)
+        k % 100 == 0 && (wrong[] += count(c -> !right(c, now), kept))
+        # (made what it is now; in place from then on)
+        k == n ÷ 2 && !same(ctx.container, now) && (wrong[] += 1)
+        push!(kept, ctx)
+        r = k % 3 == 0 ? Inline[] : k % 3 == 1 ? Inline[s, Str(s.text)] : nothing
+        append!(made, r === nothing ? Inline[s] : r)
+        r
+    end
+    doc = walk!(f, Pandoc(Para(copy(original))); traverse)
+    @test wrong[] == 0
+    @test same(doc.blocks[1].content, made)
+    @test all(c -> right(c, made), kept)
+end
+
+@testset "a context kept from an earlier pass shows the list as it is" begin
+    kept, seen = Any[], Any[]
+    # typewise: the inlines, then the blocks
+    h(::Str, ctx) = (push!(kept, ctx); nothing)
+    h(::RawBlock) = Block[]
+    h(::Para) = (push!(seen, [nameof(typeof(b)) for b in kept[1].doc.blocks]); nothing)
+    walk!(h, Pandoc(RawBlock("html", "x"), Para("a"), RawBlock("html", "y"), Para("b")))
+    @test seen == [[:Para, :RawBlock, :Para], [:Para, :Para]]
+end
+
+@testset "a list being walked changed from a closure, $traverse" for traverse in (:bottomup, :topdown, :typewise)
+    # after an earlier block was deleted and one doubled, a method changes
+    # the document it closed over (not ctx.container): what it changed, it
+    # changed in the list as it is
+    text(b) = b isa RawBlock ? b.text : stringify(b)
+    find(blocks, t) = findfirst(b -> stringify(b) == t, blocks)
+    function run(change)
+        doc = Pandoc(RawBlock("html", "del"), Para("a"), RawBlock("html", "dbl"),
+                     Header(1, Attr(), Inline[Str("One")]), Para("x"), Header(1, Attr(), Inline[Str("Two")]))
+        calls = String[]
+        f(b::RawBlock) = b.text == "del" ? Block[] : Block[b, RawBlock("html", "dbl2")]
+        f(h::Header) = (push!(calls, stringify(h)); change(doc.blocks, stringify(h)); nothing)
+        walk!(f, doc; traverse)
+        @test calls == ["One", "Two"]
+        map(text, doc.blocks)
+    end
+    # before it, after it, at the end
+    @test run() do blocks, at
+        at == "One" || return
+        pushfirst!(blocks, Para("TOC"))
+        deleteat!(blocks, find(blocks, "a"))
+        deleteat!(blocks, find(blocks, "x"))
+        push!(blocks, Para("end"))
+    end == ["TOC", "dbl", "dbl2", "One", "Two", "end"]
+    # the same length: seen at the end of the walk
+    @test run((blocks, at) -> at == "One" && (blocks[find(blocks, "a")] = Para("A"))) ==
+          ["A", "dbl", "dbl2", "One", "x", "Two"]
 end

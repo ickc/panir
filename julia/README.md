@@ -42,13 +42,21 @@ run_filter(upper)
   `prev`, `path` (from the document, counting from 0 as pandoc's JSON and
   errors do), `doc`, `format`, and `conversion` (a `Conversion`, as in
   Python: formats with extensions and reader options, when pandoc or
-  libpandoc tells them). As in Lua, what a method returns are values:
-  `[el, el]` puts two nodes in the document, the second a copy; elsewhere,
-  to put a node in a second place, `deepcopy` it.
+  libpandoc tells them). They are right after earlier nodes of the list
+  were deleted or spliced, and a list reached through a context is as it
+  is now. (A list being walked holds its node and every one after it,
+  however it is reached; reached otherwise, as through the document a
+  method closed over, the nodes deleted or spliced in it so far may show
+  only once its walk is done, but a change made to it that way is made to
+  it as it is.) As in Lua, what a method returns are values: `[el, el]`
+  puts two nodes in the document, the second a copy; elsewhere, to put a
+  node in a second place, `deepcopy` it.
   As in pandoc's Lua filters, a method for `Vector{Inline}` or
   `Vector{Block}` gets every list of them, and one for `Panir.Meta` the
   metadata (`Meta` alone is `Base.Meta`); methods for anything don't count
-  there.
+  there, and no other list (of rows, of cells...) gets one, in any order.
+  What a list method returns, unless the list itself, becomes a new
+  vector (its nodes may hold the old one: `Inline[Emph(xs)]`).
 - `walk!(f, doc; traverse)` sets the order, one of the three filter
   frameworks use: `:typewise` (the default, as pandoc's Lua filters and
   Haskell's `walk`: one walk per kind, each bottom-up, every inline before

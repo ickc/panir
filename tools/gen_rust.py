@@ -67,6 +67,16 @@ def snake(name: str) -> str:
     return out
 
 
+def tagged(name: str) -> str:
+    """A constructor without contents, as pandoc's JSON."""
+    return json.dumps({"t": name}, separators=(",", ":"))
+
+
+def rust_str(text: str) -> str:
+    """A Rust string literal."""
+    return json.dumps(text)
+
+
 def ident(name: str) -> str:
     return f"r#{name}" if name in KEYWORDS else name
 
@@ -151,6 +161,12 @@ class Gen:
         tags = ", ".join(json.dumps(v) for v in t["values"])
         arms = "".join(f'                "{v}" => {name}::{v},\n' for v in t["values"])
         o.append(ENUM_DE.format(name=name, tags=tags, arms=arms))
+        self.json_impl(
+            name,
+            "out.push_str(match self {\n"
+            + "".join(f"    {name}::{v} => {rust_str(tagged(v))},\n" for v in t["values"])
+            + "});",
+        )
 
     def sum(self, t: dict) -> None:
         o = self.out
@@ -173,6 +189,20 @@ class Gen:
                 structs.append(c)
         o.append("}\n\n")
         self.sum_de(t)
+        arms = []
+        for c in t["constructors"]:
+            cn, n = c["name"], len(c["fields"])
+            if n == 0:
+                arms.append(f"    {t['name']}::{cn} => out.push_str({rust_str(tagged(cn))}),\n")
+                continue
+            double = n == 1 and self.rust(c["fields"][0]["type"]) == "f64"
+            write = "crate::write_double(*x, out)" if double else "x.json(out)"
+            head = rust_str(tagged(cn)[:-1] + ',"c":')
+            arms.append(
+                f"    {t['name']}::{cn}(x) => {{ out.push_str({head});"
+                f" {write}; out.push('}}'); }}\n"
+            )
+        self.json_impl(t["name"], "match self {\n" + "".join(arms) + "}")
         for c in structs:
             o.append(
                 f"impl From<{c['name']}> for {t['name']} {{\n"
@@ -238,14 +268,13 @@ class Gen:
                 # as pandoc's JSON has a Double: not only a number
                 read = "map.next_value::<crate::Double>()?.0"
                 stream.append(f'{" " * 24}"{cn}" => {name}::{cn}({read}),\n')
-                early.append(
-                    f'                "{cn}" => {name}::{cn}(json::<crate::Double, E>(c)?.0),\n'
-                )
+                later = "crate::contents::<crate::Double, E>(c)?.0"
+                early.append(f'                "{cn}" => {name}::{cn}({later}),\n')
             else:
                 if len(c["fields"]) == 1:
                     self.no_double(c["fields"][0]["type"], cn)
                 stream.append(f'{" " * 24}"{cn}" => {name}::{cn}(map.next_value()?),\n')
-                early.append(f'                "{cn}" => {name}::{cn}(json(c)?),\n')
+                early.append(f'                "{cn}" => {name}::{cn}(crate::contents(c)?),\n')
         unit_arms = "".join(f'                    "{u}" => Some({name}::{u}),\n' for u in units)
         # a type that holds itself is read level by level: count them
         guard = "let _level = crate::Level::enter()?;\n                " if self.nests(name) else ""
@@ -258,6 +287,14 @@ class Gen:
                 units=unit_arms,
                 guard=guard,
             )
+        )
+
+    def json_impl(self, name: str, body: str) -> None:
+        """The type's JSON written straight into a string (lib.rs, ``Json``):
+        what serde writes for it, at half the cost."""
+        self.out.append(
+            f"impl crate::Json for {name} {{\n"
+            f"    fn json(&self, out: &mut String) {{\n{body}\n    }}\n}}\n\n"
         )
 
     def product(self, t: dict) -> None:
@@ -294,6 +331,23 @@ class Gen:
                 value = self.default_expr(f["type"], f["default"])
                 o.append(f"            {ident(f['name'])}: {value},\n")
             o.append("        }\n    }\n}\n\n")
+        if encoding in ("object", "root"):
+            parts = [("pandoc-api-version", "api_version")] if encoding == "root" else []
+            parts += [(f.get("key", f["name"]), ident(f["name"])) for f in fields]
+            body = "".join(
+                f"out.push_str({rust_str(('{' if i == 0 else ',') + json.dumps(key) + ':')});"
+                f" self.{name_}.json(out);\n"
+                for i, (key, name_) in enumerate(parts)
+            )
+            self.json_impl(name, body + "out.push('}');")
+        elif encoding == "array":
+            body = "".join(
+                f"out.push({'[' if i == 0 else ','!r}); self.{ident(f['name'])}.json(out);\n"
+                for i, f in enumerate(fields)
+            )
+            self.json_impl(name, body + "out.push(']');")
+        elif encoding == "value":
+            self.json_impl(name, f"self.{ident(fields[0]['name'])}.json(out);")
         if encoding == "array":
             refs = ", ".join(f"&self.{ident(f['name'])}" for f in fields)
             types = ", ".join(self.rust(f["type"]) for f in fields)
@@ -502,19 +556,19 @@ impl<'de> Deserialize<'de> for {name} {{
             fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<{name}, A::Error> {{
                 {guard}let mut tag: Option<&'static str> = None;
                 let mut value: Option<{name}> = None;
-                let mut early: Option<serde_json::Value> = None;
+                let mut early: Option<Box<serde_json::value::RawValue>> = None;
                 // keys and tags are matched, not copied
                 while let Some(key) = map.next_key::<crate::Key>()? {{
                     if key == crate::Key::T {{
                         let t = crate::Tag::check(map.next_value_seed(crate::Tag(TAGS))?, TAGS)?;
                         value = match early.take() {{
-                            Some(c) => Some(from_value(&t, c)?),
+                            Some(c) => Some(later(&t, &c)?),
                             None => unit(&t),
                         }};
                         tag = Some(t);
                     }} else if key == crate::Key::C {{
                         match tag.as_deref() {{
-                            None => early = Some(map.next_value_seed(crate::Early)?),
+                            None => early = Some(map.next_value()?),
                             Some(t) => value = Some(match t {{
 {stream}                        _ => unreachable!(),
                             }}),
@@ -530,19 +584,9 @@ impl<'de> Deserialize<'de> for {name} {{
                 }}
             }}
         }}
-        // "c" before "t" (not pandoc's order): decode it once "t" is known
-        fn from_value<E: de::Error>(t: &str, c: serde_json::Value) -> Result<{name}, E> {{
-            fn json<T: de::DeserializeOwned, E: de::Error>(c: serde_json::Value) -> Result<T, E> {{
-                serde_path_to_error::deserialize(c).map_err(|e| {{
-                    let p = e.path().to_string();
-                    let at = match p.as_str() {{
-                        "." => "c".to_string(),
-                        p if p.starts_with('[') => format!("c{{p}}"),
-                        p => format!("c.{{p}}"),
-                    }};
-                    E::custom(format!("{{at}}: {{}}", e.inner()))
-                }})
-            }}
+        // "c" before "t" (not pandoc's order): its text waits, and is read
+        // once "t" is known
+        fn later<E: de::Error>(t: &str, c: &serde_json::value::RawValue) -> Result<{name}, E> {{
             Ok(match t {{
 {early}                _ => unreachable!(),
             }})

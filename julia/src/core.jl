@@ -236,7 +236,94 @@ end
 tojson(x) = _encode(x)
 
 "A document as pandoc's JSON text."
-serialize(doc::Pandoc) = JSON.json(tojson(doc))
+serialize(doc::Pandoc) = sprint(_write, doc; sizehint = 1 << 16)
+
+# Straight to the text: through `tojson`'s tree of Dicts and Vectors, and
+# JSON.jl's printing of it, took four times as long and as much memory.
+_write(io::IO, x::Union{Int, Bool}) = print(io, x)
+_write(io::IO, ::Nothing) = print(io, "null")
+_write(io::IO, x::Float64) =
+    isfinite(x) ? print(io, x) : print(io, isnan(x) ? "null" : x > 0 ? "\"+inf\"" : "\"-inf\"")
+_write(io::IO, x::Enum) = print(io, "{\"t\":\"", x, "\"}")
+
+function _write(io::IO, x::String)
+    isvalid(x) || throw(ArgumentError("a string that isn't valid UTF-8: $(repr(x))"))
+    write(io, '"')
+    from = 1
+    for (i, byte) in enumerate(codeunits(x))
+        (byte < 0x20 || byte == UInt8('"') || byte == UInt8('\\')) || continue
+        write(io, view(codeunits(x), from:i - 1))
+        if byte == UInt8('"') || byte == UInt8('\\')
+            write(io, '\\', byte)
+        elseif byte == UInt8('\n')
+            write(io, "\\n")
+        elseif byte == UInt8('\t')
+            write(io, "\\t")
+        elseif byte == UInt8('\r')
+            write(io, "\\r")
+        else
+            write(io, "\\u00", string(byte; base = 16, pad = 2))
+        end
+        from = i + 1
+    end
+    write(io, view(codeunits(x), from:ncodeunits(x)), '"')
+    nothing
+end
+
+function _write_all(io::IO, xs)
+    write(io, '[')
+    for (i, x) in enumerate(xs)
+        i > 1 && write(io, ',')
+        _write(io, x)
+    end
+    write(io, ']')
+    nothing
+end
+_write(io::IO, xs::Union{Vector, Tuple}) = _write_all(io, xs)
+
+function _write(io::IO, d::Dict)
+    write(io, '{')
+    for (i, k) in enumerate(sort!(collect(keys(d))))  # as pandoc's Map
+        i > 1 && write(io, ',')
+        _write(io, k)
+        write(io, ':')
+        _write(io, d[k])
+    end
+    write(io, '}')
+    nothing
+end
+
+function _write(io::IO, x::T) where {T <: Node}
+    enc = _encoding(T)
+    tagged = supertype(T) in _SUMS
+    if tagged
+        print(io, "{\"t\":\"", nameof(T), '"')
+        enc === :none && return (write(io, '}'); nothing)
+        write(io, ",\"c\":")
+    end
+    if enc === :value
+        _write(io, getfield(x, 1))
+    elseif enc === :array
+        _write_all(io, (getfield(x, i) for i in 1:fieldcount(T)))
+    else
+        keys = enc === :root ? string.(fieldnames(T)) : _keys(T)
+        write(io, '{')
+        if enc === :root
+            write(io, "\"pandoc-api-version\":")
+            _write_all(io, PANDOC_API_VERSION)
+            write(io, ',')
+        end
+        for i in 1:fieldcount(T)
+            i > 1 && write(io, ',')
+            _write(io, keys[i])
+            write(io, ':')
+            _write(io, getfield(x, i))
+        end
+        write(io, '}')
+    end
+    tagged && write(io, '}')
+    nothing
+end
 
 # -- nodes ----------------------------------------------------------------------------
 

@@ -40,9 +40,15 @@ test("strings convert as in pandoc's Lua", () => {
   assert.deepEqual(DefinitionList([["term", ["def"]]]).content, [[[Str("term")], [[Plain([Str("def")])]]]]);
   assert.deepEqual(inlines(" a  b\n"), [Space(), Str("a"), Space(), Str("b"), SoftBreak()]);
   assert.deepEqual(blocks("a"), [Plain([Str("a")])]);
-  // a list without strings is kept as given
+  // a node has its own list, not the one given (which may change, or go in another node)
   const given = [Str("x")];
-  assert.equal(Para(given).content, given);
+  const para = Para(given);
+  assert.notEqual(para.content, given);
+  assert.equal(para.content[0], given[0]);
+  given.push(Str("y"));
+  assert.deepEqual(para.content, [Str("x")]);
+  const items = [[Para("a")]];
+  assert.notEqual(BulletList(items).content[0], items[0]);
 });
 
 test("constructors check their arguments, and say where", () => {
