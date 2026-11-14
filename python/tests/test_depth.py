@@ -1,6 +1,6 @@
 """Deep documents: plain recursion, as deep as Python's recursion limit
 allows (about 190 levels at the default; the deepest real document found
-has 38); deeper is ``ASTDecodeError`` reading, ``ASTDepthError`` otherwise."""
+has 121); deeper is ``ASTDecodeError`` reading, ``ASTDepthError`` otherwise."""
 
 from __future__ import annotations
 
