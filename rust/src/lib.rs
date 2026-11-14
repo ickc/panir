@@ -21,7 +21,12 @@ mod filter;
 mod generated;
 mod text;
 
-pub use filter::{apply, apply_with, Bottomup, Conversion, Ctx, Filter, Order, Topdown, Typewise};
+// the README's examples compile and run as the docs' do
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct Readme;
+
+pub use filter::{apply, apply_with, Conversion, Ctx, Filter, Order, Walkable};
 pub use generated::*;
 pub use text::Text;
 

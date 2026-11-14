@@ -159,12 +159,14 @@ fn another_version_says_so() {
 
 #[test]
 fn many_replacements_in_a_long_list_take_no_longer() {
-    use panir::{apply, Bottomup, Ctx, Filter, Inline, Topdown, Typewise};
+    use panir::{apply, Ctx, Filter, Inline, Order};
     // every other block deleted, the others doubled; every space deleted
-    struct Thin<O>(usize, std::marker::PhantomData<O>);
-    impl<O: panir::Order> Filter for Thin<O> {
-        type Order = O;
-        fn block(&mut self, x: &mut Block, _: &mut Ctx<O>) -> Option<Vec<Block>> {
+    struct Thin(usize, Order);
+    impl Filter for Thin {
+        fn order(&self) -> Order {
+            self.1
+        }
+        fn block(&mut self, x: &mut Block, _: &mut Ctx) -> Option<Vec<Block>> {
             self.0 += 1;
             match self.0 % 3 {
                 0 => Some(vec![]),
@@ -172,7 +174,7 @@ fn many_replacements_in_a_long_list_take_no_longer() {
                 _ => None,
             }
         }
-        fn inline(&mut self, x: &mut Inline, _: &mut Ctx<O>) -> Option<Vec<Inline>> {
+        fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
             matches!(x, Inline::Space).then(Vec::new)
         }
     }
@@ -190,13 +192,9 @@ fn many_replacements_in_a_long_list_take_no_longer() {
     };
     let start = std::time::Instant::now();
     let mut results = Vec::new();
-    for order in 0..3 {
+    for order in [Order::Typewise, Order::Topdown, Order::Bottomup] {
         let mut doc = make();
-        match order {
-            0 => apply(&mut doc, &mut Thin::<Typewise>(0, Default::default()), None),
-            1 => apply(&mut doc, &mut Thin::<Topdown>(0, Default::default()), None),
-            _ => apply(&mut doc, &mut Thin::<Bottomup>(0, Default::default()), None),
-        }
+        apply(&mut doc, &mut Thin(0, order), None);
         // a third deleted, a third kept, a third doubled
         assert_eq!(doc.blocks.len(), n + 1 - (n + 1) / 3 + (n + 1).div_ceil(3));
         assert_eq!(doc.blocks[0], Block::Para(vec![Inline::Str("0".into())]));

@@ -4,15 +4,13 @@ pandoc's document AST, generated from pandoc-types: types that serde
 encodes as pandoc's JSON, filters run as pandoc runs Lua filters, and
 `VisitMut` and `Visit` traits for any other walk (changing, or reading).
 
-```rust
-use panir::{Ctx, Filter, Inline, Typewise};
+```rust,no_run
+use panir::{Ctx, Filter, Inline};
 
 struct Upper;
 
 impl Filter for Upper {
-    type Order = Typewise;
-
-    fn inline(&mut self, x: &mut Inline, _: &mut Ctx<Typewise>) -> Option<Vec<Inline>> {
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
         if let Inline::Str(s) = x {
             *s = s.to_uppercase().into();
         }
@@ -35,17 +33,50 @@ where pandoc (or libpandoc) tells them, as in Python. A function finds it in
 
 A `Filter` has pandoc's Lua filter functions, each a method with a default
 that does nothing: `inline` and `block` (a `match` on the constructor),
-`inlines` and `blocks` (every list of them), `meta`, `pandoc`. `Order` is
-one of the three orders filter frameworks use:
+`inlines` and `blocks` (every list of them), `meta`, `pandoc`. Its
+`order()`, as Lua's `traverse`, is one of the three orders filter
+frameworks use, `Order::Typewise` unless the filter says another (a value:
+a filter can choose it when it runs, and be a `dyn Filter`):
 
 - `Typewise` (as pandoc's Lua filters by default, and Haskell's `walk`): one
   walk per kind, each bottom-up: every inline, then every list of inlines,
   then every block, then every list of blocks, then `meta`, then `pandoc`.
 - `Topdown` (Lua's other order, and pandocfilters'): `pandoc`, `meta`, then
   a node before its children, which are walked in its replacement too,
-  unless the method calls `ctx.skip_children()`, which only a
-  `Ctx<Topdown>` has.
+  unless the method calls `ctx.skip_children()` (Lua's `return el,
+  false`; in the other orders the children came first, and it does
+  nothing).
 - `Bottomup` (panflute's): one walk, each node after its children.
+
+```rust
+use panir::{Ctx, Filter, Inline, Order};
+
+struct NoNotes;
+
+impl Filter for NoNotes {
+    fn order(&self) -> Order {
+        Order::Topdown
+    }
+    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+        if let Inline::Note(_) = x {
+            ctx.skip_children(); // what is in a note is left as it is
+        }
+        None
+    }
+}
+```
+
+`apply` also takes a fragment, as Lua's `el:walk{...}`: a `Block`, an
+`Inline`, a `Vec<Block>` or a `Vec<Inline>`, changed in place. As in Lua,
+the functions apply to what is in a node, not to the node itself; a list's
+function also to the list itself; `meta` and `pandoc` only to a document.
+
+The context (`Ctx`) has the conversion and `skip_children`, and no more:
+not the node's parent, siblings or path, which panir's Python and
+TypeScript contexts have (pandoc's Lua functions have no context). A
+function has its node as `&mut`, and while it does nothing else may reach
+the node, its parent included. A walk that needs them is a `VisitMut`
+that keeps its own (a stack of what it is in).
 
 They are checked against pandoc's Lua filters, with the scenarios in
 [`corpus/filters/`](../corpus/filters/). For other nodes (`Cell`, `Attr`,
@@ -107,7 +138,7 @@ A decoding error (`panir::Error`) has the exact path in the JSON (`path`,
 empty for the document itself), what is wrong (`message`), and the `line`
 and `column` in the text; displayed as
 
-```
+```text
 meta.author.c[0].c[2].c[2].c: invalid type: integer `42`, expected a string at line 1 column 244
 ```
 

@@ -5,12 +5,10 @@
 
 use panir::{
     apply, from_str, to_string, Block, Ctx, Filter, Inline, Meta, MetaValue, Order, Pandoc,
-    Topdown, Typewise,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 use std::mem::take;
 
 #[derive(Deserialize, Clone)]
@@ -34,11 +32,11 @@ struct Spec {
     log: bool,
 }
 
-/// One of a spec's filters, in the order `O`; `log` is every call so far.
-struct Interp<'a, O> {
+/// One of a spec's filters, in its order; `log` is every call so far.
+struct Interp<'a> {
     rules: &'a BTreeMap<String, Rule>,
     log: &'a mut Vec<String>,
-    order: PhantomData<O>,
+    order: Order,
 }
 
 fn inline_tag(x: &Inline) -> &'static str {
@@ -134,7 +132,7 @@ fn str_(s: &str) -> Inline {
     Inline::Str(s.into())
 }
 
-impl<O> Interp<'_, O> {
+impl Interp<'_> {
     /// Note a call; whether the rule applies to it.
     fn called(&mut self, rule: &Rule, entry: String) -> bool {
         self.log.push(entry);
@@ -145,7 +143,10 @@ impl<O> Interp<'_, O> {
     }
 
     fn rule(&self, tag: &str, kind: &str) -> Option<Rule> {
-        self.rules.get(tag).or_else(|| self.rules.get(kind)).cloned()
+        self.rules
+            .get(tag)
+            .or_else(|| self.rules.get(kind))
+            .cloned()
     }
 
     fn on_inline(&mut self, x: &mut Inline, skip: &mut dyn FnMut()) -> Option<Vec<Inline>> {
@@ -315,60 +316,41 @@ fn new_block() -> Block {
     Block::Para(vec![str_("A")])
 }
 
-fn no_skip() {
-    panic!("skip in an order that isn't top-down");
-}
-
-impl Filter for Interp<'_, Typewise> {
-    type Order = Typewise;
-    fn inline(&mut self, x: &mut Inline, _: &mut Ctx<Typewise>) -> Option<Vec<Inline>> {
-        self.on_inline(x, &mut no_skip)
+impl Filter for Interp<'_> {
+    fn order(&self) -> Order {
+        self.order
     }
-    fn block(&mut self, x: &mut Block, _: &mut Ctx<Typewise>) -> Option<Vec<Block>> {
-        self.on_block(x, &mut no_skip)
+    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+        let order = self.order;
+        self.on_inline(x, &mut || skip(order, ctx))
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx<Typewise>) {
-        self.on_list("Inlines", xs, new_inline, &mut no_skip)
+    fn block(&mut self, x: &mut Block, ctx: &mut Ctx) -> Option<Vec<Block>> {
+        let order = self.order;
+        self.on_block(x, &mut || skip(order, ctx))
     }
-    fn blocks(&mut self, xs: &mut Vec<Block>, _: &mut Ctx<Typewise>) {
-        self.on_list("Blocks", xs, new_block, &mut no_skip)
+    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) {
+        let order = self.order;
+        self.on_list("Inlines", xs, new_inline, &mut || skip(order, ctx))
     }
-    fn meta(&mut self, meta: &mut Meta, _: &mut Ctx<Typewise>) {
+    fn blocks(&mut self, xs: &mut Vec<Block>, ctx: &mut Ctx) {
+        let order = self.order;
+        self.on_list("Blocks", xs, new_block, &mut || skip(order, ctx))
+    }
+    fn meta(&mut self, meta: &mut Meta, _: &mut Ctx) {
         self.on_meta(meta)
     }
-    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx<Typewise>) {
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) {
         self.on_pandoc(doc)
     }
 }
 
-impl Filter for Interp<'_, Topdown> {
-    type Order = Topdown;
-    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx<Topdown>) -> Option<Vec<Inline>> {
-        self.on_inline(x, &mut || ctx.skip_children())
-    }
-    fn block(&mut self, x: &mut Block, ctx: &mut Ctx<Topdown>) -> Option<Vec<Block>> {
-        self.on_block(x, &mut || ctx.skip_children())
-    }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx<Topdown>) {
-        self.on_list("Inlines", xs, new_inline, &mut || ctx.skip_children())
-    }
-    fn blocks(&mut self, xs: &mut Vec<Block>, ctx: &mut Ctx<Topdown>) {
-        self.on_list("Blocks", xs, new_block, &mut || ctx.skip_children())
-    }
-    fn meta(&mut self, meta: &mut Meta, _: &mut Ctx<Topdown>) {
-        self.on_meta(meta)
-    }
-    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx<Topdown>) {
-        self.on_pandoc(doc)
-    }
-}
-
-fn interp<'a, O: Order>(f: &'a FilterSpec, log: &'a mut Vec<String>) -> Interp<'a, O> {
-    Interp {
-        rules: &f.rules,
-        log,
-        order: PhantomData,
-    }
+fn skip(order: Order, ctx: &mut Ctx) {
+    assert_eq!(
+        order,
+        Order::Topdown,
+        "skip in an order that isn't top-down"
+    );
+    ctx.skip_children();
 }
 
 fn run(spec_line: &str, doc_line: &str) -> Result<String, String> {
@@ -377,11 +359,17 @@ fn run(spec_line: &str, doc_line: &str) -> Result<String, String> {
     if let Some(spec) = spec {
         let mut log = Vec::new();
         for f in &spec.filters {
-            match f.traverse.as_str() {
-                "typewise" => apply(&mut doc, &mut interp::<Typewise>(f, &mut log), None),
-                "topdown" => apply(&mut doc, &mut interp::<Topdown>(f, &mut log), None),
+            let order = match f.traverse.as_str() {
+                "typewise" => Order::Typewise,
+                "topdown" => Order::Topdown,
                 other => return Err(format!("unknown order {other}")),
-            }
+            };
+            let mut f = Interp {
+                rules: &f.rules,
+                log: &mut log,
+                order,
+            };
+            apply(&mut doc, &mut f, None);
         }
         if spec.log {
             doc.blocks.push(Block::Para(vec![str_(&log.join(" "))]));
@@ -406,7 +394,10 @@ fn main() {
                     .cloned()
                     .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
                     .unwrap_or_default();
-                format!("!{}", serde_json::to_string(&format!("panic: {msg}")).unwrap())
+                format!(
+                    "!{}",
+                    serde_json::to_string(&format!("panic: {msg}")).unwrap()
+                )
             }
         };
         let mut o = stdout.lock();
