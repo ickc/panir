@@ -6,9 +6,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  applyFilter, ASTTypeError, Emph, Header, Para, parse, serialize, Str,
+  applyFilter, ASTTypeError, Emph, Header, MetaList, MetaMap, MetaString, Pandoc as makePandoc, Para, parse, serialize,
+  Str, walk,
 } from "../src/index.ts";
-import type { Block, Filter, Inline, MetaValue, Pandoc } from "../src/index.ts";
+import type { Block, Filter, Inline, MetaValue, Pandoc, Row } from "../src/index.ts";
 import type { runFilter } from "../src/node.ts";
 
 const doc = (): Pandoc => parse(serialize({
@@ -87,4 +88,32 @@ test("runFilter's functions have a document; a fragment's may not", () => {
     Str: (_s, ctx) => { ctx.doc.meta; },
   };
   assert.throws(() => applyFilter(Para([Str("x")]), anyOrder), TypeError);
+});
+
+test("a function's ctx.parent is a node that can hold its node, and has a t to test", () => {
+  const seen: string[] = [];
+  const meta = { l: MetaList([MetaString("a")]), m: MetaMap({ k: MetaString("b") }), s: MetaString("c") };
+  applyFilter(makePandoc([Para([Str("x")])], { meta }), {
+    MetaString: (_v, ctx) => {
+      // a MetaValue's parent is a MetaList, a MetaMap or the document,
+      // which has no t (a product's is undefined)
+      if (ctx.parent?.t === "MetaList") seen.push(`in a list of ${ctx.parent.content.length}`);
+      else if (ctx.parent?.t === "MetaMap") seen.push(`in a map of ${Object.keys(ctx.parent.content).length}`);
+      else if (ctx.parent !== undefined) seen.push(`a field of ${ctx.parent.blocks.length} block`);
+      // @ts-expect-error: no Str holds a metadata value
+      if (ctx.parent?.t === "Str") seen.push("never");
+    },
+    Str: (_s, ctx) => {
+      const p: ReturnType<typeof Para> | undefined = ctx.parent?.t === "Para" ? ctx.parent : undefined;
+      seen.push(`in a ${p?.t}`);
+    },
+    Cell: (_c, ctx) => {
+      const row: Row | undefined = ctx.parent;
+      assert.ok(row);
+    },
+  });
+  assert.deepEqual(seen, ["in a Para", "in a list of 1", "in a map of 1", "a field of 1 block"]);
+  // a context of its own (in walk) is of any node, with a t to test
+  walk(makePandoc([Para([Str("x")])]), (_x, ctx) => { if (ctx.parent?.t === "Para") seen.push("walked"); });
+  assert.equal(seen.at(-1), "walked");
 });

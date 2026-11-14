@@ -216,9 +216,12 @@ its `index` there, `next`/`prev`, `path` and `where`, the `doc`,
 nodes of the list were deleted or spliced: a node replaced by none or
 several is spliced in place, so a list is as it is now however it is
 reached. Its types follow the function's: `ctx.next` of an inline is an
-`Inline`; `ctx.doc` is a `Pandoc` in a filter written in `runFilter`'s
-call (which runs on a document), elsewhere perhaps `undefined` (a
-fragment has none).
+`Inline`; `ctx.parent` of a metadata value is a `MetaList`, a `MetaMap`
+or the `Pandoc`, the nodes that can hold one, each with a `t` to test
+(`ctx.parent?.t === "MetaList"`; a product's, as the `Pandoc`'s, is
+`undefined`); `ctx.doc` is a `Pandoc` in a filter written in
+`runFilter`'s call (which runs on a document), elsewhere perhaps
+`undefined` (a fragment has none).
 
 ```ts
 const shout: Filter = {

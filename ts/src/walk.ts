@@ -26,11 +26,20 @@ import type {
 let skipped: (ctx: Context) => boolean;
 
 /**
+ * A node that holds another, as a context's `parent`: a product, which has
+ * no `t`, as one whose `t` is undefined, so that `ctx.parent?.t ===
+ * "MetaList"` reads, and narrows.
+ */
+export type ParentNode<N = ASTNode> = N extends { t: string } ? N : N & { readonly t?: undefined };
+
+/**
  * Where a node is: its parent, its place in it, the document, the
  * conversion. `S` is the type of the nodes beside it in a list (`next`,
- * `prev`, `container`): `Inline` for an inline's function.
+ * `prev`, `container`): `Inline` for an inline's function; `P`, the nodes
+ * that can hold it (`parent`): for a `MetaValue`'s, `Pandoc`, `MetaMap`
+ * or `MetaList`.
  */
-export class Context<S = unknown> {
+export class Context<S = unknown, P = ASTNode> {
   /** That field's name (the field of `parent` that holds this node). */
   field: string | undefined;
   /** This node's index in `container` (or its key in the map). */
@@ -77,8 +86,8 @@ export class Context<S = unknown> {
   }
 
   /** The node whose field holds this one (undefined for a fragment's list's nodes, and the document). */
-  get parent(): ASTNode | undefined {
-    return this.#parent as ASTNode | undefined;
+  get parent(): ParentNode<P> | undefined {
+    return this.#parent as ParentNode<P> | undefined;
   }
 
   /** The list holding this node, if in one (or the map). */
@@ -170,14 +179,14 @@ interface Frame {
 export type Traverse = "typewise" | "topdown" | "bottomup";
 
 /** The context a function gets when it can't skip children (not top-down: the children came first). */
-export type WalkedContext<S = unknown> = Omit<Context<S>, "skipChildren">;
+export type WalkedContext<S = unknown, P = ASTNode> = Omit<Context<S, P>, "skipChildren">;
 
 /**
  * A function's context: top-down, one that can skip children; `D`, the
  * document's type (`Pandoc` where the filter always runs on one).
  */
-type ContextFor<S, T extends Traverse, D> =
-  ([T] extends ["topdown"] ? Context<S> : WalkedContext<S>) & ([D] extends [Pandoc] ? { readonly doc: Pandoc } : unknown);
+type ContextFor<S, P, T extends Traverse, D> =
+  ([T] extends ["topdown"] ? Context<S, P> : WalkedContext<S, P>) & ([D] extends [Pandoc] ? { readonly doc: Pandoc } : unknown);
 
 /** What a function may return: nothing to keep the node, or what converts to its replacement. */
 type Returned<R> = R | void | undefined | null;
@@ -194,11 +203,13 @@ type Fn<N, C, R> = { fn(node: N, ctx: C): Returned<R> }["fn"];
  * that always run on a document (`runFilter`'s): their `ctx.doc` is one.
  */
 export type FilterFunctions<T extends Traverse = Traverse, D = Pandoc | undefined> = {
-  [K in keyof FilterTypes]?: Fn<FilterTypes[K]["node"], ContextFor<FilterTypes[K]["sibling"], T, D>, FilterTypes[K]["returns"]>;
+  [K in keyof FilterTypes]?: Fn<
+    FilterTypes[K]["node"], ContextFor<FilterTypes[K]["sibling"], FilterTypes[K]["parent"], T, D>, FilterTypes[K]["returns"]
+  >;
 } & {
-  Inlines?: Fn<Inline[], ContextFor<never, T, D>, Inlines>;
-  Blocks?: Fn<Block[], ContextFor<never, T, D>, Blocks>;
-  Meta?: Fn<Meta, ContextFor<never, T, D>, { readonly [key: string]: MetaValueInit }>;
+  Inlines?: Fn<Inline[], ContextFor<never, FilterTypes["Inline"]["parent"], T, D>, Inlines>;
+  Blocks?: Fn<Block[], ContextFor<never, FilterTypes["Block"]["parent"], T, D>, Blocks>;
+  Meta?: Fn<Meta, ContextFor<never, Pandoc, T, D>, { readonly [key: string]: MetaValueInit }>;
 };
 
 /**
