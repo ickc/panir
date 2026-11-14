@@ -279,10 +279,74 @@ def meta() -> list[Filter]:
     return [f]
 
 
+def newdoc() -> list[Filter]:
+    f = Filter(traverse="topdown")
+
+    @f.on(Pandoc)
+    def anew(doc):
+        title = doc.meta["title"]
+        assert isinstance(title, MetaInlines)
+        return Pandoc(Header(1, *title.content), Para("made anew"), meta=doc.meta)
+
+    @f.on(Str)
+    def up(s):
+        return Str(s.text.upper())
+
+    return [f]
+
+
+def twice() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Code)
+    def double(c):
+        return [c, c]
+
+    @f.on(Para)
+    def first(p):
+        for x in p.content:
+            if isinstance(x, Code):
+                x.text = "changed"
+                break
+
+    return [f]
+
+
+def metacount() -> list[Filter]:
+    first = Filter()
+
+    @first.on_meta
+    def add(m):
+        m["added"] = MetaInlines(Str("new"))
+
+    n = 0
+    second = Filter()
+
+    @second.on(Str)
+    def number(s):
+        nonlocal n
+        n += 1
+        return Str(f"{s.text}{n}")
+
+    @second.on_meta
+    def calls(m):
+        nonlocal n
+        n += 1
+        m["calls"] = MetaString(str(n))
+
+    @second.on(Pandoc)
+    def last(doc):
+        nonlocal n
+        n += 1
+        doc.blocks.append(Para(f"calls: {n}"))
+
+    return [first, second]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
-    + (once, lists, meta)
+    + (once, lists, meta, newdoc, twice, metacount)
 }
 
 

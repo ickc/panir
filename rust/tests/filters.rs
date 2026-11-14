@@ -2,8 +2,8 @@
 //! Rust filters, must make of its input what pandoc's Lua filter made.
 
 use panir::{
-    apply, from_str, to_string, Attr, Block, Ctx, Div, Filter, Inline, Meta, MetaValue, Order,
-    Pandoc,
+    apply, from_str, to_string, Attr, Block, Ctx, Div, Filter, Header, Inline, Meta, MetaValue,
+    Order, Pandoc,
 };
 use serde_json::value::RawValue;
 use serde_json::Value;
@@ -183,6 +183,65 @@ impl Filter for MetaScenario {
     }
 }
 
+struct Twice(Order);
+
+impl Filter for Twice {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        match x {
+            Inline::Code(_) => Some(vec![x.clone(), x.clone()]),
+            _ => None,
+        }
+    }
+    fn block(&mut self, x: &mut Block, _: &mut Ctx) -> Option<Vec<Block>> {
+        if let Block::Para(content) = x {
+            if let Some(Inline::Code(c)) = content.iter_mut().find(|i| matches!(i, Inline::Code(_)))
+            {
+                c.text = "changed".into();
+            }
+        }
+        None
+    }
+}
+
+// A metadata function adding a key, then a filter counting its calls.
+
+struct AddKey;
+
+impl Filter for AddKey {
+    fn meta(&mut self, m: &mut Meta, _: &mut Ctx) {
+        m.insert("added".into(), MetaValue::MetaInlines(vec![str_("new")]));
+    }
+}
+
+struct Count(usize);
+
+impl Filter for Count {
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        match x {
+            Inline::Str(s) => {
+                self.0 += 1;
+                Some(vec![Inline::Str(format!("{s}{}", self.0).into())])
+            }
+            _ => None,
+        }
+    }
+    fn meta(&mut self, m: &mut Meta, _: &mut Ctx) {
+        self.0 += 1;
+        m.insert(
+            "calls".into(),
+            MetaValue::MetaString(self.0.to_string().into()),
+        );
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) {
+        self.0 += 1;
+        let calls = panir::inlines(&format!("calls: {}", self.0));
+        doc.blocks.push(Block::Para(calls));
+    }
+}
+
 // Noting each call, as the Lua scenarios do.
 
 struct Noting {
@@ -288,6 +347,37 @@ impl Filter for Skip {
     }
 }
 
+/// A new document, which is what is walked.
+struct NewDoc;
+
+impl Filter for NewDoc {
+    fn order(&self) -> Order {
+        Order::Topdown
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) {
+        let Some(MetaValue::MetaInlines(title)) = doc.meta.get("title") else {
+            panic!("no title");
+        };
+        let header = Header {
+            level: 1,
+            attr: Attr::default(),
+            content: title.clone(),
+        };
+        let mut new = Pandoc::new(vec![
+            header.into(),
+            Block::Para(panir::inlines("made anew")),
+        ]);
+        new.meta = take(&mut doc.meta);
+        *doc = new;
+    }
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        match x {
+            Inline::Str(s) => Some(vec![Inline::Str(s.to_uppercase().into())]),
+            _ => None,
+        }
+    }
+}
+
 struct TopLists;
 
 impl Filter for TopLists {
@@ -328,6 +418,13 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<()> {
         "meta" => Box::new(MetaScenario(order)),
         "skip" => Box::new(Skip),
         "toplists" => Box::new(TopLists),
+        "newdoc" => Box::new(NewDoc),
+        "twice" => Box::new(Twice(order)),
+        "metacount" => {
+            apply(doc, &mut AddKey, FORMAT);
+            apply(doc, &mut Count(0), FORMAT);
+            return Some(());
+        }
         "typewise" | "topdown" | "bottomup" => {
             let order = match name {
                 "typewise" => Order::Typewise,

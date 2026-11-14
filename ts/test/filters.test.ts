@@ -5,8 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
-  applyFilter, Div, Emph, fromJSON, HorizontalRule, MetaBool, MetaInlines, MetaList, MetaString, Para, Str,
-  Strong, toJSON,
+  applyFilter, Div, Emph, fromJSON, Header, HorizontalRule, MetaBool, MetaInlines, MetaList, MetaString,
+  Pandoc as makePandoc, Para, Str, Strong, toJSON,
 } from "../src/index.ts";
 import type { AnyFilter, Block, Filter, Pandoc, WalkedContext } from "../src/index.ts";
 
@@ -140,6 +140,36 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
       doc.blocks.unshift(Para([Str(draft?.t === "MetaBool" && draft.value ? "draft" : "final")]));
     },
   }],
+
+  newdoc: () => [{
+    traverse: "topdown",
+    Pandoc: (doc) => {
+      const title = doc.meta.title;
+      assert.ok(title?.t === "MetaInlines");
+      return makePandoc([Header(1, title.content), Para("made anew")], { meta: doc.meta });
+    },
+    Str: (s) => Str(s.text.toUpperCase()),
+  }],
+
+  twice: () => [{
+    Code: (c) => [c, c],
+    Para: (p) => {
+      const code = p.content.find((x) => x.t === "Code");
+      if (code) code.text = "changed";
+    },
+  }],
+
+  metacount: () => {
+    let n = 0;
+    return [
+      { Meta: (m) => { m.added = MetaInlines([Str("new")]); } },
+      {
+        Str: (s) => Str(`${s.text}${++n}`),
+        Meta: (m) => { m.calls = MetaString(String(++n)); },
+        Pandoc: (doc) => { doc.blocks.push(Para(`calls: ${++n}`)); },
+      },
+    ];
+  },
 };
 
 const lines = readFileSync(new URL("../../corpus/filters.jsonl", import.meta.url), "utf8")
