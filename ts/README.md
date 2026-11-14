@@ -286,17 +286,24 @@ what a filter function may.
 
 Reading, writing, walking, copying, comparing and `stringify` work on
 documents nested at least 256 levels deep (blocks and inlines in each
-other; the Rust crate's `MAX_DEPTH`), at the default stack of Node.js 16.11
-to 24: 300 nested divs is a 9 kB web page. Measured (nested divs / tables
-in tables), they go to about 1,800 / 680 levels to read
-(`parse`: `JSON.parse` stops first); `serialize` 1,000 / 300 (where
-`JSON.stringify` stops); `fromJSON`, `toJSON`, walks, `copy` and `equal`
-2,000 / 530 and more; `stringify` is a loop, as deep as memory goes.
+other; the Rust crate's `MAX_DEPTH`) at Node.js's default stack, on every
+version from 16.11: 300 nested divs is a 9 kB web page. Measured, at the
+least over Node.js 16.11 to 24 (nested divs / tables in tables' cells):
+
+| | levels |
+|---|---|
+| `parse`, `fromJSON` | 1,870 / 650 |
+| `serialize` (where `JSON.stringify` stops) | 1,060 / 300 |
+| `toJSON`, `check` | 2,170 / 700 |
+| filters, `walk` | 2,060 / 620 |
+| `copy`, `equal` | 2,490 / 900 |
+| `stringify` (a loop) | any |
+
 Beyond, reading is an `ASTDecodeError`, and anything else an
 `ASTDepthError` (an `ASTError` and a `RangeError`): never the engine's bare
-`RangeError`. (`structuredClone` stops at about 1,150 / 290, and
-`node:util`'s `isDeepStrictEqual` at 750 / 210; `equal` compares as
-`panir` sees the AST, whatever the maps' prototypes.)
+`RangeError`. (Node.js's own `structuredClone` stops at about 1,150 / 290,
+and `isDeepStrictEqual` at 750 / 210; `equal` compares as panir sees the
+AST, whatever the maps' prototypes.)
 
 ## Also
 
