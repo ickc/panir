@@ -227,6 +227,10 @@ What a port of a Lua filter trips over:
 - Lists count from 0 here, from 1 in Lua (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
   functions after: `ctx.doc.meta`.
+- pandoc's Lua has no function for a metadata value (its values are
+  plain Lua values, reached through the `Meta` function or `doc.meta`);
+  here, as in panflute, `@f.on(MetaValue)` (or `MetaList`, ...) is called
+  on each one.
 
 ### Fragments
 

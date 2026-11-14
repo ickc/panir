@@ -33,14 +33,19 @@ where pandoc (or libpandoc) tells them, as in Python. A function finds it in
 
 A `Filter` has pandoc's Lua filter functions, each a method with a default
 that does nothing: `inline` and `block` (a `match` on the constructor),
-`inlines` and `blocks` (every list of them), `meta`, `pandoc`. Its
+`inlines` and `blocks` (every list of them), `meta`, `pandoc`; and, as the
+other languages and panflute, `meta_value`, on each metadata value (in a
+`MetaList`, it deletes or splices as `inline` does; a map's value, a field
+of the metadata or of a `MetaMap`, is replaced by one value: to delete a
+key, `meta` or the `MetaMap`'s function removes it). Its
 `order()`, as Lua's `traverse`, is one of the three orders filter
 frameworks use, `Order::Typewise` unless the filter says another (a value:
 a filter can choose it when it runs, and be a `dyn Filter`):
 
 - `Typewise` (as pandoc's Lua filters by default, and Haskell's `walk`): one
   walk per kind, each bottom-up: every inline, then every list of inlines,
-  then every block, then every list of blocks, then `meta`, then `pandoc`.
+  then every block, then every list of blocks, then every metadata value,
+  then `meta`, then `pandoc`.
 - `Topdown` (Lua's other order, and pandocfilters'): `pandoc`, `meta`,
   then a node before its children, which are walked in its replacement
   too, unless the method calls `ctx.skip_children()` (Lua's `return el,
@@ -179,6 +184,9 @@ What a port of a Lua filter trips over:
 - Lists count from 0, Lua's from 1 (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
   functions after: `ctx.meta()`.
+- pandoc's Lua has no function for a metadata value (its values are
+  plain Lua values, reached through the `Meta` function or `doc.meta`);
+  here, as in panflute, `meta_value` is called on each one.
 
 ## Types and `VisitMut`
 

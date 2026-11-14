@@ -494,6 +494,48 @@ impl Filter for Replaced {
     }
 }
 
+/// A function for metadata values, typewise then top-down.
+struct MetaValues<'a>(Order, &'a mut Vec<String>);
+
+impl Filter for MetaValues<'_> {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn meta_value(&mut self, x: &mut MetaValue, _: &mut Ctx) -> Option<Vec<MetaValue>> {
+        let note = match x {
+            MetaValue::MetaInlines(_) => {
+                let text = panir::stringify(&*x);
+                self.1.push(format!("MetaInlines:{text}"));
+                return match text.as_str() {
+                    "drop" => Some(vec![]),
+                    "two" => Some(vec![
+                        MetaValue::MetaString("two-a".into()),
+                        MetaValue::MetaString("two-b".into()),
+                    ]),
+                    _ => None,
+                };
+            }
+            MetaValue::MetaBool(b) => {
+                let text = b.to_string();
+                self.1.push("MetaBool".into());
+                return Some(vec![MetaValue::MetaString(text.into())]);
+            }
+            MetaValue::MetaBlocks(_) => "MetaBlocks".into(),
+            MetaValue::MetaList(xs) => format!("MetaList:{}", xs.len()),
+            MetaValue::MetaMap(_) => "MetaMap".into(),
+            MetaValue::MetaString(s) => format!("MetaString:{s}"),
+        };
+        self.1.push(note);
+        None
+    }
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        if let Inline::Str(s) = x {
+            self.1.push(format!("Str:{s}"));
+        }
+        None
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -521,6 +563,14 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
             return Some(
                 apply(doc, &mut AddKey, FORMAT).and_then(|()| apply(doc, &mut Count(0), FORMAT)),
             );
+        }
+        "metavalues" => {
+            let mut seen = vec![];
+            let done = apply(doc, &mut MetaValues(Order::Typewise, &mut seen), FORMAT)
+                .and_then(|()| apply(doc, &mut MetaValues(Order::Topdown, &mut seen), FORMAT));
+            doc.blocks
+                .push(Block::Para(panir::inlines(&seen.join(" "))));
+            return Some(done);
         }
         "replaced" => {
             let mut f = Replaced::default();

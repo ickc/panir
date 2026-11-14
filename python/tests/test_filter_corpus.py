@@ -23,9 +23,11 @@ from panir import (
     Image,
     Inline,
     Link,
+    MetaBlocks,
     MetaBool,
     MetaInlines,
     MetaList,
+    MetaMap,
     MetaString,
     Note,
     Pandoc,
@@ -412,10 +414,54 @@ def replaced() -> list[Filter]:
     return [f, listing(seen)]
 
 
+def metavalues() -> list[Filter]:
+    seen: list[str] = []
+
+    def functions(f: Filter) -> Filter:
+        @f.on(MetaInlines)
+        def inlines(v):
+            text = A.stringify(v)
+            seen.append(f"MetaInlines:{text}")
+            if text == "drop":
+                return []
+            if text == "two":
+                return [MetaString("two-a"), MetaString("two-b")]
+            return None
+
+        @f.on(MetaBlocks)
+        def blocks(v):
+            seen.append("MetaBlocks")
+
+        @f.on(MetaList)
+        def list_(v):
+            seen.append(f"MetaList:{len(v.content)}")
+
+        @f.on(MetaMap)
+        def map_(v):
+            seen.append("MetaMap")
+
+        @f.on(MetaString)
+        def string(v):
+            seen.append(f"MetaString:{v.text}")
+
+        @f.on(MetaBool)
+        def bool_(v):
+            seen.append("MetaBool")
+            return MetaString("true" if v.value else "false")
+
+        @f.on(Str)
+        def str_(s):
+            seen.append(f"Str:{s.text}")
+
+        return f
+
+    return [functions(Filter()), functions(Filter(traverse="topdown")), listing(seen)]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
-    + (once, lists, meta, newdoc, twice, metacount, attributes, fails, replaced)
+    + (once, lists, meta, newdoc, twice, metacount, attributes, fails, replaced, metavalues)
 }
 
 

@@ -27,7 +27,10 @@ use std::error::Error;
 use std::fmt;
 
 use crate::path::{Locate, Path, Target};
-use crate::{Block, Inline, MAX_DEPTH, Meta, Pandoc, Text, VisitMut, walk_block, walk_inline};
+use crate::{
+    Block, Inline, MAX_DEPTH, Meta, MetaValue, Pandoc, Text, VisitMut, walk_block, walk_inline,
+    walk_meta_value,
+};
 
 thread_local! {
     /// How many lists deep the filter walks on this thread are: a walk started
@@ -357,11 +360,30 @@ impl Walked for Block {
     }
 }
 
+impl Walked for MetaValue {
+    const FUNCTION: &'static str = "meta_value";
+    // (a list of them has no function: a MetaList's is meta_value)
+    const LIST_FUNCTION: &'static str = "meta_value";
+    const LIST: &'static str = "MetaList";
+    fn name(&self) -> &'static str {
+        self.tag()
+    }
+}
+
 /// A filter's functions. Each has a default that does nothing.
 ///
 /// `inline` and `block` return `None` to keep the node (changed in place or
 /// not), or nodes to splice in its place (`vec![]` deletes it); `inlines`,
 /// `blocks`, `meta` and `pandoc` change their value in place.
+///
+/// `meta_value`, which pandoc's Lua doesn't have (its metadata values are
+/// plain Lua values), is called on each metadata value, as panir's other
+/// languages (and panflute) call theirs: in a `MetaList` it may delete or
+/// splice as `inline` does; a map's value (a field of the metadata, or of a
+/// `MetaMap`) is replaced by one value only (`vec![]` is an error: a key is
+/// deleted from the map, by `meta`'s function or the `MetaMap`'s). In the
+/// typewise order its walk is the last before `meta`'s, through the
+/// metadata only.
 ///
 /// A filter can be a trait object (`&mut dyn Filter`), and choose its
 /// order when it runs:
@@ -410,6 +432,10 @@ pub trait Filter {
     fn blocks(&mut self, xs: &mut Vec<Block>, ctx: &mut Ctx) {
         let _ = (xs, ctx);
     }
+    fn meta_value(&mut self, x: &mut MetaValue, ctx: &mut Ctx) -> Option<Vec<MetaValue>> {
+        let _ = (x, ctx);
+        None
+    }
     fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx) {
         let _ = (meta, ctx);
     }
@@ -425,6 +451,8 @@ enum Pass {
     Inlines,
     Block,
     Blocks,
+    /// (through the metadata only)
+    MetaValue,
     All,
 }
 
@@ -610,6 +638,9 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
     }
 }
 
+/// The function on a list of metadata values: none.
+fn no_list<F: ?Sized, T>(_: &mut F, _: &mut Vec<T>, _: &mut Ctx) {}
+
 impl<F: Filter + ?Sized> VisitMut for Driver<'_, '_, F> {
     fn visit_inlines(&mut self, xs: &mut Vec<Inline>) {
         let calls = self.calls(Pass::Inline, Pass::Inlines);
@@ -619,6 +650,67 @@ impl<F: Filter + ?Sized> VisitMut for Driver<'_, '_, F> {
     fn visit_blocks(&mut self, xs: &mut Vec<Block>) {
         let calls = self.calls(Pass::Block, Pass::Blocks);
         self.list(xs, calls, F::block, F::blocks, walk_block);
+    }
+
+    /// A `MetaList`'s values: each may be replaced, deleted or spliced.
+    fn visit_meta_values(&mut self, xs: &mut Vec<MetaValue>) {
+        let (on_elem, _) = self.calls(Pass::MetaValue, Pass::MetaValue);
+        self.list(
+            xs,
+            (on_elem, false),
+            F::meta_value,
+            no_list::<F, MetaValue>,
+            walk_meta_value,
+        );
+    }
+
+    /// A map's value (a field of the metadata, or of a `MetaMap`): replaced
+    /// by one value, or kept.
+    fn visit_meta_value(&mut self, x: &mut MetaValue) {
+        if self.failure.is_some() {
+            return;
+        }
+        let (on_elem, _) = self.calls(Pass::MetaValue, Pass::MetaValue);
+        if !on_elem {
+            walk_meta_value(self, x);
+            return;
+        }
+        if !self.topdown {
+            walk_meta_value(self, x);
+            if self.failure.is_some() {
+                return;
+            }
+        }
+        let mut ctx = Ctx::new(self.conversion, self.meta);
+        let result = self.f.meta_value(x, &mut ctx);
+        let error = match (ctx.error, result) {
+            (Some(e), _) => Some(e),
+            (None, None) => None,
+            (None, Some(mut v)) if v.len() == 1 => {
+                *x = v.pop().expect("one value");
+                None
+            }
+            (None, Some(v)) => Some(
+                format!(
+                    "expected one MetaValue (a map's value: to delete its key, remove it in the \
+                     function of the Meta or MetaMap holding it), got {}",
+                    v.len()
+                )
+                .into(),
+            ),
+        };
+        if let Some(e) = error {
+            self.fail(
+                Some(MetaValue::FUNCTION),
+                x.tag(),
+                e,
+                Some(Target::node(&*x)),
+            );
+            return;
+        }
+        if self.topdown && !ctx.skip {
+            walk_meta_value(self, x);
+        }
     }
 }
 
@@ -795,7 +887,13 @@ fn walk_document<F: Filter + ?Sized>(
 ) -> Option<Failure> {
     let order = f.order();
     let passes: &[Pass] = match order {
-        Order::Typewise => &[Pass::Inline, Pass::Inlines, Pass::Block, Pass::Blocks],
+        Order::Typewise => &[
+            Pass::Inline,
+            Pass::Inlines,
+            Pass::Block,
+            Pass::Blocks,
+            Pass::MetaValue,
+        ],
         Order::Topdown | Order::Bottomup => &[Pass::All],
     };
     let topdown = order == Order::Topdown;
@@ -832,11 +930,21 @@ fn walk_document<F: Filter + ?Sized>(
                 let mut d = Driver::new(&mut *f, conversion, Some(&*meta), pass, topdown);
                 d.visit_meta_value(&mut v);
                 let failure = d.failure;
-                meta.insert(k, v);
-                if failure.is_some() {
-                    return failure;
+                // (a failure on the value itself: where it is in the map now)
+                let itself = failure
+                    .as_ref()
+                    .is_some_and(|e| e.target == Some(Target::node(&v)));
+                let v: &MetaValue = meta.entry(k).or_insert(v);
+                if let Some(mut failure) = failure {
+                    if itself {
+                        failure.target = Some(Target::node(v));
+                    }
+                    return Some(failure);
                 }
             }
+        }
+        if pass == Pass::MetaValue {
+            continue; // (no metadata value in the blocks)
         }
         if order == Order::Bottomup {
             let (failure, _) = whole("meta", "Meta", meta, conversion, |m, c| f.meta(m, c));

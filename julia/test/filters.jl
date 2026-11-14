@@ -189,6 +189,24 @@ function scenario_replaced()
     Filters([(f, :topdown), (listing(seen), :typewise)])
 end
 
+function scenario_metavalues()
+    seen = String[]
+    function f(v::MetaInlines)
+        text = stringify(v)
+        push!(seen, "MetaInlines:$text")
+        text == "drop" && return MetaValue[]
+        text == "two" && return MetaValue[MetaString("two-a"), MetaString("two-b")]
+        nothing
+    end
+    f(::MetaBlocks) = (push!(seen, "MetaBlocks"); nothing)
+    f(v::MetaList) = (push!(seen, "MetaList:$(length(v.content))"); nothing)
+    f(::MetaMap) = (push!(seen, "MetaMap"); nothing)
+    f(v::MetaString) = (push!(seen, "MetaString:$(v.text)"); nothing)
+    f(v::MetaBool) = (push!(seen, "MetaBool"); MetaString(string(v.value)))
+    f(s::Str) = (push!(seen, "Str:$(s.text)"); nothing)
+    Filters([(f, :typewise), (f, :topdown), (listing(seen), :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
@@ -196,6 +214,7 @@ const SCENARIOS = Dict(
     "once" => scenario_once, "lists" => scenario_lists, "meta" => scenario_meta,
     "newdoc" => scenario_newdoc, "twice" => scenario_twice, "metacount" => scenario_metacount,
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
+    "metavalues" => scenario_metavalues,
 )
 
 @testset "filters as pandoc's Lua" begin

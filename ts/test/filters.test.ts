@@ -8,7 +8,10 @@ import {
   applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, MetaBool, MetaInlines, MetaList,
   MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, stringify, Strong, toJSON, Underline,
 } from "../src/index.ts";
-import type { AnyFilter, Block, Filter, Pandoc, WalkedContext } from "../src/index.ts";
+import type {
+  AnyFilter, Block, Filter, MetaBool as MetaBoolNode, MetaInlines as MetaInlinesNode, MetaList as MetaListNode,
+  MetaString as MetaStringNode, Pandoc, Str as StrNode, WalkedContext,
+} from "../src/index.ts";
 
 const FORMAT = "json";
 
@@ -203,6 +206,26 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
         return [Emph([Str("new")]), Strong([Emph([Str("g")])])];
       },
     }, listing(seen)];
+  },
+
+  metavalues: () => {
+    const seen: string[] = [];
+    const functions = {
+      MetaInlines: (v: MetaInlinesNode) => {
+        const text = stringify(v);
+        seen.push(`MetaInlines:${text}`);
+        if (text === "drop") return [];
+        if (text === "two") return [MetaString("two-a"), MetaString("two-b")];
+        return undefined;
+      },
+      MetaBlocks: () => { seen.push("MetaBlocks"); },
+      MetaList: (v: MetaListNode) => { seen.push(`MetaList:${v.content.length}`); },
+      MetaMap: () => { seen.push("MetaMap"); },
+      MetaString: (v: MetaStringNode) => { seen.push(`MetaString:${v.text}`); },
+      MetaBool: (v: MetaBoolNode) => { seen.push("MetaBool"); return MetaString(String(v.value)); },
+      Str: (s: StrNode) => { seen.push(`Str:${s.text}`); },
+    };
+    return [functions, { traverse: "topdown", ...functions }, listing(seen)];
   },
 
   attributes: () => [{
