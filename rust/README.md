@@ -158,4 +158,5 @@ pandoc's order. (serde's derived adjacently tagged enums lose the path
 inside `"c"`, so the sum types' `Deserialize` is generated: it reads
 `"t"`, then decodes `"c"` in place.)
 
-Rust 1.85 or newer (CI runs the tests on 1.85). Status: a prototype.
+Rust 1.97 or newer: CI runs the tests on 1.97, and the minimum is raised
+only when a dependency needs it. Status: a prototype.
