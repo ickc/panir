@@ -121,6 +121,7 @@ pub struct Ctx<'a> {
     conversion: &'a Conversion,
     meta: Option<&'a Meta>,
     skip: bool,
+    in_list: bool,
     error: Option<Box<dyn Error + Send + Sync>>,
 }
 
@@ -130,6 +131,7 @@ impl<'a> Ctx<'a> {
             conversion,
             meta,
             skip: false,
+            in_list: false,
             error: None,
         }
     }
@@ -151,6 +153,14 @@ impl<'a> Ctx<'a> {
     /// for `meta` and `pandoc`, which have it, and in a fragment.
     pub fn meta(&self) -> Option<&'a Meta> {
         self.meta
+    }
+
+    /// Whether the node is in a list, where what the function returns is
+    /// spliced (`vec![]` deletes it): an inline's and a block's always; a
+    /// metadata value's in a `MetaList`, not in a map (a field of the
+    /// metadata, or of a `MetaMap`), whose value is replaced by one.
+    pub fn in_list(&self) -> bool {
+        self.in_list
     }
 
     /// Don't walk the node's children, or its replacement's (Lua's `return
@@ -577,6 +587,7 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
                 }
             }
             let mut ctx = Ctx::new(self.conversion, self.meta);
+            ctx.in_list = true;
             let result = if on_elem {
                 elem(self.f, &mut xs[i], &mut ctx)
             } else {

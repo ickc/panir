@@ -37,7 +37,8 @@ that does nothing: `inline` and `block` (a `match` on the constructor),
 other languages and panflute, `meta_value`, on each metadata value (in a
 `MetaList`, it deletes or splices as `inline` does; a map's value, a field
 of the metadata or of a `MetaMap`, is replaced by one value: to delete a
-key, `meta` or the `MetaMap`'s function removes it). Its
+key, `meta` or the `MetaMap`'s function removes it; `ctx.in_list()` says
+which). Its
 `order()`, as Lua's `traverse`, is one of the three orders filter
 frameworks use, `Order::Typewise` unless the filter says another (a value:
 a filter can choose it when it runs, and be a `dyn Filter`):
@@ -143,12 +144,11 @@ assert_eq!(
 );
 ```
 
-The context (`Ctx`) has the conversion, `skip_children`, `fail`, `apply` and the
-metadata (`ctx.meta()`; while a metadata value is walked, the other
-fields, as the value can't be lent while it changes; `None` in a
-fragment), and no more: not the node's
-parent, siblings or path, which panir's Python and TypeScript contexts
-have (pandoc's Lua functions have no context). A function has its node as
+The context (`Ctx`) has the conversion, `skip_children`, `fail`, `apply`,
+`in_list` and the metadata (`ctx.meta()`; while a metadata value is
+walked, the other fields, as the value can't be lent while it changes;
+`None` in a fragment), and no more: not the node's parent, siblings or
+path, which panir's Python and TypeScript contexts have (pandoc's Lua functions have no context). A function has its node as
 `&mut`, and while it does nothing else may reach the node, its parent
 included. A walk that needs them is a `VisitMut` that keeps its own (a
 stack of what it is in).

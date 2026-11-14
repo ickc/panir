@@ -155,3 +155,32 @@ fn a_walk_that_does_not_call_it_is_unchanged() {
     apply(&mut d, &mut Nothing, None).unwrap();
     assert_eq!(d, doc());
 }
+
+#[test]
+fn a_function_knows_whether_its_value_is_in_a_list() {
+    // (to delete a value where it can: in a list)
+    struct DeleteInLists(Order, Vec<bool>);
+    impl Filter for DeleteInLists {
+        fn order(&self) -> Order {
+            self.0
+        }
+        fn meta_value(&mut self, _: &mut MetaValue, ctx: &mut Ctx) -> Option<Vec<MetaValue>> {
+            self.1.push(ctx.in_list());
+            ctx.in_list().then(Vec::new)
+        }
+        fn inline(&mut self, _: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+            assert!(ctx.in_list());
+            None
+        }
+    }
+    for order in [Order::Typewise, Order::Topdown, Order::Bottomup] {
+        let mut f = DeleteInLists(order, vec![]);
+        let mut d = doc();
+        apply(&mut d, &mut f, None).unwrap();
+        assert_eq!(d.meta["l"], MetaValue::MetaList(vec![]));
+        assert_eq!(d.meta.len(), 3);
+        // l's two items in a list, the fields and m's k not
+        assert_eq!(f.1.iter().filter(|&&b| b).count(), 2, "{order:?}");
+        assert_eq!(f.1.len(), 6);
+    }
+}
