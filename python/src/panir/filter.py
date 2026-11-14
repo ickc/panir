@@ -34,7 +34,6 @@ from ._core import (
     _ClassSpec,
     _describe,
     _ListSpec,
-    add_note,
     fn_name,
     too_deep,
     unwritable,
@@ -416,7 +415,7 @@ def _fragment(x: Any) -> tuple[NodeList, _ListSpec] | None:
 
 def _returned(e: BaseException, fn: Callable[..., Any], what: str, ctx: Context) -> None:
     if not getattr(e, "_panir_noted", False):
-        add_note(e, f"returned by filter function {fn_name(fn)}, for the {what} at {ctx.where}")
+        e.add_note(f"returned by filter function {fn_name(fn)}, for the {what} at {ctx.where}")
         e._panir_noted = True  # type: ignore[attr-defined]
 
 
@@ -426,7 +425,7 @@ def _call(fn: Callable[..., Any], wants_ctx: bool, x: Any, ctx: Context, what: s
         return fn(x, ctx) if wants_ctx else fn(x)
     except Exception as e:
         if not getattr(e, "_panir_noted", False):
-            add_note(e, f"in filter function {fn_name(fn)}, on the {what} at {ctx.where}")
+            e.add_note(f"in filter function {fn_name(fn)}, on the {what} at {ctx.where}")
             e._panir_noted = True  # type: ignore[attr-defined]
         raise
 

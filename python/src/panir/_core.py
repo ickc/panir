@@ -26,7 +26,7 @@ import types
 import typing
 from collections.abc import Callable, Iterable, Mapping
 from operator import length_hint
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, ParamSpec, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, ParamSpec, Self, TypeVar, overload
 
 if TYPE_CHECKING:
     from .filter import Filter
@@ -48,10 +48,6 @@ __all__ = [
 _T = TypeVar("_T")
 _P = ParamSpec("_P")
 _In = TypeVar("_In")
-# (typing.Self is 3.11's)
-_N = TypeVar("_N", bound="Node")
-_L = TypeVar("_L", bound="NodeList")
-_D = TypeVar("_D", bound="NodeDict")
 _Get = TypeVar("_Get")
 _Set = TypeVar("_Set", contravariant=True)
 
@@ -171,7 +167,7 @@ def too_deep(what: str) -> Callable[[Callable[_P, _T]], Callable[_P, _T]]:
                     else ASTDepthError(what, "a document nested less deeply", _limit())
                 )
                 for note in getattr(e, "__notes__", ()):
-                    add_note(error, note)
+                    error.add_note(note)
                 raise error from None  # (not a thousand frames of traceback)
 
         return checked
@@ -351,12 +347,12 @@ class Node:
         return _make(type(self), [getattr(self, f) for f in self._fields])
 
     @too_deep("copy")
-    def __deepcopy__(self: _N, memo: dict) -> _N:
+    def __deepcopy__(self, memo: dict) -> Self:
         from ._fast import clone  # (it reads this module's declarations)
 
         return clone(self)  # type: ignore[return-value]
 
-    def walk(self: _N, filter: Filter, format: str | None = None, **kwargs: Any) -> _N:
+    def walk(self, filter: Filter, format: str | None = None, **kwargs: Any) -> Self:
         """Apply a filter to what is in this node (in place), as pandoc's
         Lua ``el:walk{...}``: not to the node itself, unless it is a
         document. Returns the node (a document: what its ``Pandoc`` function
@@ -378,7 +374,7 @@ class Node:
 
     @classmethod
     @too_deep("read")
-    def from_json(cls: type[_N], j: Any) -> _N:
+    def from_json(cls, j: Any) -> Self:
         """A value of this type (or constructor) from pandoc's JSON."""
         spec = _SPEC_OF.get(_sum_of(cls) or cls)
         if spec is None:
@@ -494,13 +490,11 @@ def _make(cls: type[Node], values: list) -> Node:
     return node
 
 
-class Enum(str, enum.Enum):
+class Enum(enum.StrEnum):
     """A pandoc type whose constructors have no fields, e.g. ``MathType``."""
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}.{self.name}"
-
-    __str__ = str.__str__
 
 
 class NodeList(list[_T], Generic[_T, _In]):
@@ -533,7 +527,7 @@ class NodeList(list[_T], Generic[_T, _In]):
         n = len(self)
         list.extend(self, [self._check(x, n + i) for i, x in enumerate(_items(xs))])
 
-    def __iadd__(self: _L, xs: Iterable[_In]) -> _L:  # type: ignore[override,misc]
+    def __iadd__(self, xs: Iterable[_In]) -> Self:  # type: ignore[override,misc]
         self.extend(xs)
         return self
 
@@ -549,10 +543,10 @@ class NodeList(list[_T], Generic[_T, _In]):
             x = self._check(x, i)
         list.__setitem__(self, i, x)
 
-    def copy(self: _L) -> _L:
+    def copy(self) -> Self:
         return _list(self._spec, self)  # type: ignore[return-value]
 
-    def walk(self: _L, filter: Filter, format: str | None = None, **kwargs: Any) -> _L:
+    def walk(self, filter: Filter, format: str | None = None, **kwargs: Any) -> Self:
         """Apply a filter to this list of nodes and what is in them (in
         place), as pandoc's Lua ``inlines:walk{...}``: its function for
         lists of inlines (or blocks) applies to this one too. Returns it."""
@@ -561,10 +555,10 @@ class NodeList(list[_T], Generic[_T, _In]):
     def __reduce__(self) -> tuple:
         return (list, (list(self),))
 
-    def __copy__(self: _L) -> _L:
+    def __copy__(self) -> Self:
         return _list(self._spec, self)  # type: ignore[return-value]
 
-    def __deepcopy__(self: _L, memo: dict) -> _L:
+    def __deepcopy__(self, memo: dict) -> Self:
         import copy
 
         return _list(self._spec, [copy.deepcopy(x, memo) for x in self])  # type: ignore[return-value]
@@ -679,16 +673,16 @@ class NodeDict(dict[str, _T], Generic[_T, _In]):
             self[k] = v
         return self[k]
 
-    def copy(self: _D) -> _D:
+    def copy(self) -> Self:
         return _dict(self._spec, self)  # type: ignore[return-value]
 
     def __reduce__(self) -> tuple:
         return (dict, (dict(self),))
 
-    def __copy__(self: _D) -> _D:
+    def __copy__(self) -> Self:
         return _dict(self._spec, self)  # type: ignore[return-value]
 
-    def __deepcopy__(self: _D, memo: dict) -> _D:  # type: ignore[override]
+    def __deepcopy__(self, memo: dict) -> Self:  # type: ignore[override]
         import copy
 
         return _dict(self._spec, {k: copy.deepcopy(v, memo) for k, v in self.items()})  # type: ignore[return-value]
@@ -1386,13 +1380,3 @@ def flat(cls: type[Node], owner: str, field: str, given: Any, parts: tuple) -> A
             f"{owner}(): give either {field}= or {', '.join(c + '=' for c in changed)}, not both"
         )
     return given
-
-
-if sys.version_info < (3, 11):  # pragma: no cover
-
-    def add_note(exc: BaseException, note: str) -> None:
-        exc.__notes__ = [*getattr(exc, "__notes__", []), note]  # type: ignore[attr-defined]
-else:
-
-    def add_note(exc: BaseException, note: str) -> None:
-        exc.add_note(note)
