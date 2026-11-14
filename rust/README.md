@@ -183,7 +183,11 @@ What a port of a Lua filter trips over:
 - `return el, false` (top-down): `ctx.skip_children()`.
 - Lists count from 0, Lua's from 1 (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
-  functions after: `ctx.meta()`.
+  functions after: `ctx.meta()`. Inside the metadata, it lacks the field
+  being walked (out of the map while it changes): a field that names
+  itself, as pandocfilters' metavars allows, looks missing there, where
+  the other languages, whose `ctx.doc.meta` is the whole map, walk it
+  until the walk is too deep.
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `meta_value` is called on each one.
