@@ -166,6 +166,30 @@ walk!(loud, Emph("a", Str("b")))  # Emph(Inline[Str("A"), Str("B")])
 
 A context's `path` is then from the fragment, and its `doc` is `nothing`.
 
+## Deep documents
+
+Reading, writing, walking, comparing, copying and `stringify` recurse, a
+few calls for each level of the document. Real documents are shallow (38
+levels in web pages through `pandoc -f html`, 13 in a thousand Markdown
+documents); measured with Julia 1.12 on Linux, with the usual 8 MB stack
+(levels of nested divs / tables in tables' cells / nested emphasis),
+about:
+
+| | levels |
+|---|---|
+| `Panir.parse` | 680 / 220 / 1,000 |
+| `Panir.fromjson` | 3,100 / 1,100 / 5,100 |
+| `walk!`, every order | 7,400 / 1,400 / 7,900 |
+| `deepcopy` | 10,000 / 2,500 / 10,000 |
+| `hash`, `==` | 18,000 / 2,800 / 26,000 |
+| `serialize`, `Panir.tojson` | 20,000 / 5,300 / 25,000 |
+| `stringify` | 34,000 / 8,100 / 43,000 |
+
+Beyond, `Panir.parse` raises `ASTDecodeError` (JSON.jl stops at 2,048
+levels of JSON, which comes first), and anything else Julia's own
+`StackOverflowError`. panir doesn't catch that: Julia itself warns that
+after one "program state may be corrupted".
+
 ## Also
 
 `Panir.parse`/`Panir.serialize` for pandoc's JSON text;

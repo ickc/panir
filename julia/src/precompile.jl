@@ -38,6 +38,13 @@ _pc(c::Cell) = nothing
 _pc(m::Meta) = nothing
 _pc(d::Pandoc, ctx) = nothing
 _pc_str(s::Str) = Str(uppercase(s.text))
+# what a method may return besides a node
+_pc_returns(s::Str) = s.text == "x" ? "two words" : Inline[s, "!"]
+_pc_returns(c::Code) = Inline[]
+_pc_returns(p::Plain) = "text"
+_pc_returns(xs::Vector{Block}) = xs
+_pc_returns(m::Meta) = Dict("k" => true)
+_pc_wrong(s::Str) = 42
 
 @setup_workload begin
     doc = _example(Pandoc, 3)
@@ -47,11 +54,32 @@ _pc_str(s::Str) = Str(uppercase(s.text))
             walk!(_pc, d; traverse, format = Conversion(; format = "html"))
         end
         walk!(_pc_str, d)
+        walk!(_pc_returns, d)
+        walk!(_pc_str, d.blocks)  # a fragment
         stringify(d)
         d == doc
+        # a filter's run, as run_filter does it
+        _run(_pc_str, :typewise, IOBuffer(serialize(d)), IOBuffer(), String["html"], ENV)
+        # the errors, shown
+        for bad in ("{", "{\"pandoc-api-version\":[1,23,1,2],\"meta\":{},\"blocks\":[1]}",
+                    "{\"pandoc-api-version\":[1,23,1,2],\"meta\":{},\"blocks\":[{\"t\":\"Para\",\"c\":[{\"t\":\"Str\",\"c\":42}]}]}")
+            try parse(bad) catch e; sprint(showerror, e) end
+        end
+        try walk!(_pc_wrong, d) catch e; sprint(showerror, e) end
+        # constructors, with keywords, as filters make them
+        made = Pandoc(Header(1, "Title"; identifier = "t", classes = ["c"], attributes = ["k" => "v"]),
+                      Para("a b", Emph("e"), Link("l"; url = "u", title = "t"), Image("i"; url = "u"),
+                           Span(Str("s"); attributes = Dict("k" => "v")), Code("c"; classes = ["x"])),
+                      Div(Para("p"); identifier = "d"), CodeBlock("c"; classes = ["x"]);
+                      meta = Dict("title" => "T", "draft" => true))
+        made.meta["k"] = "v"
+        sprint(show, MIME"text/plain"(), made)
         # every kind of node, also where the document has only one
         for (T, sum) in values(_tags())
-            walk!(_pc, fromjson(sum, tojson(_example(T, 1))))
+            x = fromjson(sum, tojson(_example(T, 1)))
+            walk!(_pc, x)
+            stringify(x)
+            stringify(Any[x])
         end
     end
 end
