@@ -269,8 +269,11 @@ a few thousand levels deep, plain lists too, in a thread with a stack of
 ## Also
 
 `loads`/`dumps`/`load`/`dump` for pandoc's JSON, `stringify` (as pandoc's
-`pandoc.utils.stringify`), `to_python`/`from_python` for metadata. A node
-pickles as its JSON, read back as `loads` reads it. Python's cyclic
+`pandoc.utils.stringify`, metadata and all), `to_python`/`from_python` for
+metadata. A string UTF-8 can't hold (a lone surrogate, `Str("\ud800")`) is
+an `ASTTypeError` that says where when `dump` or `f.main()` writes it
+(`dumps` gives a Python string, which can hold it). A node pickles as its
+JSON, read back as `loads` reads it. Python's cyclic
 garbage collector is paused while a document is read or written, and for
 the whole of `f.main()`: it went through the new nodes again and again,
 half of the time.

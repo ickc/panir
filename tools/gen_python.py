@@ -383,7 +383,7 @@ class Gen:
         after_default = False
         for n, f in zip(fnames, fields):
             ptype = self.set_type(f["type"])
-            values.append(f"{n!r}: {n}")
+            values.append(n)
             if f["name"] == variadic:
                 star = f"*{n}: {self.in_one(self.resolve(f['type'])['list'])}"
                 positional = False
@@ -401,10 +401,10 @@ class Gen:
                         )
                     else:
                         kwonly.append(f"{gn}: {gtype} | None = None")
-                    parts.append(f"{gn!r}: {gn}")
+                    parts.append(gn)
                 flats.append(
                     f"{n} = _flat({prod['name']}, {c['name']!r}, {n!r}, {n}, "
-                    f"{{{', '.join(parts)}}})"
+                    f"({', '.join(parts)}{',' if len(parts) == 1 else ''}))"
                 )
                 continue
             has_default = "default" in f
@@ -440,13 +440,9 @@ class Gen:
             out += [f"        {s}," for s in sig]
             out.append("    ) -> None:")
         out += [f"        {line}" for line in flats]
-        body = f"        _init(self, {{{', '.join(values)}}})"
-        if len(body) <= 88:
-            out.append(body)
-        else:
-            out.append("        _init(self, {")
-            out += [f"            {v}," for v in values]
-            out.append("        })")
+        # (the fields' values in field order)
+        tup = f"({', '.join(values)}{',' if len(values) == 1 else ''})"
+        out.append(f"        _init(self, {tup})")
         return out
 
 

@@ -30,8 +30,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 from . import _deep
 
 if TYPE_CHECKING:
-    from typing_extensions import Self
-
     from .filter import Filter
 
 __all__ = [
@@ -50,6 +48,10 @@ __all__ = [
 
 _T = TypeVar("_T")
 _In = TypeVar("_In")
+# (typing.Self is 3.11's)
+_N = TypeVar("_N", bound="Node")
+_L = TypeVar("_L", bound="NodeList")
+_D = TypeVar("_D", bound="NodeDict")
 _Get = TypeVar("_Get")
 _Set = TypeVar("_Set", contravariant=True)
 
@@ -209,6 +211,7 @@ class Node:
     _defaults: ClassVar[dict[str, Any]] = {}
     _keys: ClassVar[dict[str, str]] = {}
     _parts: ClassVar[dict[str, str]] = {}
+    _plan: ClassVar[tuple | None] = None  # (init's)
     # set by finalize
     _fields: ClassVar[tuple[str, ...]] = ()
     _specs: ClassVar[dict[str, _Spec]] = {}
@@ -305,12 +308,12 @@ class Node:
     def __copy__(self) -> Node:
         return _make(type(self), [getattr(self, f) for f in self._fields])
 
-    def __deepcopy__(self, memo: dict) -> Self:
+    def __deepcopy__(self: _N, memo: dict) -> _N:
         from ._fast import clone  # (it reads this module's declarations)
 
         return _deep.deep(clone, lambda: too_deep(f"copy of {type(self).__name__}"), self)  # type: ignore[return-value]
 
-    def walk(self, filter: Filter, format: str | None = None, **kwargs: Any) -> Self:
+    def walk(self: _N, filter: Filter, format: str | None = None, **kwargs: Any) -> _N:
         """Apply a filter to what is in this node (in place), as pandoc's
         Lua ``el:walk{...}``: not to the node itself, unless it is a
         document. Returns the node (a document: what its ``Pandoc`` function
@@ -330,7 +333,7 @@ class Node:
             ) from None
 
     @classmethod
-    def from_json(cls, j: Any) -> Self:
+    def from_json(cls: type[_N], j: Any) -> _N:
         """A value of this type (or constructor) from pandoc's JSON."""
         spec = _SPEC_OF.get(_sum_of(cls) or cls)
         if spec is None:
@@ -355,6 +358,29 @@ def _repr(v: Any) -> str:
     if isinstance(v, dict):
         return "{" + ", ".join([f"{k!r}: {_repr(x)}" for k, x in v.items()]) + "}"
     return repr(v)
+
+
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def unwritable(node: Node) -> ASTTypeError | None:
+    """The error for the first string in ``node`` that UTF-8 can't hold (a
+    lone surrogate: ``Str("\\ud800")``), which says where; None if none.
+    (Looked for only once writing failed.)"""
+    todo: list = [(node, type(node).__name__)]
+    while todo:
+        x, where = todo.pop()
+        if isinstance(x, str):
+            if _SURROGATE.search(x):
+                return ASTTypeError(where, "a str UTF-8 can hold (no lone surrogate)", repr(x))
+        elif isinstance(x, Node):
+            todo += [(getattr(x, f), f"{where}.{f}") for f in reversed(x._fields)]
+        elif isinstance(x, (list, tuple)):
+            todo += [(v, f"{where}[{i}]") for i, v in reversed(list(enumerate(x)))]
+        elif isinstance(x, dict):
+            for k, v in reversed(list(x.items())):
+                todo += [(v, f"{where}[{k!r}]"), (k, f"{where} key")]
+    return None
 
 
 def _decode(spec: Any, j: Any) -> Any:
@@ -447,7 +473,9 @@ class NodeList(list[_T], Generic[_T, _In]):
 
     def __init__(self, spec: _ListSpec, items: Iterable = ()) -> None:
         self._spec = spec
-        list.__init__(self, (spec.item.coerce(x, spec.label, i) for i, x in enumerate(items)))
+        if items:
+            coerce, label = spec.item.coerce, spec.label
+            list.__init__(self, [coerce(x, label, i) for i, x in enumerate(items)])
 
     def _check(self, x: Any, i: int) -> Any:
         return self._spec.item.coerce(x, self._spec.label, i)
@@ -462,7 +490,7 @@ class NodeList(list[_T], Generic[_T, _In]):
         n = len(self)
         list.extend(self, [self._check(x, n + i) for i, x in enumerate(_items(xs))])
 
-    def __iadd__(self, xs: Iterable[_In]) -> Self:  # type: ignore[override,misc]
+    def __iadd__(self: _L, xs: Iterable[_In]) -> _L:  # type: ignore[override,misc]
         self.extend(xs)
         return self
 
@@ -478,10 +506,10 @@ class NodeList(list[_T], Generic[_T, _In]):
             x = self._check(x, i)
         list.__setitem__(self, i, x)
 
-    def copy(self) -> Self:
+    def copy(self: _L) -> _L:
         return _list(self._spec, self)  # type: ignore[return-value]
 
-    def walk(self, filter: Filter, format: str | None = None, **kwargs: Any) -> Self:
+    def walk(self: _L, filter: Filter, format: str | None = None, **kwargs: Any) -> _L:
         """Apply a filter to this list of nodes and what is in them (in
         place), as pandoc's Lua ``inlines:walk{...}``: its function for
         lists of inlines (or blocks) applies to this one too. Returns it."""
@@ -490,10 +518,10 @@ class NodeList(list[_T], Generic[_T, _In]):
     def __reduce__(self) -> tuple:
         return (list, (list(self),))
 
-    def __copy__(self) -> Self:
+    def __copy__(self: _L) -> _L:
         return _list(self._spec, self)  # type: ignore[return-value]
 
-    def __deepcopy__(self, memo: dict) -> Self:
+    def __deepcopy__(self: _L, memo: dict) -> _L:
         import copy
 
         return _list(self._spec, [copy.deepcopy(x, memo) for x in self])  # type: ignore[return-value]
@@ -608,16 +636,16 @@ class NodeDict(dict[str, _T], Generic[_T, _In]):
             self[k] = v
         return self[k]
 
-    def copy(self) -> Self:
+    def copy(self: _D) -> _D:
         return _dict(self._spec, self)  # type: ignore[return-value]
 
     def __reduce__(self) -> tuple:
         return (dict, (dict(self),))
 
-    def __copy__(self) -> Self:
+    def __copy__(self: _D) -> _D:
         return _dict(self._spec, self)  # type: ignore[return-value]
 
-    def __deepcopy__(self, memo: dict) -> Self:  # type: ignore[override]
+    def __deepcopy__(self: _D, memo: dict) -> _D:  # type: ignore[override]
         import copy
 
         return _dict(self._spec, {k: copy.deepcopy(v, memo) for k, v in self.items()})  # type: ignore[return-value]
@@ -750,7 +778,10 @@ class _ListSpec(_Spec):
         return f"a list of {self.item.name()}"
 
     def coerce(self, value: Any, label: str | None = None, key: Any = None) -> Any:
-        if type(value) is self.cls and value._spec is self:
+        t = type(value)
+        if t is tuple or t is list:  # (the usual: each element checked)
+            return self.cls(self, value)
+        if t is self.cls and value._spec is self:
             return _list(self, value)  # checked already; a copy: one list, one field
         if isinstance(value, Mapping) and isinstance(self.item, _TupleSpec):
             value = list(value.items())  # e.g. attributes given as a dict
@@ -1236,26 +1267,54 @@ _SPACES = " \t\n\r"
 _WORDS = re.compile(r"[ \t\n\r]+|[^ \t\n\r]+")
 
 
-def init(self: Node, values: dict[str, Any]) -> None:
-    """Set a node's fields, from a generated ``__init__``.
+_MISSING = object()
+
+
+def _plan(cls: type[Node]) -> tuple:
+    """How a class's constructor sets each field (in field order), and its
+    required fields; made once (``cls._plan``)."""
+    plan = cls.__dict__.get("_plan")
+    if plan is None:
+        steps = []
+        for f, setter in zip(cls._fields, cls._setters):
+            spec = cls._specs[f]
+            textual = (
+                f == cls._variadic
+                and isinstance(spec, _ListSpec)
+                and isinstance(spec.item, _ClassSpec)
+                and _takes_text(spec.item.cls)
+            )
+            steps.append((setter, spec.coerce, textual, cls._defaults.get(f, _MISSING), spec))
+        required = tuple(f for f in cls._fields if f not in cls._defaults)
+        plan = (tuple(steps), required)
+        type.__setattr__(cls, "_plan", plan)
+    return plan
+
+
+def init(self: Node, values: tuple) -> None:
+    """Set a node's fields (in field order), from a generated ``__init__``:
+    each checked as setting it is.
 
     ``None`` stands for the field's default where it has one.
     """
     cls = type(self)
-    for f in cls._fields:
-        v = values[f]
-        if (
-            f == cls._variadic
-            and len(v) == 1
-            and isinstance(v[0], str)
-            and isinstance(spec := cls._specs[f], _ListSpec)
-            and isinstance(spec.item, _ClassSpec)
-            and _takes_text(spec.item.cls)
-        ):
+    plan = cls._plan or _plan(cls)
+    steps = plan[0]
+    if len(steps) == 1:  # (the most made: Str, Emph, ...)
+        set_, coerce, textual, default, spec = steps[0]
+        v = values[0]
+        if textual and len(v) == 1 and isinstance(v[0], str):
+            v = v[0]
+        if v is None and default is not _MISSING:
+            v = spec.decode(default)
+        set_(self, coerce(v))
+        return
+    for (set_, coerce, textual, default, spec), v in zip(steps, values):
+        if textual and len(v) == 1 and isinstance(v[0], str):
             v = v[0]  # Para("a b"): the whole list as one string, as in Lua
-        if v is None and f in cls._defaults:
-            v = cls._specs[f].decode(cls._defaults[f])
-        self.__setattr__(f, v)
+        if v is None and default is not _MISSING:
+            v = spec.decode(default)
+        set_(self, coerce(v))
 
 
 def _takes_text(cls: type) -> bool:
@@ -1263,11 +1322,12 @@ def _takes_text(cls: type) -> bool:
     return issubclass(_CLASSES["Str"], cls) or issubclass(_CLASSES["Plain"], cls)
 
 
-def flat(cls: type[Node], owner: str, field: str, given: Any, parts: dict[str, Any]) -> Any:
-    """A product field given whole (``attr=``) or by its parts (``identifier=``)."""
-    required = [f for f in cls._fields if f not in cls._defaults]
+def flat(cls: type[Node], owner: str, field: str, given: Any, parts: tuple) -> Any:
+    """A product field given whole (``attr=``) or by its parts
+    (``identifier=``, ...: in field order)."""
+    required = _plan(cls)[1]
     if given is None:
-        missing = [f for f in required if parts[f] is None]
+        missing = [f for f, v in zip(cls._fields, parts) if v is None and f in required]
         if missing:
             raise TypeError(f"{owner}() needs {', '.join(m + '=' for m in missing)} (or {field}=)")
         node = object.__new__(cls)
@@ -1275,7 +1335,7 @@ def flat(cls: type[Node], owner: str, field: str, given: Any, parts: dict[str, A
         return node
     changed = [
         f
-        for f, v in parts.items()
+        for f, v in zip(cls._fields, parts)
         if (v is not None if f in required else cls._specs[f].coerce(v) != Node._default_of(cls, f))
     ]
     if changed:

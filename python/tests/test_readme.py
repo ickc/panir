@@ -106,3 +106,9 @@ def test_readme_examples_type_check(tmp_path):
         assert any(line in span for span in spans), (line, lines[line], message)
     for span in spans:
         assert any(line in span for line, _ in errors), ("no error", lines[span.start])
+
+
+def test_readme_links_are_absolute():
+    # (it is PyPI's page too, where a link into the repository is dead)
+    links = re.findall(r"\]\(([^)]+)\)", README.read_text())
+    assert links and all(link.startswith("https://") for link in links), links

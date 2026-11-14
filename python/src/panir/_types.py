@@ -102,7 +102,7 @@ class Pandoc(Node):
         *blocks: Block | Inline | str | Sequence[Inline | str],
         meta: Mapping[str, _MetaValueIn] | None = None,
     ) -> None:
-        _init(self, {"meta": meta, "blocks": blocks})
+        _init(self, (meta, blocks))
 
 
 class Block(Node):
@@ -130,7 +130,7 @@ class Plain(Block):
         content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Para(Block):
@@ -151,7 +151,7 @@ class Para(Block):
         content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class LineBlock(Block):
@@ -173,7 +173,7 @@ class LineBlock(Block):
         content: list[list[Inline]]
 
     def __init__(self, *content: Iterable[Inline | str] | Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class CodeBlock(Block):
@@ -214,14 +214,8 @@ class CodeBlock(Block):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "CodeBlock",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "text": text})
+        attr = _flat(Attr, "CodeBlock", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, text))
 
 
 class RawBlock(Block):
@@ -244,7 +238,7 @@ class RawBlock(Block):
         text: str
 
     def __init__(self, format: str, text: str) -> None:
-        _init(self, {"format": format, "text": text})
+        _init(self, (format, text))
 
 
 class BlockQuote(Block):
@@ -266,7 +260,7 @@ class BlockQuote(Block):
         content: list[Block]
 
     def __init__(self, *content: Block | Inline | str | Sequence[Inline | str]) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class OrderedList(Block):
@@ -379,9 +373,9 @@ class OrderedList(Block):
             "OrderedList",
             "list_attributes",
             list_attributes,
-            {"start": start, "style": style, "delimiter": delimiter},
+            (start, style, delimiter),
         )
-        _init(self, {"list_attributes": list_attributes, "content": content})
+        _init(self, (list_attributes, content))
 
 
 class BulletList(Block):
@@ -411,7 +405,7 @@ class BulletList(Block):
         self,
         *content: Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
     ) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class DefinitionList(Block):
@@ -471,7 +465,7 @@ class DefinitionList(Block):
             ],
         ],
     ) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Header(Block):
@@ -518,14 +512,8 @@ class Header(Block):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Header",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"level": level, "attr": attr, "content": content})
+        attr = _flat(Attr, "Header", "attr", attr, (identifier, classes, attributes))
+        _init(self, (level, attr, content))
 
 
 class HorizontalRule(Block):
@@ -944,24 +932,8 @@ class Table(Block):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Table",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(
-            self,
-            {
-                "attr": attr,
-                "caption": caption,
-                "col_specs": col_specs,
-                "head": head,
-                "bodies": bodies,
-                "foot": foot,
-            },
-        )
+        attr = _flat(Attr, "Table", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, caption, col_specs, head, bodies, foot))
 
 
 class Figure(Block):
@@ -1020,14 +992,8 @@ class Figure(Block):
         ]
         | None = None,
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Figure",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "caption": caption, "content": content})
+        attr = _flat(Attr, "Figure", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, caption, content))
 
 
 class Div(Block):
@@ -1070,14 +1036,8 @@ class Div(Block):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Div",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "content": content})
+        attr = _flat(Attr, "Div", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, content))
 
 
 class MetaValue(Node):
@@ -1103,7 +1063,7 @@ class MetaMap(MetaValue):
         content: dict[str, MetaValue]
 
     def __init__(self, content: Mapping[str, _MetaValueIn] | None = None) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class MetaList(MetaValue):
@@ -1122,7 +1082,7 @@ class MetaList(MetaValue):
         content: list[MetaValue]
 
     def __init__(self, *content: _MetaValueIn) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class MetaBool(MetaValue):
@@ -1140,7 +1100,7 @@ class MetaBool(MetaValue):
         value: bool
 
     def __init__(self, value: bool) -> None:
-        _init(self, {"value": value})
+        _init(self, (value,))
 
 
 class MetaString(MetaValue):
@@ -1158,7 +1118,7 @@ class MetaString(MetaValue):
         text: str
 
     def __init__(self, text: str) -> None:
-        _init(self, {"text": text})
+        _init(self, (text,))
 
 
 class MetaInlines(MetaValue):
@@ -1179,7 +1139,7 @@ class MetaInlines(MetaValue):
         content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class MetaBlocks(MetaValue):
@@ -1201,7 +1161,7 @@ class MetaBlocks(MetaValue):
         content: list[Block]
 
     def __init__(self, *content: Block | Inline | str | Sequence[Inline | str]) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Inline(Node):
@@ -1226,7 +1186,7 @@ class Str(Inline):
         text: str
 
     def __init__(self, text: str) -> None:
-        _init(self, {"text": text})
+        _init(self, (text,))
 
 
 class Emph(Inline):
@@ -1247,7 +1207,7 @@ class Emph(Inline):
         content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Underline(Inline):
@@ -1268,7 +1228,7 @@ class Underline(Inline):
         content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Strong(Inline):
@@ -1289,7 +1249,7 @@ class Strong(Inline):
         content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Strikeout(Inline):
@@ -1310,7 +1270,7 @@ class Strikeout(Inline):
         content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Superscript(Inline):
@@ -1331,7 +1291,7 @@ class Superscript(Inline):
         content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Subscript(Inline):
@@ -1352,7 +1312,7 @@ class Subscript(Inline):
         content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class SmallCaps(Inline):
@@ -1373,7 +1333,7 @@ class SmallCaps(Inline):
         content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Quoted(Inline):
@@ -1404,7 +1364,7 @@ class Quoted(Inline):
         quote_type: QuoteType | Literal["SingleQuote", "DoubleQuote"],
         *content: Inline | str,
     ) -> None:
-        _init(self, {"quote_type": quote_type, "content": content})
+        _init(self, (quote_type, content))
 
 
 class Cite(Inline):
@@ -1434,7 +1394,7 @@ class Cite(Inline):
         citations: Iterable[Citation] = (),
         content: Iterable[Inline | str] | Inline | str = (),
     ) -> None:
-        _init(self, {"citations": citations, "content": content})
+        _init(self, (citations, content))
 
 
 class Code(Inline):
@@ -1475,14 +1435,8 @@ class Code(Inline):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Code",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "text": text})
+        attr = _flat(Attr, "Code", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, text))
 
 
 class Space(Inline):
@@ -1536,7 +1490,7 @@ class Math(Inline):
         math_type: MathType | Literal["DisplayMath", "InlineMath"],
         text: str,
     ) -> None:
-        _init(self, {"math_type": math_type, "text": text})
+        _init(self, (math_type, text))
 
 
 class RawInline(Inline):
@@ -1559,7 +1513,7 @@ class RawInline(Inline):
         text: str
 
     def __init__(self, format: str, text: str) -> None:
-        _init(self, {"format": format, "text": text})
+        _init(self, (format, text))
 
 
 class Link(Inline):
@@ -1615,15 +1569,9 @@ class Link(Inline):
         url: str | None = None,
         title: str = "",
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Link",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        target = _flat(Target, "Link", "target", target, {"url": url, "title": title})
-        _init(self, {"attr": attr, "content": content, "target": target})
+        attr = _flat(Attr, "Link", "attr", attr, (identifier, classes, attributes))
+        target = _flat(Target, "Link", "target", target, (url, title))
+        _init(self, (attr, content, target))
 
 
 class Image(Inline):
@@ -1679,15 +1627,9 @@ class Image(Inline):
         url: str | None = None,
         title: str = "",
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Image",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        target = _flat(Target, "Image", "target", target, {"url": url, "title": title})
-        _init(self, {"attr": attr, "content": content, "target": target})
+        attr = _flat(Attr, "Image", "attr", attr, (identifier, classes, attributes))
+        target = _flat(Target, "Image", "target", target, (url, title))
+        _init(self, (attr, content, target))
 
 
 class Note(Inline):
@@ -1709,7 +1651,7 @@ class Note(Inline):
         content: list[Block]
 
     def __init__(self, *content: Block | Inline | str | Sequence[Inline | str]) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Span(Inline):
@@ -1751,14 +1693,8 @@ class Span(Inline):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Span",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "content": content})
+        attr = _flat(Attr, "Span", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, content))
 
 
 class Attr(Node):
@@ -1791,14 +1727,7 @@ class Attr(Node):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        _init(
-            self,
-            {
-                "identifier": identifier,
-                "classes": classes,
-                "attributes": attributes,
-            },
-        )
+        _init(self, (identifier, classes, attributes))
 
 
 class ListAttributes(Node):
@@ -1856,7 +1785,7 @@ class ListAttributes(Node):
         delimiter: ListNumberDelim
         | Literal["DefaultDelim", "Period", "OneParen", "TwoParens"] = ListNumberDelim.DefaultDelim,
     ) -> None:
-        _init(self, {"start": start, "style": style, "delimiter": delimiter})
+        _init(self, (start, style, delimiter))
 
 
 class Caption(Node):
@@ -1890,7 +1819,7 @@ class Caption(Node):
         *content: Block | Inline | str | Sequence[Inline | str],
         short: Iterable[Inline | str] | Inline | str | None = None,
     ) -> None:
-        _init(self, {"short": short, "content": content})
+        _init(self, (short, content))
 
 
 class ColSpec(Node):
@@ -1924,7 +1853,7 @@ class ColSpec(Node):
         ] = Alignment.AlignDefault,
         width: ColWidthBase | None = None,
     ) -> None:
-        _init(self, {"alignment": alignment, "width": width})
+        _init(self, (alignment, width))
 
 
 class TableHead(Node):
@@ -2026,14 +1955,8 @@ class TableHead(Node):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "TableHead",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "rows": rows})
+        attr = _flat(Attr, "TableHead", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, rows))
 
 
 class TableBody(Node):
@@ -2219,22 +2142,8 @@ class TableBody(Node):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "TableBody",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(
-            self,
-            {
-                "attr": attr,
-                "row_head_columns": row_head_columns,
-                "head": head,
-                "body": body,
-            },
-        )
+        attr = _flat(Attr, "TableBody", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, row_head_columns, head, body))
 
 
 class TableFoot(Node):
@@ -2336,14 +2245,8 @@ class TableFoot(Node):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "TableFoot",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "rows": rows})
+        attr = _flat(Attr, "TableFoot", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, rows))
 
 
 class Citation(Node):
@@ -2409,17 +2312,7 @@ class Citation(Node):
         note_num: int = 0,
         hash: int = 0,
     ) -> None:
-        _init(
-            self,
-            {
-                "id": id,
-                "prefix": prefix,
-                "suffix": suffix,
-                "mode": mode,
-                "note_num": note_num,
-                "hash": hash,
-            },
-        )
+        _init(self, (id, prefix, suffix, mode, note_num, hash))
 
 
 class Target(Node):
@@ -2444,7 +2337,7 @@ class Target(Node):
         title: str
 
     def __init__(self, url: str, title: str = "") -> None:
-        _init(self, {"url": url, "title": title})
+        _init(self, (url, title))
 
 
 class ColWidthBase(Node):
@@ -2469,7 +2362,7 @@ class ColWidth(ColWidthBase):
         width: float
 
     def __init__(self, width: float) -> None:
-        _init(self, {"width": width})
+        _init(self, (width,))
 
 
 class ColWidthDefault(ColWidthBase):
@@ -2548,14 +2441,8 @@ class Row(Node):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Row",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "cells": cells})
+        attr = _flat(Attr, "Row", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, cells))
 
 
 class Cell(Node):
@@ -2622,23 +2509,8 @@ class Cell(Node):
         row_span: int = 1,
         col_span: int = 1,
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Cell",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(
-            self,
-            {
-                "attr": attr,
-                "alignment": alignment,
-                "row_span": row_span,
-                "col_span": col_span,
-                "content": content,
-            },
-        )
+        attr = _flat(Attr, "Cell", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, alignment, row_span, col_span, content))
 
 
 # pandoc-types' newtypes and type synonyms

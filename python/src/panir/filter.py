@@ -35,6 +35,7 @@ from ._core import (
     _describe,
     _ListSpec,
     add_note,
+    unwritable,
 )
 from ._types import Block, Inline, MetaValue, Pandoc
 from ._walk import Context, _nodes_spec, _walk_fields, _Walker
@@ -363,10 +364,11 @@ class Filter:
         try:
             # (a process that ends with the document: nothing to collect)
             with _fast.paused_gc():
-                out = self.run_json(text, conversion=conversion)
+                doc = self(_fast.loads(text, Pandoc), conversion=conversion)
+                data = _utf8(doc, _fast.dumps(doc))
         finally:
             sys.stdout = sys.__stdout__
-        stdout.write(out.encode("utf-8"))
+        stdout.write(data)
         stdout.flush()
 
 
@@ -381,6 +383,18 @@ def run(
     for f in filters:
         doc = f(doc, format, conversion=conversion)
     return doc
+
+
+def _utf8(doc: Node, text: str) -> bytes:
+    """A document's JSON text as UTF-8; ``ASTTypeError`` (saying where) for a
+    string UTF-8 can't hold (a lone surrogate, made in Python)."""
+    try:
+        return text.encode("utf-8")
+    except UnicodeEncodeError as e:
+        error = unwritable(doc)
+        if error is None:
+            raise
+        raise error from e
 
 
 def _fragment(x: Any) -> tuple[NodeList, _ListSpec] | None:
