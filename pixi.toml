@@ -9,7 +9,10 @@ pytest = "*"
 pip = "*"
 ruff = "*"
 pyright = "*"
-pandoc = "3.*"
+# pyright runs on it (unconstrained, the solver may pick a Node too old for it)
+nodejs = "26.*"
+# as pins.env's PANDOC_VERSION: the tests ask this pandoc
+pandoc = "3.14.*"
 
 [feature.py310.dependencies]
 python = "3.10.*"
@@ -17,13 +20,16 @@ python = "3.10.*"
 [feature.py314.dependencies]
 python = "3.14.*"
 
+[feature.py315.dependencies]
+python = "3.15.*"
+
 [feature.ts.dependencies]
-nodejs = "24.*"
 typescript = "*"
 
 [environments]
 py310 = ["py310"]
 py314 = ["py314"]
+py315 = ["py315"]
 ts = ["ts"]
 
 [tasks]
