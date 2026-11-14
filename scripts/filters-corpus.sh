@@ -11,7 +11,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 out=corpus/filters.jsonl
 : > "$out"
-for lua in corpus/filters/*.lua; do
+# (in the same order whatever the locale: meta before metacount)
+for lua in $(printf '%s\n' corpus/filters/*.lua | LC_ALL=C sort); do
   name=$(basename "$lua" .lua)
   md=corpus/filters/$name.md
   [ -f "$md" ] || md=corpus/features.md

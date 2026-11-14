@@ -6,6 +6,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   applyFilter, ASTDecodeError, ASTDepthError, ASTError, ASTTypeError, Attr, BulletList, Caption, Cell, check, Cite,
   Citation, Code, CodeBlock, Div, Emph, fromJSON, Header, LineBlock, Link, MetaBool, MetaInlines, MetaList,
@@ -178,9 +181,8 @@ for (const [i, [markdown, lua, filter]] of RETURNS.entries()) {
   test(`what a function returns converts as in pandoc's Lua (${i})`, (t) => {
     const exe = pandoc(t);
     if (!exe) return;
-    const dir = execFileSync("mktemp", ["-d"]).toString().trim();
-    const script = `${dir}/f.lua`;
-    execFileSync("sh", ["-c", `cat > "${script}"`], { input: lua });
+    const script = join(mkdtempSync(join(tmpdir(), "panir-")), "f.lua");
+    writeFileSync(script, lua);
     const run = (args: string[]) => execFileSync(exe, ["-f", "markdown", "-t", "json", ...args], { input: markdown }).toString();
     const want = JSON.parse(run(["--lua-filter", script]));
     assert.deepEqual(toJSON(applyFilter(parse(run([])), filter)), want);

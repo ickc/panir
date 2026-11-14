@@ -178,7 +178,7 @@ await runFilter({ Pandoc: (d, ctx) => {
   return d;
 } });
 `);
-  const out = execFileSync(exe, ["-f", "markdown", "-t", "plain", "--columns=60", "--filter", join(dir, "f.js")],
+  const out = execFileSync(exe, ["-f", "markdown", "-t", "plain", "--eol=lf", "--columns=60", "--filter", join(dir, "f.js")],
                            { input: "hi" }).toString();
   assert.equal(out, "hi\n\nplain,plain,60\n");
 });

@@ -1,2 +1,4 @@
-# The corpus is compared byte for byte: no line ends of Windows's on checkout.
+# Tests compare files with what they should hold (the READMEs' examples,
+# the corpus byte for byte): no line ends of Windows's on checkout.
+* text=auto eol=lf
 *.jsonl -text
