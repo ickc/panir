@@ -2,13 +2,12 @@
 //! them, the metadata and the document, in one of three orders.
 //!
 //! ```
-//! use panir::{apply, Ctx, Filter, Inline, Typewise};
+//! use panir::{apply, Ctx, Filter, Inline};
 //!
 //! struct Upper;
 //!
 //! impl Filter for Upper {
-//!     type Order = Typewise;
-//!     fn inline(&mut self, x: &mut Inline, _: &mut Ctx<Typewise>) -> Option<Vec<Inline>> {
+//!     fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
 //!         if let Inline::Str(s) = x {
 //!             *s = s.to_uppercase().into();
 //!         }
@@ -25,55 +24,24 @@
 //! [`VisitMut`].
 
 use crate::{walk_block, walk_inline, Block, Inline, Meta, Pandoc, VisitMut};
-use std::marker::PhantomData;
 
-/// The order a filter's functions are called in.
-pub trait Order: sealed::Sealed {
-    #[doc(hidden)]
-    const KIND: Kind;
-}
-
-#[doc(hidden)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Kind {
+/// The order a filter's functions are called in: Lua's `traverse`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Order {
+    /// As pandoc's Lua filters by default, and Haskell's `walk`: one walk
+    /// per kind, each bottom-up: every inline, then every list of inlines,
+    /// then every block, then every list of blocks; then the metadata, then
+    /// the document.
+    #[default]
     Typewise,
+    /// As Lua's `traverse = "topdown"`, and pandocfilters: the document, the
+    /// metadata, then from the root down, a list before its elements and a
+    /// node before its children, which are walked in its replacement too,
+    /// unless the function calls [`Ctx::skip_children`].
     Topdown,
+    /// As panflute: one walk, each node after its children, a list after
+    /// its elements, the metadata after what is in it, the document last.
     Bottomup,
-}
-
-mod sealed {
-    pub trait Sealed {}
-    impl Sealed for super::Typewise {}
-    impl Sealed for super::Topdown {}
-    impl Sealed for super::Bottomup {}
-}
-
-/// As pandoc's Lua filters by default, and Haskell's `walk`: one walk per
-/// kind, each bottom-up: every inline, then every list of inlines, then every
-/// block, then every list of blocks; then the metadata, then the document.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Typewise;
-
-/// As Lua's `traverse = "topdown"`, and pandocfilters: the document, the
-/// metadata, then from the root down, a list before its elements and a node
-/// before its children, which are walked in its replacement too, unless the
-/// function calls [`Ctx::skip_children`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Topdown;
-
-/// As panflute: one walk, each node after its children, a list after its
-/// elements, the metadata after what is in it, the document last.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Bottomup;
-
-impl Order for Typewise {
-    const KIND: Kind = Kind::Typewise;
-}
-impl Order for Topdown {
-    const KIND: Kind = Kind::Topdown;
-}
-impl Order for Bottomup {
-    const KIND: Kind = Kind::Bottomup;
 }
 
 /// The pandoc conversion a filter runs in, as panir's Python `Conversion`:
@@ -120,19 +88,21 @@ impl Conversion {
     }
 }
 
-/// What a filter function knows besides its node.
-pub struct Ctx<'a, O: Order> {
+/// What a filter function knows besides its node: the conversion.
+///
+/// (Not its parent, or where it is: the function has the node as `&mut`,
+/// and nothing else may reach it meanwhile. A walk that needs them is a
+/// [`VisitMut`] keeping its own.)
+pub struct Ctx<'a> {
     conversion: &'a Conversion,
     skip: bool,
-    order: PhantomData<O>,
 }
 
-impl<'a, O: Order> Ctx<'a, O> {
+impl<'a> Ctx<'a> {
     fn new(conversion: &'a Conversion) -> Self {
         Ctx {
             conversion,
             skip: false,
-            order: PhantomData,
         }
     }
 
@@ -145,18 +115,10 @@ impl<'a, O: Order> Ctx<'a, O> {
     pub fn conversion(&self) -> &'a Conversion {
         self.conversion
     }
-}
 
-impl Ctx<'_, Topdown> {
     /// Don't walk the node's children, or its replacement's (Lua's `return
-    /// el, false`). Only top-down: otherwise the children came first, so
-    /// other orders' contexts don't have it:
-    ///
-    /// ```compile_fail
-    /// fn f(ctx: &mut panir::Ctx<panir::Typewise>) {
-    ///     ctx.skip_children();
-    /// }
-    /// ```
+    /// el, false`). Top-down only: in the other orders the children came
+    /// first, and this does nothing (as Lua ignores `false` there).
     pub fn skip_children(&mut self) {
         self.skip = true;
     }
@@ -167,27 +129,58 @@ impl Ctx<'_, Topdown> {
 /// `inline` and `block` return `None` to keep the node (changed in place or
 /// not), or nodes to splice in its place (`vec![]` deletes it); `inlines`,
 /// `blocks`, `meta` and `pandoc` change their value in place.
+///
+/// A filter can be a trait object (`&mut dyn Filter`), and choose its
+/// order when it runs:
+///
+/// ```
+/// use panir::{Ctx, Filter, Inline, Order};
+///
+/// struct Upper(Order);
+///
+/// impl Filter for Upper {
+///     fn order(&self) -> Order {
+///         self.0
+///     }
+///     fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+///         if let Inline::Str(s) = x {
+///             *s = s.to_uppercase().into();
+///         }
+///         None
+///     }
+/// }
+///
+/// let mut filters: Vec<Box<dyn Filter>> = vec![Box::new(Upper(Order::Topdown))];
+/// let mut doc = panir::Pandoc::new(vec!["a b".into()]);
+/// for f in &mut filters {
+///     panir::apply(&mut doc, f.as_mut(), None);
+/// }
+/// assert_eq!(doc.blocks, vec![panir::Block::from("A B")]);
+/// ```
 pub trait Filter {
-    type Order: Order;
-
-    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx<Self::Order>) -> Option<Vec<Inline>> {
+    /// The order the functions are called in: [`Order::Typewise`], as Lua's
+    /// by default, unless this says another.
+    fn order(&self) -> Order {
+        Order::Typewise
+    }
+    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
         let _ = (x, ctx);
         None
     }
-    fn block(&mut self, x: &mut Block, ctx: &mut Ctx<Self::Order>) -> Option<Vec<Block>> {
+    fn block(&mut self, x: &mut Block, ctx: &mut Ctx) -> Option<Vec<Block>> {
         let _ = (x, ctx);
         None
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx<Self::Order>) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) {
         let _ = (xs, ctx);
     }
-    fn blocks(&mut self, xs: &mut Vec<Block>, ctx: &mut Ctx<Self::Order>) {
+    fn blocks(&mut self, xs: &mut Vec<Block>, ctx: &mut Ctx) {
         let _ = (xs, ctx);
     }
-    fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx<Self::Order>) {
+    fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx) {
         let _ = (meta, ctx);
     }
-    fn pandoc(&mut self, doc: &mut Pandoc, ctx: &mut Ctx<Self::Order>) {
+    fn pandoc(&mut self, doc: &mut Pandoc, ctx: &mut Ctx) {
         let _ = (doc, ctx);
     }
 }
@@ -202,21 +195,18 @@ enum Pass {
     All,
 }
 
-struct Driver<'f, 'a, F: Filter> {
+struct Driver<'f, 'a, F: Filter + ?Sized> {
     f: &'f mut F,
     conversion: &'a Conversion,
     pass: Pass,
+    topdown: bool,
 }
 
 /// A filter's function on one node, and on a list of them.
-type ElemFn<F, T> = fn(&mut F, &mut T, &mut Ctx<<F as Filter>::Order>) -> Option<Vec<T>>;
-type ListFn<F, T> = fn(&mut F, &mut Vec<T>, &mut Ctx<<F as Filter>::Order>);
+type ElemFn<F, T> = fn(&mut F, &mut T, &mut Ctx) -> Option<Vec<T>>;
+type ListFn<F, T> = fn(&mut F, &mut Vec<T>, &mut Ctx);
 
-impl<F: Filter> Driver<'_, '_, F> {
-    fn topdown() -> bool {
-        F::Order::KIND == Kind::Topdown
-    }
-
+impl<F: Filter + ?Sized> Driver<'_, '_, F> {
     /// The nodes of a list: each may be replaced, deleted or spliced; then
     /// (or first, top-down) the list.
     fn list<T>(
@@ -227,7 +217,7 @@ impl<F: Filter> Driver<'_, '_, F> {
         list: ListFn<F, T>,
         children: fn(&mut Self, &mut T),
     ) {
-        let topdown = Self::topdown();
+        let topdown = self.topdown;
         if topdown && on_list {
             let mut ctx = Ctx::new(self.conversion);
             list(self.f, xs, &mut ctx);
@@ -294,7 +284,7 @@ impl<F: Filter> Driver<'_, '_, F> {
     }
 }
 
-impl<F: Filter> VisitMut for Driver<'_, '_, F> {
+impl<F: Filter + ?Sized> VisitMut for Driver<'_, '_, F> {
     fn visit_inlines(&mut self, xs: &mut Vec<Inline>) {
         let calls = self.calls(Pass::Inline, Pass::Inlines);
         self.list(xs, calls, F::inline, F::inlines, walk_inline);
@@ -306,64 +296,156 @@ impl<F: Filter> VisitMut for Driver<'_, '_, F> {
     }
 }
 
+/// The walks of a filter's order through `x`, with `walk`: one per kind,
+/// typewise, else one.
+fn walks<F: Filter + ?Sized, T: ?Sized>(
+    x: &mut T,
+    f: &mut F,
+    conversion: &Conversion,
+    walk: impl Fn(&mut Driver<'_, '_, F>, &mut T),
+) {
+    let order = f.order();
+    let passes: &[Pass] = match order {
+        Order::Typewise => &[Pass::Inline, Pass::Inlines, Pass::Block, Pass::Blocks],
+        Order::Topdown | Order::Bottomup => &[Pass::All],
+    };
+    for &pass in passes {
+        let mut d = Driver {
+            f: &mut *f,
+            conversion,
+            pass,
+            topdown: order == Order::Topdown,
+        };
+        walk(&mut d, x);
+    }
+}
+
+/// What a filter applies to: a document, or a fragment of one, as Lua's
+/// `el:walk{...}`: a block or an inline, a list of blocks or of inlines.
+///
+/// On a fragment, the functions apply to what is in it, not to the node
+/// itself (`block` on a block's blocks, not on it); a list's function
+/// applies to the list itself too (`blocks` on a `Vec<Block>`); `meta` and
+/// `pandoc` only to a document.
+///
+/// ```
+/// use panir::{apply, Block, Ctx, Filter, Inline};
+///
+/// struct Loud;
+/// impl Filter for Loud {
+///     fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+///         match x {
+///             Inline::Str(s) => Some(vec![Inline::Str(s.to_uppercase().into())]),
+///             Inline::Emph(xs) => Some(std::mem::take(xs)), // not the fragment's own
+///             _ => None,
+///         }
+///     }
+/// }
+///
+/// let mut emph = Inline::Emph(vec!["a".into(), Inline::Emph(vec!["b".into()])]);
+/// apply(&mut emph, &mut Loud, None);
+/// assert_eq!(emph, Inline::Emph(vec!["A".into(), "B".into()]));
+/// ```
+pub trait Walkable: sealed::Sealed {
+    /// [`apply_with`] on this.
+    #[doc(hidden)]
+    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion);
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for crate::Pandoc {}
+    impl Sealed for crate::Block {}
+    impl Sealed for crate::Inline {}
+    impl Sealed for Vec<crate::Block> {}
+    impl Sealed for Vec<crate::Inline> {}
+}
+
+impl Walkable for Block {
+    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion) {
+        walks(self, f, conversion, |d, x| walk_block(d, x));
+    }
+}
+
+impl Walkable for Inline {
+    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion) {
+        walks(self, f, conversion, |d, x| walk_inline(d, x));
+    }
+}
+
+impl Walkable for Vec<Block> {
+    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion) {
+        walks(self, f, conversion, |d, xs| d.visit_blocks(xs));
+    }
+}
+
+impl Walkable for Vec<Inline> {
+    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion) {
+        walks(self, f, conversion, |d, xs| d.visit_inlines(xs));
+    }
+}
+
+impl Walkable for Pandoc {
+    fn apply_filter<F: Filter + ?Sized>(&mut self, f: &mut F, conversion: &Conversion) {
+        let doc = self;
+        let ctx = || Ctx::new(conversion);
+        match f.order() {
+            Order::Topdown => {
+                let mut c = ctx();
+                f.pandoc(doc, &mut c);
+                if c.skip {
+                    return;
+                }
+                let mut c = ctx();
+                f.meta(&mut doc.meta, &mut c);
+                let mut d = Driver {
+                    f,
+                    conversion,
+                    pass: Pass::All,
+                    topdown: true,
+                };
+                if !c.skip {
+                    for v in doc.meta.values_mut() {
+                        d.visit_meta_value(v);
+                    }
+                }
+                d.visit_blocks(&mut doc.blocks);
+            }
+            Order::Bottomup => {
+                let mut d = Driver {
+                    f: &mut *f,
+                    conversion,
+                    pass: Pass::All,
+                    topdown: false,
+                };
+                for v in doc.meta.values_mut() {
+                    d.visit_meta_value(v);
+                }
+                d.f.meta(&mut doc.meta, &mut ctx());
+                d.visit_blocks(&mut doc.blocks);
+                f.pandoc(doc, &mut ctx());
+            }
+            Order::Typewise => {
+                walks(doc, f, conversion, |d, doc| d.visit_pandoc(doc));
+                f.meta(&mut doc.meta, &mut ctx());
+                f.pandoc(doc, &mut ctx());
+            }
+        }
+    }
+}
+
 /// Apply a filter to a document, as pandoc applies a Lua filter, in the
-/// filter's [`Order`]. `format` is the output format ([`Ctx::format`]).
-pub fn apply<F: Filter>(doc: &mut Pandoc, f: &mut F, format: Option<&str>) {
+/// filter's [`Order`], or to a fragment of one ([`Walkable`]). `format` is
+/// the output format ([`Ctx::format`]).
+pub fn apply<T: Walkable, F: Filter + ?Sized>(x: &mut T, f: &mut F, format: Option<&str>) {
     let conversion = Conversion {
         format: format.map(str::to_owned),
         ..Conversion::default()
     };
-    apply_with(doc, f, &conversion);
+    apply_with(x, f, &conversion);
 }
 
 /// As [`apply`], knowing the whole conversion ([`Ctx::conversion`]).
-pub fn apply_with<F: Filter>(doc: &mut Pandoc, f: &mut F, conversion: &Conversion) {
-    let ctx = || Ctx::<F::Order>::new(conversion);
-    match F::Order::KIND {
-        Kind::Topdown => {
-            let mut c = ctx();
-            f.pandoc(doc, &mut c);
-            if c.skip {
-                return;
-            }
-            let mut c = ctx();
-            f.meta(&mut doc.meta, &mut c);
-            let mut d = Driver {
-                f,
-                conversion,
-                pass: Pass::All,
-            };
-            if !c.skip {
-                for v in doc.meta.values_mut() {
-                    d.visit_meta_value(v);
-                }
-            }
-            d.visit_blocks(&mut doc.blocks);
-        }
-        Kind::Bottomup => {
-            let mut d = Driver {
-                f: &mut *f,
-                conversion,
-                pass: Pass::All,
-            };
-            for v in doc.meta.values_mut() {
-                d.visit_meta_value(v);
-            }
-            d.f.meta(&mut doc.meta, &mut ctx());
-            d.visit_blocks(&mut doc.blocks);
-            f.pandoc(doc, &mut ctx());
-        }
-        Kind::Typewise => {
-            for pass in [Pass::Inline, Pass::Inlines, Pass::Block, Pass::Blocks] {
-                Driver {
-                    f: &mut *f,
-                    conversion,
-                    pass,
-                }
-                .visit_pandoc(doc);
-            }
-            f.meta(&mut doc.meta, &mut ctx());
-            f.pandoc(doc, &mut ctx());
-        }
-    }
+pub fn apply_with<T: Walkable, F: Filter + ?Sized>(x: &mut T, f: &mut F, conversion: &Conversion) {
+    x.apply_filter(f, conversion);
 }

@@ -35,6 +35,8 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "rust/src/generated.rs"
 
 PRIM = {"string": "Text", "int": "i64", "double": "f64", "bool": "bool"}
+# lists read through a stack (lib.rs, ``List``), to their length
+STACKED = {"Vec<Inline>": "crate::List<Inline>", "Vec<Block>": "crate::List<Block>"}
 KEYWORDS = {
     "type",
     "match",
@@ -171,8 +173,14 @@ class Gen:
     def sum(self, t: dict) -> None:
         o = self.out
         structs = []
+        # a Double has no Eq or Hash: a type with one compares it by its bits
+        double = any(
+            len(c["fields"]) == 1 and self.rust(c["fields"][0]["type"]) == "f64"
+            for c in t["constructors"]
+        )
+        derives = "Debug, Clone, " + ("" if double else "PartialEq, Eq, Hash, ") + "Serialize"
         o.append(f"/// pandoc's `{t['name']}`.\n")
-        o.append("#[derive(Debug, Clone, PartialEq, Serialize)]\n")
+        o.append(f"#[derive({derives})]\n")
         o.append('#[serde(tag = "t", content = "c")]\n')
         o.append(f"pub enum {t['name']} {{\n")
         for c in t["constructors"]:
@@ -188,6 +196,8 @@ class Gen:
                 o.append(f"    {c['name']}(Box<{c['name']}>),\n")
                 structs.append(c)
         o.append("}\n\n")
+        if double:
+            self.bitwise_eq(t)
         self.sum_de(t)
         arms = []
         for c in t["constructors"]:
@@ -213,6 +223,32 @@ class Gen:
             if c["name"] in self.types:
                 raise SystemExit(f"constructor {c['name']} clashes with a type name")
             self.struct(c, "array", f"pandoc's `{c['name']}`, a `{t['name']}`.")
+
+    def bitwise_eq(self, t: dict) -> None:
+        """``PartialEq``, ``Eq`` and ``Hash`` for a sum type with a Double: the
+        same when the same bits (a NaN, pandoc's ``null``, equals itself)."""
+        name, eqs, hashes = t["name"], [], []
+        for c in t["constructors"]:
+            cn, fs = c["name"], c["fields"]
+            if not fs:
+                eqs.append(f"({name}::{cn}, {name}::{cn}) => true,\n")
+            elif len(fs) == 1 and self.rust(fs[0]["type"]) == "f64":
+                eqs.append(f"({name}::{cn}(a), {name}::{cn}(b)) => a.to_bits() == b.to_bits(),\n")
+                hashes.append(f"if let {name}::{cn}(x) = self {{ Hash::hash(&x.to_bits(), h); }}\n")
+            else:
+                raise SystemExit(f"gen_rust.py: {cn} beside a Double: add support for it")
+        self.out.append(
+            f"/// Equal when the same number, bit for bit: one that isn't a number\n"
+            f"/// (pandoc's `null`) equals itself, so that `Eq` and `Hash` hold.\n"
+            f"impl PartialEq for {name} {{\n"
+            f"    fn eq(&self, other: &Self) -> bool {{\n"
+            f"        match (self, other) {{\n{''.join(eqs)}_ => false,\n}}\n    }}\n}}\n\n"
+            f"impl Eq for {name} {{}}\n\n"
+            f"impl Hash for {name} {{\n"
+            f"    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {{\n"
+            f"        Hash::hash(&std::mem::discriminant(self), h);\n"
+            f"{''.join(hashes)}    }}\n}}\n\n"
+        )
 
     def nests(self, name: str) -> bool:
         """Whether a value of the type can hold another of the same type."""
@@ -273,8 +309,14 @@ class Gen:
             else:
                 if len(c["fields"]) == 1:
                     self.no_double(c["fields"][0]["type"], cn)
-                stream.append(f'{" " * 24}"{cn}" => {name}::{cn}(map.next_value()?),\n')
-                early.append(f'                "{cn}" => {name}::{cn}(crate::contents(c)?),\n')
+                ty = self.rust(c["fields"][0]["type"]) if len(c["fields"]) == 1 else ""
+                if ty in STACKED:
+                    read = f"map.next_value::<{STACKED[ty]}>()?.0"
+                    later = f"crate::contents::<{STACKED[ty]}, E>(c)?.0"
+                else:
+                    read, later = "map.next_value()?", "crate::contents(c)?"
+                stream.append(f'{" " * 24}"{cn}" => {name}::{cn}({read}),\n')
+                early.append(f'                "{cn}" => {name}::{cn}({later}),\n')
         unit_arms = "".join(f'                    "{u}" => Some({name}::{u}),\n' for u in units)
         # a type that holds itself is read level by level: count them
         guard = "let _level = crate::Level::enter()?;\n                " if self.nests(name) else ""
@@ -305,7 +347,7 @@ class Gen:
         name = t["name"]
         fields = t["fields"]
         derive_serde = encoding in ("object", "root")
-        derives = ["Debug", "Clone", "PartialEq"]
+        derives = ["Debug", "Clone", "PartialEq", "Eq", "Hash"]
         if derive_serde:
             derives += ["Serialize", "Deserialize"]
         for f in fields:
@@ -313,12 +355,20 @@ class Gen:
         o.append(f"/// {doc}\n#[derive({', '.join(derives)})]\n")
         o.append(f"pub struct {name} {{\n")
         if encoding == "root":
+            # not public: always a version pandoc reads (`api_version()`)
             o.append(
-                '    #[serde(rename = "pandoc-api-version")]\n    pub api_version: Vec<i64>,\n'
+                '    #[serde(rename = "pandoc-api-version",'
+                ' deserialize_with = "crate::api_version")]\n'
+                "    pub(crate) api_version: Vec<i64>,\n"
             )
         for f in fields:
+            serde = []
             if "key" in f and f["key"] != f["name"]:
-                o.append(f'    #[serde(rename = "{f["key"]}")]\n')
+                serde.append(f'rename = "{f["key"]}"')
+            if derive_serde and self.rust(f["type"]) in STACKED:
+                serde.append('deserialize_with = "crate::list"')
+            if serde:
+                o.append(f"    #[serde({', '.join(serde)})]\n")
             o.append(f"    pub {ident(f['name'])}: {self.rust(f['type'])},\n")
         o.append("}\n\n")
         if self.has_default(t):
@@ -350,8 +400,16 @@ class Gen:
             self.json_impl(name, f"self.{ident(fields[0]['name'])}.json(out);")
         if encoding == "array":
             refs = ", ".join(f"&self.{ident(f['name'])}" for f in fields)
-            types = ", ".join(self.rust(f["type"]) for f in fields)
+            types = ", ".join(
+                STACKED.get(self.rust(f["type"]), self.rust(f["type"])) for f in fields
+            )
             names = ", ".join(ident(f["name"]) for f in fields)
+            inits = ", ".join(
+                f"{ident(f['name'])}: {ident(f['name'])}.0"
+                if self.rust(f["type"]) in STACKED
+                else ident(f["name"])
+                for f in fields
+            )
             o.append(
                 f"impl Serialize for {name} {{\n"
                 f"    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {{\n"
@@ -362,7 +420,7 @@ class Gen:
                 f"    fn deserialize<D: Deserializer<'de>>(d: D)"
                 f" -> Result<Self, D::Error> {{\n"
                 f"        let ({names}) = <({types})>::deserialize(d)?;\n"
-                f"        Ok({name} {{ {names} }})\n    }}\n}}\n\n"
+                f"        Ok({name} {{ {inits} }})\n    }}\n}}\n\n"
             )
 
     # -- the visitor ----------------------------------------------------------
@@ -525,6 +583,7 @@ HEADER = """\
 use serde::de;
 use serde::{{Deserialize, Deserializer, Serialize, Serializer}};
 use std::collections::BTreeMap;
+use std::hash::Hash;
 
 use crate::Text;
 

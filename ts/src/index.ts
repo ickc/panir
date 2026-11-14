@@ -7,24 +7,43 @@
  * functions by node type, as in pandoc's Lua filters.
  */
 
-import { fromJSON, toJSON } from "./core.ts";
+import { ASTDecodeError, ASTDepthError, fromJSON, isStackOverflow, toJSON } from "./core.ts";
 import type { Pandoc } from "./generated.ts";
 
 export * from "./generated.ts";
-export { ASTDecodeError, ASTError, ASTTypeError, check, formatPath, fromJSON, toJSON } from "./core.ts";
-export type { Path } from "./core.ts";
+export {
+  ASTDecodeError, ASTDepthError, ASTError, ASTTypeError, check, formatPath, fromJSON, toJSON,
+} from "./core.ts";
+export type { JSONValue, Path } from "./core.ts";
 export { applyFilter, Context, walk } from "./walk.ts";
+export type {
+  AnyFilter, Filter, FilterFunctions, Traverse, Walkable, WalkAction, WalkedContext,
+} from "./walk.ts";
 export { Conversion } from "./conversion.ts";
 export type { ConversionInit } from "./conversion.ts";
-export type { Filter, Result, WalkedContext } from "./walk.ts";
-export { blocks, fromPlain, inlines, stringify, toPlain } from "./util.ts";
+export { blocks, copy, equal, fromPlain, inlines, stringify, toPlain } from "./util.ts";
 
-/** A document from pandoc's JSON text, checked. */
+/** A document from pandoc's JSON text, checked (`ASTDecodeError`; a `SyntaxError` if it isn't JSON). */
 export function parse(text: string): Pandoc {
-  return fromJSON(JSON.parse(text)) as Pandoc;
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    // (the engine's JSON.parse recurses too)
+    if (isStackOverflow(e)) throw new ASTDecodeError([], "JSON nested less deeply", "JSON deeper than the engine's call stack lets panir go");
+    throw e;
+  }
+  return fromJSON(json);
 }
 
-/** A document as pandoc's JSON text. */
+/** A document as pandoc's JSON text, checked (`ASTTypeError`). */
 export function serialize(doc: Pandoc): string {
-  return JSON.stringify(toJSON(doc));
+  const json = toJSON(doc);
+  try {
+    return JSON.stringify(json);
+  } catch (e) {
+    // (the engine's JSON.stringify recurses too)
+    if (isStackOverflow(e)) throw new ASTDepthError("serialize");
+    throw e;
+  }
 }

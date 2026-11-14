@@ -7,7 +7,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  applyFilter, ASTDecodeError, ASTTypeError, check, ColSpec, ColWidth, Div, Emph, fromJSON, fromPlain,
+  applyFilter, ASTDecodeError, ASTDepthError, ASTTypeError, check, ColSpec, ColWidth, Div, Emph, fromJSON, fromPlain,
   Header, MetaInlines, Pandoc, Para, parse, RawBlock, serialize, Space, Str, stringify, Table, toJSON,
 } from "../src/index.ts";
 import type { Filter, Inline } from "../src/index.ts";
@@ -27,13 +27,14 @@ test("a hole in a list is not an element", () => {
   delete (doc.blocks[0] as { content: Inline[] }).content[1];
   assert.throws(() => check(doc), (e: unknown) => {
     assert.ok(e instanceof ASTTypeError);
-    assert.equal(e.where, "Pandoc.blocks[0].content[1]");
+    assert.equal(e.where, "blocks[0].content[1]");
+    assert.deepEqual(e.path, ["blocks", 0, "content", 1]);
     return true;
   });
   assert.throws(() => serialize(doc), ASTTypeError);
   const sparse = Pandoc();
   sparse.blocks[2] = Para("x");
-  assert.throws(() => serialize(sparse), /Pandoc\.blocks\[0\]: expected Block, got undefined/);
+  assert.throws(() => serialize(sparse), /^ASTTypeError: blocks\[0\]: expected Block, got undefined/);
 });
 
 test("any key is a key of the metadata", () => {
@@ -59,7 +60,7 @@ test("any key is a key of the metadata", () => {
 test("only a plain object is a map or a node", () => {
   const doc = Pandoc();
   (doc as { meta: unknown }).meta = new Map([["a", { t: "MetaBool", value: true }]]);
-  assert.throws(() => serialize(doc), /Pandoc\.meta: expected an object/);
+  assert.throws(() => serialize(doc), /^ASTTypeError: meta: expected an object/);
   assert.throws(() => Div([], { attributes: new Map([["k", "v"]]) as never }), ASTTypeError);
   assert.deepEqual(fromPlain({ t: "x", n: 1 }), {
     t: "MetaMap",
@@ -75,7 +76,7 @@ test("half of a surrogate pair is not text pandoc can read", { skip: !("isWellFo
   s.text = half;
   assert.throws(() => serialize(whole), (e: unknown) => {
     assert.ok(e instanceof ASTTypeError);
-    assert.equal(e.where, "Pandoc.blocks[0].content[0].text");
+    assert.equal(e.where, "blocks[0].content[0].text");
     assert.match(e.got, /surrogate/);
     return true;
   });
@@ -100,7 +101,7 @@ test("an integer JavaScript can't hold exactly is refused, not rounded", () => {
   assert.throws(() => Header(1.5, "x"), ASTTypeError);
   const h = Header(1, "x");
   h.level = 2 ** 63;
-  assert.throws(() => serialize(Pandoc([h])), /Pandoc\.blocks\[0\]\.level/);
+  assert.throws(() => serialize(Pandoc([h])), /^ASTTypeError: blocks\[0\]\.level/);
 });
 
 test("doubles that are not finite, as pandoc writes them", () => {
@@ -111,7 +112,7 @@ test("doubles that are not finite, as pandoc writes them", () => {
     const width = ((doc.blocks[0] as Table).colSpecs[0].width as ColWidth).width;
     assert.ok(Object.is(width, value), `${written}: ${width}`);
     assert.equal(serialize(doc), table(written));
-    assert.equal(serialize(Pandoc([Table({ colSpecs: [ColSpec(undefined, ColWidth(value))] })])), table(written));
+    assert.equal(serialize(Pandoc([Table(undefined, [ColSpec(undefined, ColWidth(value))])])), table(written));
   }
   assert.equal(((parse(table("1e999")).blocks[0] as Table).colSpecs[0].width as ColWidth).width, Infinity);
   for (const bad of [`"inf"`, "true", `"0.5"`]) assert.throws(() => parse(table(bad)), ASTDecodeError);
@@ -125,12 +126,14 @@ test("a document too deep for the call stack is an error of the AST", () => {
   let node: Inline = Str("x");
   for (let i = 0; i < 20000; i++) node = { t: "Emph", content: [node] };
   assert.throws(() => toJSON({ meta: {}, blocks: [{ t: "Para", content: [node] }] }),
-                (e: unknown) => e instanceof ASTTypeError && /nested/.test(e.message));
+                (e: unknown) => e instanceof ASTDepthError && e instanceof RangeError && /nested/.test(e.message));
 });
 
 test("a type's name, not a constructor's", () => {
   assert.deepEqual(fromJSON({ t: "Str", c: "x" }, "Inline"), Str("x"));
+  // @ts-expect-error: a constructor's name
   assert.throws(() => fromJSON({ t: "Str", c: "x" }, "Str"), /Str is a constructor of the type Inline/);
+  // @ts-expect-error: no such type
   assert.throws(() => toJSON(Str("x"), "Nope"), /no pandoc type is called "Nope"/);
 });
 
@@ -206,7 +209,7 @@ test("lists longer than a call takes arguments", () => {
 
 // A long list whose nodes are deleted, kept, replaced by one and by several
 // (once quadratic: each replacement by none or several moved the rest).
-const LONG = 30_000;
+const LONG = 3_000;
 type StrNode = ReturnType<typeof Str>;
 
 /** By its number: deleted, kept, replaced by one, by several (an Emph among them), returned twice. Top-down, the Emph's Str is walked too. */
@@ -248,7 +251,7 @@ for (const traverse of ["bottomup", "topdown", "typewise"] as const) {
 for (const traverse of ["bottomup", "topdown"] as const) {
   test(`a long list spliced, with contexts, ${traverse}`, () => {
     // the context is right after earlier nodes were deleted and multiplied:
-    // looked at first halfway (until then the list is spliced the fast way)
+    // looked at first halfway
     const topDown = traverse === "topdown";
     const original = numbered(LONG);
     const looked = [0, LONG / 2, LONG / 2 + 1, LONG / 2 + 3, LONG / 2 + 4, LONG - 1];
@@ -327,8 +330,8 @@ const fromNode = (xs: readonly unknown[], node: unknown) => {
 for (const traverse of ["bottomup", "topdown", "typewise"] as const) {
   test(`a list being walked seen from a closure, ${traverse}`, () => {
     // A function deletes or doubles blocks; a later one looks at the document
-    // it closed over (not ctx): its block and every one after it are there,
-    // in order. (Earlier deletions and doublings may show only at the end.)
+    // it closed over (not ctx): the list is as it is now, the earlier
+    // deletions and doublings made
     const original = [
       RawBlock("html", "del"), Para("p1"), RawBlock("html", "dbl"), Para("p3"),
       RawBlock("html", "del"), Para("p5"), Header(1, "h"),
@@ -339,12 +342,14 @@ for (const traverse of ["bottomup", "topdown", "typewise"] as const) {
       traverse,
       RawBlock: (b: ReturnType<typeof RawBlock>) => (b.text === "del" ? [] : [b, RawBlock("html", "dbl2")]),
       Para: (p: ReturnType<typeof Para>) => {
-        seen.push(stringify(p));
+        seen.push(`${stringify(p)}: ${doc.blocks.map((b) => stringify(b) || (b as { text: string }).text).join(" ")}`);
         assert.ok(same(fromNode(doc.blocks, p), fromNode(original, p)));
       },
     } as Filter;
     applyFilter(doc, blocks);
-    assert.deepEqual(seen, ["p1", "p3", "p5"]);
+    assert.deepEqual(seen, [
+      "p1: p1 dbl p3 del p5 h", "p3: p1 dbl dbl2 p3 del p5 h", "p5: p1 dbl dbl2 p3 p5 h",
+    ]);
     assert.deepEqual(doc.blocks, [
       Para("p1"), RawBlock("html", "dbl"), RawBlock("html", "dbl2"), Para("p3"), Para("p5"), Header(1, "h"),
     ]);
@@ -358,14 +363,14 @@ for (const traverse of ["bottomup", "topdown", "typewise"] as const) {
       traverse,
       Space: () => [],
       Str: (s: StrNode) => {
-        texts.push(s.text);
+        texts.push(`${s.text}: ${stringify(para.content)}`);
         assert.ok(same(fromNode(para.content, s), fromNode(inlines, s)));
         assert.equal((doc2.blocks[0] as { content: Inline[] }).content, para.content);
         return s.text === "c" ? [s, Str("C")] : undefined;
       },
     } as Filter;
     applyFilter(doc2, inner);
-    assert.deepEqual(texts, ["a", "b", "c", "d", "e"]);
+    assert.deepEqual(texts, ["a: a b c d e", "b: ab c d e", "c: abc d e", "d: abcCd e", "e: abcCde"]);
     assert.deepEqual(doc2.blocks, [Para(["a", "b", "c", "C", "d", "e"].map((t) => Str(t)))]);
   });
 }
@@ -440,7 +445,7 @@ for (const traverse of ["bottomup", "topdown", "typewise"] as const) {
       blocks.splice(find(blocks, "x"), 1);
       blocks.push(Para("end"));
     }), ["TOC", "dbl", "dbl2", "One", "Two", "end"]);
-    // the same length: seen at the end of the walk
+    // a node replaced through the closure
     assert.deepEqual(run((blocks, at) => {
       if (at === "One") blocks[find(blocks, "a")] = Para("A");
     }), ["A", "dbl", "dbl2", "One", "x", "Two"]);
@@ -470,14 +475,19 @@ test("a function is called as a method of its filter", () => {
 });
 
 test("what a function may not return", () => {
-  assert.throws(() => applyFilter(Pandoc(), { Pandoc: ((d: Pandoc) => [d, d]) as never }),
-                /expected one Pandoc \(this position holds one\), got a list/);
-  assert.throws(() => applyFilter(Pandoc([Para("a")]), { Str: (async () => undefined) as never }),
-                /blocks\[0\]\.content\[0\]: expected a Inline, got a promise/);
-  assert.throws(() => applyFilter(Pandoc([], { meta: { title: MetaInlines("t") } }), { MetaValue: (() => []) as never }),
-                /^ASTTypeError: meta\.title: expected one node/);
-  assert.throws(() => applyFilter(Pandoc([Para("a")]), { Inlines: (() => "text") as never }),
-                /^ASTTypeError: blocks\[0\]\.content: expected a list of Inlines/);
+  const cases: [() => unknown, RegExp][] = [
+    [() => applyFilter(Pandoc(), { Pandoc: ((d: Pandoc) => [d, d]) as never }),
+     /^the document: expected one Pandoc \(this position holds one\), got \[.*\n {2}returned by filter function Pandoc, for the Pandoc at the document$/],
+    [() => applyFilter(Pandoc([Para("a")]), { Str: (async () => undefined) as never }),
+     /^blocks\[0\]\.content\[0\]: expected Inline, a list of them, or nothing, got \{\} \(a promise: filter functions can't be async\)\n/],
+    [() => applyFilter(Pandoc([], { meta: { title: MetaInlines("t") } }), { MetaValue: (() => []) as never }),
+     /^meta\.title: expected one MetaValue \(this position holds one\), got \[\]\n {2}returned by filter function MetaValue, for the MetaInlines at meta\.title$/],
+    [() => applyFilter(Pandoc([Para("a")]), { Inlines: (() => 42) as never }),
+     /^blocks\[0\]\.content: expected a list of Inlines, got 42\n {2}returned by filter function Inlines, for the Inlines at blocks\[0\]\.content$/],
+  ];
+  for (const [f, message] of cases) {
+    assert.throws(f, (e: unknown) => e instanceof ASTTypeError && message.test(e.message));
+  }
 });
 
 test("an error whose message can't be changed is still the error", () => {

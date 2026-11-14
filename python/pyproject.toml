@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "panir"
-version = "0.1.0"
+dynamic = ["version"]  # panir.__version__ (scripts/version.py sets it)
 description = "pandoc's document AST, generated from pandoc-types: checked types, JSON, filters"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,6 +19,9 @@ classifiers = [
 
 [project.urls]
 Repository = "https://github.com/ickc/panir"
+
+[tool.setuptools.dynamic]
+version = { attr = "panir.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

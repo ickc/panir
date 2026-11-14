@@ -41,6 +41,7 @@ from ._core import (
     _PrimSpec,
     _Spec,
     _TupleSpec,
+    too_deep,
 )
 
 __all__ = ["clone", "dumps", "loads", "paused_gc"]
@@ -131,12 +132,13 @@ def _reader(spec: _Spec) -> Reader:
     if isinstance(spec, _ListSpec):
         item = spec.item
         whole = _made(item) or (_STR if isinstance(item, _PrimSpec) and item.ty is str else None)
+        cls = spec.cls
         if whole is not None:
             ok = whole.issuperset
 
             def read_whole(j: Any) -> Any:
                 if type(j) is list and ok(map(type, j)):
-                    lst = _new_list(NodeList)
+                    lst = _new_list(cls)
                     lst._spec = spec
                     _init_list(lst, j)
                     return lst
@@ -148,7 +150,7 @@ def _reader(spec: _Spec) -> Reader:
         def read_list(j: Any) -> Any:
             if type(j) is not list:
                 raise _Slow
-            lst = _new_list(NodeList)
+            lst = _new_list(cls)
             lst._spec = spec
             _init_list(lst, map(read_item, j))
             return lst
@@ -572,7 +574,7 @@ def _cloner(spec: _Spec) -> Cloner | None:
 
 
 def _as_list(spec: _ListSpec, items: Any) -> NodeList:
-    lst = _new_list(NodeList)
+    lst = _new_list(spec.cls)
     lst._spec = spec
     _init_list(lst, items)
     return lst
@@ -582,15 +584,13 @@ def _as_list(spec: _ListSpec, items: Any) -> NodeList:
 
 _ready = False
 _hook: Callable[[dict], Any] | None = None
-_root: Reader | None = None
 _encoder: json.JSONEncoder | None = None
 _JSON = {"ensure_ascii": False, "separators": (",", ":")}
 
 
 def _prepare() -> None:
-    global _ready, _hook, _root, _encoder
+    global _ready, _hook, _encoder
     table = _hook_table()
-    root = next(c for c in _CLASSES.values() if c._encoding == "root")
     if table is not None:
         get = table.get
 
@@ -602,7 +602,7 @@ def _prepare() -> None:
                     return make(d)
             return d
 
-        _hook, _root = hook, _product_reader(root)
+        _hook = hook
     writers = {
         cls: _node_writer(cls)
         for cls in _CLASSES.values()
@@ -620,14 +620,19 @@ def _prepare() -> None:
     _ready = True
 
 
+@too_deep("read")
 def loads(text: str | bytes, root: type[Node]) -> Any:
     """A document from pandoc's JSON text."""
     if not _ready:
         _prepare()
     with paused_gc():
-        if _hook is not None and _root is not None:
+        if _hook is not None:
             try:
-                return _root(json.loads(text, object_hook=_hook))
+                j = json.loads(text, object_hook=_hook)
+                if _is_product(root):
+                    return _product_reader(root)(j)
+                if isinstance(j, Node) and isinstance(j, root):
+                    return j  # (made by the hook)
             except RecursionError:
                 raise
             except Exception:  # noqa: S110  the slow reader takes it, or says what is wrong
@@ -635,19 +640,32 @@ def loads(text: str | bytes, root: type[Node]) -> Any:
         return root.from_json(json.loads(text))
 
 
-def dumps(doc: Node) -> str:
-    """A document as pandoc's JSON text."""
+def node_text(node: Node) -> str | None:
+    """A node as pandoc's JSON text, for pickling: None if it isn't the
+    plain case (a subclass of a node's class, a number that isn't finite),
+    which is pickled field by field."""
     if not _ready:
         _prepare()
-    assert _encoder is not None
+    try:
+        with paused_gc():
+            return _encoder.encode(node)  # type: ignore[union-attr]
+    except (_Slow, ValueError, TypeError):
+        return None
+
+
+@too_deep("dumps")
+def dumps(doc: Node) -> str:
+    """A document (or node) as pandoc's JSON text."""
+    if not _ready:
+        _prepare()
     with paused_gc():
         try:
-            return _encoder.encode(doc)
+            return _encoder.encode(doc)  # type: ignore[union-attr]
         except RecursionError:
             raise
         except Exception:  # noqa: S110  the slow writer takes it, or says what is wrong
             pass
-        return json.dumps(doc.to_json(), **_JSON)  # type: ignore[arg-type]
+        return json.dumps(doc._to_json(), **_JSON)  # type: ignore[arg-type]
 
 
 assert Enum  # (the declarations' enum class, for the specs above)

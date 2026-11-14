@@ -1,12 +1,11 @@
-use panir::{apply, apply_with, inlines, Block, Conversion, Ctx, Filter, Pandoc, Typewise};
+use panir::{apply, apply_with, inlines, Block, Conversion, Ctx, Filter, Pandoc};
 
 /// Notes what its `pandoc` function is told.
 #[derive(Default)]
 struct Seen(Option<(Option<String>, Conversion)>);
 
 impl Filter for Seen {
-    type Order = Typewise;
-    fn pandoc(&mut self, _: &mut Pandoc, ctx: &mut Ctx<Typewise>) {
+    fn pandoc(&mut self, _: &mut Pandoc, ctx: &mut Ctx) {
         self.0 = Some((ctx.format().map(str::to_owned), ctx.conversion().clone()));
     }
 }

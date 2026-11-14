@@ -3,8 +3,9 @@
 //! The types (`Pandoc`, `Block`, `Inline`, ...) encode to and from pandoc's
 //! JSON with serde: `{"t": "Str", "c": "x"}` is `Inline::Str("x")`.
 //! [`Filter`] and [`apply`] run filters as pandoc runs Lua filters, in one of
-//! three orders; `VisitMut` walks a document any other way. `filter` runs a
-//! function as a pandoc JSON filter (`pandoc --filter`).
+//! three orders, on a document or a fragment of one; [`VisitMut`] and
+//! [`Visit`] walk a document any other way. [`filter`] runs a function as a
+//! pandoc JSON filter (`pandoc --filter`); [`stringify()`] is pandoc's.
 //!
 //! ```
 //! use panir::{Block, Inline, Pandoc};
@@ -15,32 +16,72 @@
 //! assert_eq!(doc.blocks, vec![Block::Para(vec![Inline::Str("hi".into())])]);
 //! ```
 
+#![forbid(unsafe_code)]
+
 mod filter;
 mod generated;
+mod stringify;
 mod text;
 
-pub use filter::{apply, apply_with, Bottomup, Conversion, Ctx, Filter, Order, Topdown, Typewise};
+// the README's examples compile and run as the docs' do
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct Readme;
+
+pub use filter::{apply, apply_with, Conversion, Ctx, Filter, Order, Walkable};
 pub use generated::*;
+pub use stringify::{stringify, Stringify};
 pub use text::Text;
 
 use std::fmt;
 use std::io::{Read, Write};
 
-/// JSON that isn't a pandoc document of this API version.
-#[derive(Debug)]
+/// JSON that isn't a pandoc document of this API version (or, from
+/// [`from_reader`], a document that couldn't be read).
+///
+/// ```
+/// let e = panir::from_str(r#"{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"Para","c":7}]}"#)
+///     .unwrap_err();
+/// assert_eq!(e.path, "blocks[0].c");
+/// assert_eq!(e.message, "invalid type: integer `7`, expected a sequence");
+/// assert_eq!((e.line, e.column), (1, 68));
+/// assert_eq!(e.to_string(), format!("blocks[0].c: {} at line 1 column 68", e.message));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
-    /// Where, in the JSON: e.g. `blocks[0].c[1]`.
+    /// Where in the JSON, as `blocks[0].c[1]` or `meta.title`: empty for the
+    /// document itself, or where nothing more can be said (a document too
+    /// deep, text that isn't UTF-8).
     pub path: String,
+    /// What is wrong, without where.
     pub message: String,
+    /// The line and column in the text (from 1) where the reader was, as
+    /// serde_json counts them; 0 when the error has no place in the text.
+    pub line: usize,
+    pub column: usize,
+}
+
+impl Error {
+    fn new(path: &str, message: String) -> Self {
+        Error {
+            path: path.into(),
+            message,
+            line: 0,
+            column: 0,
+        }
+    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.path.is_empty() || self.path == "." {
-            write!(f, "{}", self.message)
-        } else {
-            write!(f, "{}: {}", self.path, self.message)
+        if !self.path.is_empty() {
+            write!(f, "{}: ", self.path)?;
         }
+        f.write_str(&self.message)?;
+        if self.line > 0 {
+            write!(f, " at line {} column {}", self.line, self.column)?;
+        }
+        Ok(())
     }
 }
 
@@ -66,15 +107,17 @@ thread_local! {
     static DEPTH: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     // whether a level was refused since `from_str` began
     static TOO_DEEP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    // the path, inside contents read before their tag, of the error being
+    // raised (`contents`): from the node, which `from_str` finds
+    static INNER: std::cell::Cell<String> = const { std::cell::Cell::new(String::new()) };
 }
 
 /// A level of the AST being read; counted while it lives.
-#[doc(hidden)]
-pub struct Level(());
+pub(crate) struct Level(());
 
 impl Level {
     #[inline]
-    pub fn enter<E: serde::de::Error>() -> Result<Level, E> {
+    pub(crate) fn enter<E: serde::de::Error>() -> Result<Level, E> {
         let here = 0u8;
         let here = std::hint::black_box(&here) as *const u8 as usize;
         DEPTH.with(|d| {
@@ -119,44 +162,103 @@ fn read<'a, T: serde::Deserialize<'a>>(json: &'a str) -> serde_json::Result<T> {
 
 /// A document from pandoc's JSON, checking its `pandoc-api-version`.
 pub fn from_str(json: &str) -> Result<Pandoc, Error> {
-    let wrong_version = |got: &[i64]| Error {
-        path: "pandoc-api-version".into(),
-        message: format!(
-            "expected {}.{}.*, got {:?}",
-            PANDOC_API_VERSION[0], PANDOC_API_VERSION[1], got
-        ),
-    };
-    let right = |v: &[i64]| v.get(..2) == Some(&PANDOC_API_VERSION[..2]);
     TOO_DEEP.with(|t| t.set(false));
-    let doc: Pandoc = match read(json) {
-        Ok(doc) => doc,
-        Err(e) => {
-            // another version's document: say that, not where it first differs
-            #[derive(serde::Deserialize)]
-            struct Version {
-                #[serde(rename = "pandoc-api-version")]
-                version: Vec<i64>,
-            }
-            if let Ok(v) = read::<Version>(json) {
-                if !right(&v.version) {
-                    return Err(wrong_version(&v.version));
-                }
-            }
-            return Err(Error {
-                // (of a document too deep, a path says little, at length)
-                path: if TOO_DEEP.with(|t| t.get()) {
-                    String::new()
-                } else {
-                    path_at(json, &e)
-                },
-                message: e.to_string(),
-            });
+    INNER.with(|p| p.set(String::new()));
+    read(json).map_err(|e| {
+        // another version's document: say that, not where it first differs
+        #[derive(serde::Deserialize)]
+        struct Version {
+            #[serde(rename = "pandoc-api-version")]
+            version: Vec<i64>,
         }
-    };
-    if !right(&doc.api_version) {
-        return Err(wrong_version(&doc.api_version));
+        if let Ok(v) = read::<Version>(json) {
+            if !right_version(&v.version) {
+                return Error::new("pandoc-api-version", wrong_version(&v.version));
+            }
+        }
+        // (of a document too deep, a path says little, at length)
+        let mut path = String::new();
+        if !TOO_DEEP.with(std::cell::Cell::get) {
+            path = path_at(json, &e);
+            join(&mut path, &INNER.with(std::cell::Cell::take));
+        }
+        Error {
+            path,
+            message: message(&e),
+            line: e.line(),
+            column: e.column(),
+        }
+    })
+}
+
+/// A document from pandoc's JSON as bytes, which must be UTF-8.
+pub fn from_slice(json: &[u8]) -> Result<Pandoc, Error> {
+    let text = std::str::from_utf8(json).map_err(|e| {
+        let before = &json[..e.valid_up_to()];
+        let start = before
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map_or(0, |i| i + 1);
+        Error {
+            line: before.iter().filter(|&&b| b == b'\n').count() + 1,
+            column: before.len() - start + 1,
+            ..Error::new("", format!("not UTF-8: {e}"))
+        }
+    })?;
+    from_str(text)
+}
+
+/// A document from pandoc's JSON, read whole from `reader` first.
+pub fn from_reader<R: Read>(mut reader: R) -> Result<Pandoc, Error> {
+    let mut json = Vec::new();
+    reader
+        .read_to_end(&mut json)
+        .map_err(|e| Error::new("", format!("reading the document: {e}")))?;
+    from_slice(&json)
+}
+
+/// Whether a `pandoc-api-version` is one pandoc reads as this crate's: the
+/// same major and minor version.
+fn right_version(v: &[i64]) -> bool {
+    v.get(..2) == Some(&PANDOC_API_VERSION[..2])
+}
+
+fn wrong_version(got: &[i64]) -> String {
+    format!(
+        "expected {}.{}.*, got {:?}",
+        PANDOC_API_VERSION[0], PANDOC_API_VERSION[1], got
+    )
+}
+
+/// Reads a `Pandoc`'s `pandoc-api-version`: one pandoc reads as this
+/// crate's, so that every `Pandoc` writes one.
+pub(crate) fn api_version<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<i64>, D::Error> {
+    let v = <Vec<i64> as serde::Deserialize>::deserialize(d)?;
+    if right_version(&v) {
+        Ok(v)
+    } else {
+        Err(serde::de::Error::custom(wrong_version(&v)))
     }
-    Ok(doc)
+}
+
+/// An error's message without where (serde_json adds the line and column).
+fn message(e: &serde_json::Error) -> String {
+    let text = e.to_string();
+    let at = format!(" at line {} column {}", e.line(), e.column());
+    match text.strip_suffix(&at) {
+        Some(m) if e.line() > 0 => m.to_owned(),
+        _ => text,
+    }
+}
+
+/// `path` followed by `rest`, a path inside it.
+fn join(path: &mut String, rest: &str) {
+    if !rest.is_empty() {
+        if !path.is_empty() && !rest.starts_with('[') {
+            path.push('.');
+        }
+        path.push_str(rest);
+    }
 }
 
 /// Where in a JSON text a place is (a line and a column, as serde_json gives
@@ -270,28 +372,93 @@ fn path_at(json: &str, error: &serde_json::Error) -> String {
 }
 
 /// A node's contents that came before its tag (not pandoc's order: sorted
-/// keys), read once the tag says what they are. An error says where in them.
-#[doc(hidden)]
-pub fn contents<'a, T: serde::Deserialize<'a>, E: serde::de::Error>(
+/// keys), read once the tag says what they are. The error is raised at the
+/// node; where in its contents is kept for `from_str` (`INNER`).
+pub(crate) fn contents<'a, T: serde::Deserialize<'a>, E: serde::de::Error>(
     c: &'a serde_json::value::RawValue,
 ) -> Result<T, E> {
     read(c.get()).map_err(|e| {
-        let message = e.to_string();
-        // (the line and column are in the contents: of no use in the document)
-        let message = message
-            .rfind(" at line ")
-            .map_or(message.as_str(), |i| &message[..i]);
-        if TOO_DEEP.with(|t| t.get()) {
-            return E::custom(message); // (where says little, at length)
+        // (of a document too deep, a path says little, at length)
+        if !TOO_DEEP.with(std::cell::Cell::get) {
+            let mut path = String::from("c");
+            join(&mut path, &path_at(c.get(), &e));
+            // and where in a node in them, if its contents came first too
+            join(&mut path, &INNER.with(std::cell::Cell::take));
+            INNER.with(|p| p.set(path));
         }
-        let path = path_at(c.get(), &e);
-        let dot = if path.is_empty() || path.starts_with('[') {
-            ""
-        } else {
-            "."
-        };
-        E::custom(format_args!("c{dot}{path}: {message}"))
+        // (the line and column are in the contents: of no use in the document)
+        E::custom(message(&e))
     })
+}
+
+/// A list of inlines or of blocks, read to its length (what the reader
+/// gives a `Vec<Inline>` or `Vec<Block>`). Read straight into a `Vec`, a
+/// list grows by doubling, and keeps what it didn't use: 29% of a document
+/// read. Its elements go on a stack of their type that every list being
+/// read shares (a list in an element goes on above them, and is taken off
+/// when read), then are moved out into a `Vec` of their number. A thread
+/// keeps its stacks for the next document: what the most elements of lists
+/// being read at once took (256 kB for pandoc's manual four times over;
+/// freeing them after each document made reading it 5% slower).
+pub(crate) struct List<T>(pub Vec<T>);
+
+pub(crate) trait Stacked: Sized + 'static {
+    fn stack() -> &'static std::thread::LocalKey<std::cell::RefCell<Vec<Self>>>;
+}
+
+thread_local! {
+    static INLINES: std::cell::RefCell<Vec<Inline>> = const { std::cell::RefCell::new(Vec::new()) };
+    static BLOCKS: std::cell::RefCell<Vec<Block>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl Stacked for Inline {
+    fn stack() -> &'static std::thread::LocalKey<std::cell::RefCell<Vec<Self>>> {
+        &INLINES
+    }
+}
+
+impl Stacked for Block {
+    fn stack() -> &'static std::thread::LocalKey<std::cell::RefCell<Vec<Self>>> {
+        &BLOCKS
+    }
+}
+
+impl<'de, T: Stacked + serde::Deserialize<'de>> serde::Deserialize<'de> for List<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V<T>(std::marker::PhantomData<T>);
+        impl<'de, T: Stacked + serde::Deserialize<'de>> serde::de::Visitor<'de> for V<T> {
+            type Value = List<T>;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a sequence")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<List<T>, A::Error> {
+                let stack = T::stack();
+                let start = stack.with(|s| s.borrow().len());
+                let mut read = || {
+                    while let Some(x) = seq.next_element()? {
+                        stack.with(|s| s.borrow_mut().push(x));
+                    }
+                    Ok(())
+                };
+                let read = read();
+                // (on an error too: the stack is as it was)
+                let xs = stack.with(|s| s.borrow_mut().drain(start..).collect());
+                read.map(|()| List(xs))
+            }
+        }
+        d.deserialize_seq(V(std::marker::PhantomData))
+    }
+}
+
+/// A `Vec<Inline>` or `Vec<Block>` field of a type whose `Deserialize` is
+/// derived, read as a [`List`].
+pub(crate) fn list<'de, D: serde::Deserializer<'de>, T: Stacked + serde::Deserialize<'de>>(
+    d: D,
+) -> Result<Vec<T>, D::Error> {
+    <List<T> as serde::Deserialize>::deserialize(d).map(|l| l.0)
 }
 
 /// A finite `Double` as pandoc's JSON (aeson) writes it, as Haskell shows
@@ -316,8 +483,7 @@ fn haskell_double(x: f64) -> String {
 
 /// A `Double` as pandoc writes it: one that isn't finite has no JSON number,
 /// and is `null` (not a number) or `"+inf"`, `"-inf"`.
-#[doc(hidden)]
-pub fn aeson_double<S: serde::Serializer>(x: &f64, s: S) -> Result<S::Ok, S::Error> {
+pub(crate) fn aeson_double<S: serde::Serializer>(x: &f64, s: S) -> Result<S::Ok, S::Error> {
     if x.is_nan() {
         return s.serialize_unit();
     }
@@ -331,8 +497,7 @@ pub fn aeson_double<S: serde::Serializer>(x: &f64, s: S) -> Result<S::Ok, S::Err
 
 /// A `Double` as pandoc reads it: a number, or what [`aeson_double`] writes
 /// for one that isn't finite.
-#[doc(hidden)]
-pub struct Double(pub f64);
+pub(crate) struct Double(pub f64);
 
 impl<'de> serde::Deserialize<'de> for Double {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -398,8 +563,7 @@ pub fn to_writer<W: Write>(mut writer: W, doc: &Pandoc) -> std::io::Result<()> {
 /// A value's JSON, as pandoc writes it, appended to a string. What
 /// [`to_string`] writes with: the same text as the types' `Serialize` gives
 /// serde_json, in half the time (no serializer between a node and the text).
-#[doc(hidden)]
-pub trait Json {
+pub(crate) trait Json {
     fn json(&self, out: &mut String);
 }
 
@@ -470,8 +634,7 @@ impl Json for bool {
 }
 
 /// A `Double`, as [`aeson_double`].
-#[doc(hidden)]
-pub fn write_double(x: f64, out: &mut String) {
+pub(crate) fn write_double(x: f64, out: &mut String) {
     if x.is_nan() {
         out.push_str("null");
     } else if x.is_infinite() {
@@ -536,8 +699,7 @@ impl<V: Json> Json for std::collections::BTreeMap<Text, V> {
 }
 
 /// Reads `{"t": tag}` for an enum-like type, checking the tag.
-#[doc(hidden)]
-pub fn de_tag<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn de_tag<'de, D: serde::Deserializer<'de>>(
     d: D,
     name: &'static str,
     tags: &'static [&'static str],
@@ -566,9 +728,8 @@ pub fn de_tag<'de, D: serde::Deserializer<'de>>(
 
 /// A key of a node's JSON object, `"t"`, `"c"` or another, matched without
 /// copying it.
-#[doc(hidden)]
 #[derive(PartialEq, Eq)]
-pub enum Key {
+pub(crate) enum Key {
     T,
     C,
     Other,
@@ -596,12 +757,11 @@ impl<'de> serde::Deserialize<'de> for Key {
 
 /// A node's tag, one of these, matched without copying it; another is
 /// returned as `Err`, for the error to be raised at the node (its path).
-#[doc(hidden)]
-pub struct Tag(pub &'static [&'static str]);
+pub(crate) struct Tag(pub &'static [&'static str]);
 
 impl Tag {
     /// The tag, or an unknown variant error.
-    pub fn check<E: serde::de::Error>(
+    pub(crate) fn check<E: serde::de::Error>(
         t: Result<&'static str, Text>,
         tags: &'static [&'static str],
     ) -> Result<&'static str, E> {
@@ -708,8 +868,19 @@ impl Pandoc {
         }
     }
 
-    /// Visit the document with a visitor.
-    pub fn visit<V: VisitMut + ?Sized>(&mut self, v: &mut V) {
+    /// Its `pandoc-api-version`: always one pandoc reads as this crate's
+    /// (the same major and minor version as [`PANDOC_API_VERSION`]).
+    pub fn api_version(&self) -> &[i64] {
+        &self.api_version
+    }
+
+    /// Walk the document with a visitor, reading it.
+    pub fn visit<V: Visit + ?Sized>(&self, v: &mut V) {
+        v.visit_pandoc(self);
+    }
+
+    /// Walk the document with a visitor, changing it.
+    pub fn visit_mut<V: VisitMut + ?Sized>(&mut self, v: &mut V) {
         v.visit_pandoc(self);
     }
 }
@@ -740,12 +911,7 @@ pub fn filter<F: FnOnce(&mut Pandoc, Option<&str>)>(f: F) {
 pub fn filter_with<F: FnOnce(&mut Pandoc, &Conversion)>(f: F) {
     let conversion = Conversion::from_env();
     let run = || -> Result<(), String> {
-        let mut input = String::new();
-        std::io::stdin()
-            .read_to_string(&mut input)
-            .map_err(|e| format!("reading the document: {e}"))?;
-        let mut doc = from_str(&input).map_err(|e| e.to_string())?;
-        drop(input);
+        let mut doc = from_reader(std::io::stdin().lock()).map_err(|e| e.to_string())?;
         f(&mut doc, &conversion);
         let mut out = std::io::BufWriter::new(std::io::stdout().lock());
         to_writer(&mut out, &doc)

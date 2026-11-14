@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ._core import Node, NodeList, text_inlines
+from ._core import Node, NodeList, text_inlines, too_deep
 from ._types import (
     Block,
     Cite,
@@ -21,6 +21,7 @@ from ._types import (
     MetaString,
     MetaValue,
     Note,
+    Pandoc,
     Plain,
     Quoted,
     QuoteType,
@@ -48,35 +49,47 @@ def inlines(text: str) -> list[Inline]:
 
 def blocks(text: str) -> list[Block]:
     """A string as blocks, as pandoc's Lua ``pandoc.Blocks``: one ``Plain``
-    of its words and spaces. (To parse markup, use ``ctx.read``.)"""
+    of its words and spaces. (To parse markup, use libpandoc:
+    ``libpandoc.read(text, ctx.conversion)``.)"""
     out: list[Block] = [Plain(*inlines(text))]
     return out
 
 
+@too_deep("stringify")
 def stringify(value: Any) -> str:
-    """The text of a node (or list of nodes), without markup.
+    """The text of a node (or list of nodes), without markup, exactly as
+    pandoc's Lua ``pandoc.utils.stringify``.
 
-    As pandoc's ``stringify``: spaces and breaks become " ", quotes become
-    curly quotes, notes and citations' data are dropped, code and math keep
-    their text.
+    Spaces and breaks become " ", quotes curly quotes, notes and citations'
+    data are dropped, code and math keep their text. Metadata: a map's
+    values in the order of their keys, a ``MetaBool`` ``"true"`` or
+    ``"false"``; but a whole document is the text of its inlines only (in
+    the metadata too: not its ``MetaString`` and ``MetaBool`` values).
     """
+    return _stringify(value)
+
+
+def _stringify(value: Any) -> str:
     out: list[str] = []
-    _text(value, out)
+    _text(value, out, isinstance(value, Pandoc))
     return "".join(out)
 
 
-def _text(value: Any, out: list[str]) -> None:
+def _text(value: Any, out: list[str], inlines_only: bool) -> None:
+    """``value``'s text into ``out``; ``inlines_only``: that of its inlines
+    only (pandoc's ``Shared.stringify``, which ``stringify`` is on a
+    document; on metadata, it is what Lua's own is)."""
     if isinstance(value, (list, tuple)):
         for x in value:
-            _text(x, out)
+            _text(x, out, inlines_only)
         return
     if isinstance(value, dict):
-        for x in value.values():
-            _text(x, out)
+        for k in sorted(value):  # (pandoc's Map: in the order of its keys)
+            _text(value[k], out, inlines_only)
         return
     if not isinstance(value, Node):
         return
-    if isinstance(value, (Str, MetaString)):
+    if isinstance(value, Str):
         out.append(value.text)
     elif isinstance(value, (Space, SoftBreak, LineBreak)):
         out.append(" ")
@@ -88,30 +101,39 @@ def _text(value: Any, out: list[str]) -> None:
     elif isinstance(value, Note):
         pass
     elif isinstance(value, Cite):
-        _text(value.content, out)
+        _text(value.content, out, inlines_only)
     elif isinstance(value, Quoted):
         left, right = _QUOTES[value.quote_type]
         out.append(left)
-        _text(value.content, out)
+        _text(value.content, out, inlines_only)
         out.append(right)
+    elif isinstance(value, MetaString):
+        if not inlines_only:
+            out.append(value.text)
     elif isinstance(value, MetaBool):
-        out.append("true" if value.value else "false")
+        if not inlines_only:
+            out.append("true" if value.value else "false")
     else:
         for f, _ in _walk_fields(type(value)):
-            _text(getattr(value, f), out)
+            _text(getattr(value, f), out, inlines_only)
 
 
+@too_deep("to_python")
 def to_python(value: MetaValue | Mapping[str, MetaValue]) -> Any:
     """Metadata as plain Python: str, bool, list, dict.
 
     ``MetaInlines`` and ``MetaBlocks`` become their text (``stringify``).
     """
+    return _to_python(value)
+
+
+def _to_python(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return {k: to_python(v) for k, v in value.items()}
+        return {k: _to_python(v) for k, v in value.items()}
     if isinstance(value, MetaMap):
-        return {k: to_python(v) for k, v in value.content.items()}
+        return {k: _to_python(v) for k, v in value.content.items()}
     if isinstance(value, MetaList):
-        return [to_python(v) for v in value.content]
+        return [_to_python(v) for v in value.content]
     if isinstance(value, MetaBool):
         return value.value
     if isinstance(value, MetaString):
@@ -121,6 +143,7 @@ def to_python(value: MetaValue | Mapping[str, MetaValue]) -> Any:
     raise TypeError(f"not metadata: {value!r}")
 
 
+@too_deep("from_python")
 def from_python(value: Any) -> MetaValue | None:
     """A Python value as metadata, or None if it has no obvious form.
 
@@ -128,6 +151,10 @@ def from_python(value: Any) -> MetaValue | None:
     int and float -> MetaString (YAML numbers read by pandoc are strings too).
     Setting metadata converts with this: ``doc.meta["draft"] = True``.
     """
+    return _from_python(value)
+
+
+def _from_python(value: Any) -> MetaValue | None:
     if isinstance(value, MetaValue):
         return value
     if isinstance(value, bool):
@@ -144,7 +171,7 @@ def from_python(value: Any) -> MetaValue | None:
 
 
 def _meta(value: Any) -> Any:
-    converted = from_python(value)
+    converted = _from_python(value)
     return value if converted is None else converted
 
 

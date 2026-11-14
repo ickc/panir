@@ -30,8 +30,9 @@ def pep440(v: str) -> str:
 
 # (file, pattern with the version as group 1, whether it holds the PEP 440 spelling)
 PLACES = [
-    ("python/pyproject.toml", r'^version = "([^"]+)"', True),
+    # (python/pyproject.toml reads it from __init__.py)
     ("python/src/panir/__init__.py", r'^__version__ = "([^"]+)"', True),
+    ("python/recipe/recipe.yaml", r'^  version: "([^"]+)"', True),
     ("rust/Cargo.toml", r'^version = "([^"]+)"', False),
     ("rust/Cargo.lock", r'name = "panir"\nversion = "([^"]+)"', False),
     ("ts/package.json", r'^  "version": "([^"]+)"', False),

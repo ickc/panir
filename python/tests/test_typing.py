@@ -49,12 +49,12 @@ def test_pyright_sees_field_and_argument_types(tmp_path):
             'Argument of type "Header" cannot be assigned to parameter "content" '
             'of type "Inline | str" in function "__init__"',
         ),
-        (6, "information", 'Type of "h.content" is "list[Inline]"'),
+        (6, "information", 'Type of "h.content" is "NodeList[Inline, Inline | str]"'),
     ]
 
 
 FILTERS = textwrap.dedent("""
-    from panir import Block, Context, Filter, Header, Inline, Para, Space, Str
+    from panir import Block, Context, Filter, Header, Inline, Pandoc, Para, Space, Str
 
     f = Filter()
 
@@ -90,6 +90,34 @@ FILTERS = textwrap.dedent("""
     @f.on_meta
     def meta(m):
         return None
+
+    @f.on(Pandoc)
+    def doc_as_list(d: Pandoc):
+        return [d]
+
+    @f.on(Str)
+    def kept(s: Str, ctx: Context) -> str:
+        return "two words"
+
+    reveal_type(kept)
+    reveal_type(two)
+    reveal_type(inlines)
+
+    @f.on(Para)
+    def plain(p):
+        return [Str("x"), [Str("y"), "z"]]
+
+    @f.on_blocks
+    def one_block(bs):
+        return Str("as Plain")
+
+    @f.on_meta
+    def plain_values(m):
+        return {"draft": True, "tags": ["a", "b"]}
+
+    reveal_type(f(Para()))
+    reveal_type(f(Pandoc()))
+    reveal_type(Pandoc.from_json({}))
 """)
 
 
@@ -112,11 +140,22 @@ def test_pyright_checks_filter_functions(tmp_path):
         capture_output=True,
         text=True,
     ).stdout
-    errors = [
-        (d["range"]["start"]["line"], d["message"].splitlines()[0])
+    found = [
+        (d["range"]["start"]["line"], d["severity"], d["message"].splitlines()[0])
         for d in json.loads(out)["generalDiagnostics"]
-        if d["severity"] == "error"
     ]
-    # the decorators of wrong_parameter and wrong_return (on() is called
-    # with the types first); blocks_for_inlines itself (on_inlines takes it)
-    assert [line for line, _ in errors] == [9, 12, 30], errors
+    errors = [line for line, severity, _ in found if severity == "error"]
+    # the decorators of wrong_parameter and wrong_return; on_inlines's of
+    # blocks_for_inlines; on(Pandoc)'s of doc_as_list (a document's function
+    # can't return a list)
+    assert errors == [9, 12, 30, 38], found
+    # a decorated function keeps its type
+    revealed = [message for _, severity, message in found if severity == "information"]
+    assert revealed == [
+        'Type of "kept" is "(s: Str, ctx: Context) -> str"',
+        'Type of "two" is "(Header | Para) -> None"',
+        'Type of "inlines" is "(xs: list[Inline], ctx: Context) -> list[Inline]"',
+        'Type of "f(Para())" is "Para"',
+        'Type of "f(Pandoc())" is "Pandoc"',
+        'Type of "Pandoc.from_json({})" is "Pandoc"',
+    ]

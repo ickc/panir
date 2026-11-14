@@ -100,7 +100,9 @@ jobs:
           cache: true
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      # with pixi's pandoc on PATH: the tests that ask pandoc fail without
+      # one in CI, rather than skip
+      - run: pixi run --manifest-path ../pixi.toml cargo test
       - name: The example runs as a pandoc filter
         shell: bash
         run: |
@@ -108,6 +110,17 @@ jobs:
           out=$(echo 'some *text*' | pixi run --manifest-path ../pixi.toml pandoc --filter target/debug/examples/upper -t plain)
           echo "$out"
           [ "$out" = "SOME TEXT" ]
+      # the oldest Rust Cargo.toml's rust-version claims
+      - name: The tests on Rust 1.85
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          rustup toolchain install 1.85 --profile minimal
+          pixi run --manifest-path ../pixi.toml cargo +1.85 test
+      - name: The example builds for wasm32-wasip1
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          rustup target add wasm32-wasip1
+          cargo build --release --example upper --target wasm32-wasip1
 
   typescript:
     strategy:
@@ -129,7 +142,9 @@ jobs:
           cache: true
       - run: npm ci
       - run: npx tsc -p tsconfig.test.json
-      - run: npm test
+      # with pixi's pandoc on PATH: the tests that ask pandoc fail without
+      # one in CI, rather than skip
+      - run: pixi run --manifest-path ../pixi.toml npm test
       - run: npm run build
       - name: The example runs as a pandoc filter
         run: |
@@ -224,6 +239,19 @@ jobs:
           mkdir -p "$RUNNER_TEMP/try" && cd "$RUNNER_TEMP/try"
           npm init -y >/dev/null && npm install "$RUNNER_TEMP"/panir-*.tgz
           node --input-type=module -e 'import { Str, serialize, parse } from "panir"; import { runFilter } from "panir/node"; console.log(Str("ok").text, typeof runFilter)'
+      # the oldest Node package.json's engines claims
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "16.11"
+      - name: npm, on Node 16.11
+        run: |
+          cd "$RUNNER_TEMP/try" && node --version
+          node --input-type=module -e '
+            import { applyFilter, parse, serialize, Str } from "panir"; import { runFilter } from "panir/node";
+            const doc = parse(JSON.stringify({ "pandoc-api-version": [1, 23, 1, 2], meta: {}, blocks: [{ t: "Para", c: [{ t: "Str", c: "ok" }] }] }));
+            const out = serialize(applyFilter(doc, { Str: (s, ctx) => Str(s.text.toUpperCase() + ctx.where) }));
+            if (!out.includes("OKblocks[0].content[0]") || typeof runFilter !== "function") process.exit(1);
+            console.log(out)'
       - uses: dtolnay/rust-toolchain@stable
       - name: crates.io (publish --dry-run)
         working-directory: rust

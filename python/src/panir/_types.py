@@ -9,10 +9,11 @@ in pandoc-types' order. How the classes behave is in ``_core``.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, TypeAlias
+from collections.abc import Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from ._core import Enum, Node, finalize
+from ._core import Attributes, Enum, Node, NodeDict, NodeList, finalize
+from ._core import Field as _Field
 from ._core import flat as _flat
 from ._core import init as _init
 
@@ -74,26 +75,34 @@ class CitationMode(Enum):
 class Pandoc(Node):
     """pandoc's ``Pandoc``."""
 
-    __slots__ = (
-        "meta",
-        "blocks",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "meta",
+            "blocks",
+        )
+    __match_args__ = ("blocks", "meta")
     _kind = "product"
     _encoding = "root"
     _keys = {"meta": "meta", "blocks": "blocks"}
     _variadic = "blocks"
     _defaults = {"meta": {}, "blocks": []}
 
-    meta: Meta
-    blocks: list[Block]
+    if TYPE_CHECKING:
+        meta: _Field[NodeDict[MetaValue, _MetaValueIn], Mapping[str, _MetaValueIn]] = _Field()
+        blocks: _Field[
+            NodeList[Block, Block | Inline | str | Sequence[Inline | str]],
+            Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        ] = _Field()
+    else:
+        meta: Meta
+        blocks: list[Block]
 
     def __init__(
         self,
-        *blocks: Block | str,
-        meta: Mapping[str, MetaValue] | None = None,
+        *blocks: Block | Inline | str | Sequence[Inline | str],
+        meta: Mapping[str, _MetaValueIn] | None = None,
     ) -> None:
-        _init(self, {"meta": meta, "blocks": blocks})
+        _init(self, (meta, blocks))
 
 
 class Block(Node):
@@ -106,246 +115,432 @@ class Block(Node):
 class Plain(Block):
     """pandoc's ``Plain``, a Block."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Inline]
+    if TYPE_CHECKING:
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Para(Block):
     """pandoc's ``Para``, a Block."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Inline]
+    if TYPE_CHECKING:
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class LineBlock(Block):
     """pandoc's ``LineBlock``, a Block."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[list[Inline]]
+    if TYPE_CHECKING:
+        content: _Field[
+            NodeList[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str],
+            Iterable[Iterable[Inline | str] | Inline | str],
+        ] = _Field()
+    else:
+        content: list[list[Inline]]
 
-    def __init__(self, *content: Iterable[Inline | str] | str) -> None:
-        _init(self, {"content": content})
+    def __init__(self, *content: Iterable[Inline | str] | Inline | str) -> None:
+        _init(self, (content,))
 
 
 class CodeBlock(Block):
     """pandoc's ``CodeBlock``, a Block."""
 
-    __slots__ = (
-        "attr",
-        "text",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "text",
+        )
+    __match_args__ = ("text", "attr")
     _encoding = "array"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {"attr": ["", [], []]}
     _positional = ("text",)
 
-    attr: Attr
-    text: str
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        text: _Field[str, str] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        attr: Attr
+        text: str
 
     def __init__(
         self,
         text: str,
         *,
-        attr: Attr | None = None,
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "CodeBlock",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "text": text})
+        attr = _flat(Attr, "CodeBlock", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, text))
 
 
 class RawBlock(Block):
     """pandoc's ``RawBlock``, a Block."""
 
-    __slots__ = (
-        "format",
-        "text",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "format",
+            "text",
+        )
+    __match_args__ = ("format", "text")
     _encoding = "array"
     _positional = ("format", "text")
 
-    format: Format
-    text: str
+    if TYPE_CHECKING:
+        format: _Field[str, str] = _Field()
+        text: _Field[str, str] = _Field()
+    else:
+        format: Format
+        text: str
 
-    def __init__(self, format: Format, text: str) -> None:
-        _init(self, {"format": format, "text": text})
+    def __init__(self, format: str, text: str) -> None:
+        _init(self, (format, text))
 
 
 class BlockQuote(Block):
     """pandoc's ``BlockQuote``, a Block."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Block]
+    if TYPE_CHECKING:
+        content: _Field[
+            NodeList[Block, Block | Inline | str | Sequence[Inline | str]],
+            Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        ] = _Field()
+    else:
+        content: list[Block]
 
-    def __init__(self, *content: Block | str) -> None:
-        _init(self, {"content": content})
+    def __init__(self, *content: Block | Inline | str | Sequence[Inline | str]) -> None:
+        _init(self, (content,))
 
 
 class OrderedList(Block):
     """pandoc's ``OrderedList``, a Block."""
 
-    __slots__ = (
-        "list_attributes",
-        "content",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "list_attributes",
+            "content",
+        )
+    __match_args__ = ("content", "list_attributes")
     _encoding = "array"
     _variadic = "content"
     _flatten = ("list_attributes",)
+    _parts = {
+        "start": "list_attributes",
+        "style": "list_attributes",
+        "delimiter": "list_attributes",
+    }
     _defaults = {
         "list_attributes": [1, {"t": "DefaultStyle"}, {"t": "DefaultDelim"}],
         "content": [],
     }
 
-    list_attributes: ListAttributes
-    content: list[list[Block]]
+    if TYPE_CHECKING:
+        list_attributes: _Field[
+            ListAttributes,
+            ListAttributes
+            | tuple[
+                int,
+                ListNumberStyle
+                | Literal[
+                    "DefaultStyle",
+                    "Example",
+                    "Decimal",
+                    "LowerRoman",
+                    "UpperRoman",
+                    "LowerAlpha",
+                    "UpperAlpha",
+                ],
+                ListNumberDelim | Literal["DefaultDelim", "Period", "OneParen", "TwoParens"],
+            ],
+        ] = _Field()
+        content: _Field[
+            NodeList[
+                NodeList[Block, Block | Inline | str | Sequence[Inline | str]],
+                Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+            ],
+            Iterable[
+                Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str
+            ],
+        ] = _Field()
+        start: _Field[int, int] = _Field()
+        style: _Field[
+            ListNumberStyle,
+            ListNumberStyle
+            | Literal[
+                "DefaultStyle",
+                "Example",
+                "Decimal",
+                "LowerRoman",
+                "UpperRoman",
+                "LowerAlpha",
+                "UpperAlpha",
+            ],
+        ] = _Field()
+        delimiter: _Field[
+            ListNumberDelim,
+            ListNumberDelim | Literal["DefaultDelim", "Period", "OneParen", "TwoParens"],
+        ] = _Field()
+    else:
+        list_attributes: ListAttributes
+        content: list[list[Block]]
 
     def __init__(
         self,
-        *content: Iterable[Block | str] | str,
-        list_attributes: ListAttributes | None = None,
+        *content: Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        list_attributes: ListAttributes
+        | tuple[
+            int,
+            ListNumberStyle
+            | Literal[
+                "DefaultStyle",
+                "Example",
+                "Decimal",
+                "LowerRoman",
+                "UpperRoman",
+                "LowerAlpha",
+                "UpperAlpha",
+            ],
+            ListNumberDelim | Literal["DefaultDelim", "Period", "OneParen", "TwoParens"],
+        ]
+        | None = None,
         start: int = 1,
-        style: ListNumberStyle = ListNumberStyle.DefaultStyle,
-        delimiter: ListNumberDelim = ListNumberDelim.DefaultDelim,
+        style: ListNumberStyle
+        | Literal[
+            "DefaultStyle",
+            "Example",
+            "Decimal",
+            "LowerRoman",
+            "UpperRoman",
+            "LowerAlpha",
+            "UpperAlpha",
+        ] = ListNumberStyle.DefaultStyle,
+        delimiter: ListNumberDelim
+        | Literal["DefaultDelim", "Period", "OneParen", "TwoParens"] = ListNumberDelim.DefaultDelim,
     ) -> None:
         list_attributes = _flat(
             ListAttributes,
             "OrderedList",
             "list_attributes",
             list_attributes,
-            {"start": start, "style": style, "delimiter": delimiter},
+            (start, style, delimiter),
         )
-        _init(self, {"list_attributes": list_attributes, "content": content})
+        _init(self, (list_attributes, content))
 
 
 class BulletList(Block):
     """pandoc's ``BulletList``, a Block."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[list[Block]]
+    if TYPE_CHECKING:
+        content: _Field[
+            NodeList[
+                NodeList[Block, Block | Inline | str | Sequence[Inline | str]],
+                Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+            ],
+            Iterable[
+                Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str
+            ],
+        ] = _Field()
+    else:
+        content: list[list[Block]]
 
-    def __init__(self, *content: Iterable[Block | str] | str) -> None:
-        _init(self, {"content": content})
+    def __init__(
+        self,
+        *content: Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+    ) -> None:
+        _init(self, (content,))
 
 
 class DefinitionList(Block):
     """pandoc's ``DefinitionList``, a Block."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[tuple[list[Inline], list[list[Block]]]]
+    if TYPE_CHECKING:
+        content: _Field[
+            NodeList[
+                tuple[
+                    NodeList[Inline, Inline | str],
+                    NodeList[
+                        NodeList[Block, Block | Inline | str | Sequence[Inline | str]],
+                        Iterable[Block | Inline | str | Sequence[Inline | str]]
+                        | Block
+                        | Inline
+                        | str,
+                    ],
+                ],
+                tuple[
+                    Iterable[Inline | str] | Inline | str,
+                    Iterable[
+                        Iterable[Block | Inline | str | Sequence[Inline | str]]
+                        | Block
+                        | Inline
+                        | str
+                    ],
+                ],
+            ],
+            Iterable[
+                tuple[
+                    Iterable[Inline | str] | Inline | str,
+                    Iterable[
+                        Iterable[Block | Inline | str | Sequence[Inline | str]]
+                        | Block
+                        | Inline
+                        | str
+                    ],
+                ]
+            ],
+        ] = _Field()
+    else:
+        content: list[tuple[list[Inline], list[list[Block]]]]
 
     def __init__(
         self,
-        *content: tuple[Iterable[Inline | str] | str, Iterable[Iterable[Block | str] | str]],
+        *content: tuple[
+            Iterable[Inline | str] | Inline | str,
+            Iterable[
+                Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str
+            ],
+        ],
     ) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Header(Block):
     """pandoc's ``Header``, a Block."""
 
-    __slots__ = (
-        "level",
-        "attr",
-        "content",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "level",
+            "attr",
+            "content",
+        )
+    __match_args__ = ("level", "content", "attr")
     _encoding = "array"
     _variadic = "content"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {"attr": ["", [], []], "content": []}
     _positional = ("level",)
 
-    level: int
-    attr: Attr
-    content: list[Inline]
+    if TYPE_CHECKING:
+        level: _Field[int, int] = _Field()
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        level: int
+        attr: Attr
+        content: list[Inline]
 
     def __init__(
         self,
         level: int,
         *content: Inline | str,
-        attr: Attr | None = None,
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Header",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"level": level, "attr": attr, "content": content})
+        attr = _flat(Attr, "Header", "attr", attr, (identifier, classes, attributes))
+        _init(self, (level, attr, content))
 
 
 class HorizontalRule(Block):
     """pandoc's ``HorizontalRule``, a Block."""
 
-    __slots__ = ()
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ()
+    __match_args__ = ()
     _encoding = "none"
 
 
 class Table(Block):
     """pandoc's ``Table``, a Block."""
 
-    __slots__ = (
-        "attr",
-        "caption",
-        "col_specs",
-        "head",
-        "bodies",
-        "foot",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "caption",
+            "col_specs",
+            "head",
+            "bodies",
+            "foot",
+        )
+    __match_args__ = ("caption", "col_specs", "head", "bodies", "foot", "attr")
     _encoding = "array"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {
         "attr": ["", [], []],
         "caption": [None, []],
@@ -356,115 +551,493 @@ class Table(Block):
     }
     _positional = ("caption", "col_specs", "head", "bodies", "foot")
 
-    attr: Attr
-    caption: Caption
-    col_specs: list[ColSpec]
-    head: TableHead
-    bodies: list[TableBody]
-    foot: TableFoot
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        caption: _Field[
+            Caption,
+            Caption
+            | tuple[
+                Iterable[Inline | str] | Inline | str | None,
+                Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+            ],
+        ] = _Field()
+        col_specs: _Field[
+            NodeList[
+                ColSpec,
+                ColSpec
+                | tuple[
+                    Alignment | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                    ColWidthBase,
+                ],
+            ],
+            Iterable[
+                ColSpec
+                | tuple[
+                    Alignment | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                    ColWidthBase,
+                ]
+            ],
+        ] = _Field()
+        head: _Field[
+            TableHead,
+            TableHead
+            | tuple[
+                Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                Iterable[
+                    Row
+                    | tuple[
+                        Attr
+                        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                        Iterable[
+                            Cell
+                            | tuple[
+                                Attr
+                                | tuple[
+                                    str,
+                                    Iterable[str],
+                                    Iterable[tuple[str, str]] | Mapping[str, str],
+                                ],
+                                Alignment
+                                | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                                int,
+                                int,
+                                Iterable[Block | Inline | str | Sequence[Inline | str]]
+                                | Block
+                                | Inline
+                                | str,
+                            ]
+                        ],
+                    ]
+                ],
+            ],
+        ] = _Field()
+        bodies: _Field[
+            NodeList[
+                TableBody,
+                TableBody
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    int,
+                    Iterable[
+                        Row
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Iterable[
+                                Cell
+                                | tuple[
+                                    Attr
+                                    | tuple[
+                                        str,
+                                        Iterable[str],
+                                        Iterable[tuple[str, str]] | Mapping[str, str],
+                                    ],
+                                    Alignment
+                                    | Literal[
+                                        "AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"
+                                    ],
+                                    int,
+                                    int,
+                                    Iterable[Block | Inline | str | Sequence[Inline | str]]
+                                    | Block
+                                    | Inline
+                                    | str,
+                                ]
+                            ],
+                        ]
+                    ],
+                    Iterable[
+                        Row
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Iterable[
+                                Cell
+                                | tuple[
+                                    Attr
+                                    | tuple[
+                                        str,
+                                        Iterable[str],
+                                        Iterable[tuple[str, str]] | Mapping[str, str],
+                                    ],
+                                    Alignment
+                                    | Literal[
+                                        "AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"
+                                    ],
+                                    int,
+                                    int,
+                                    Iterable[Block | Inline | str | Sequence[Inline | str]]
+                                    | Block
+                                    | Inline
+                                    | str,
+                                ]
+                            ],
+                        ]
+                    ],
+                ],
+            ],
+            Iterable[
+                TableBody
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    int,
+                    Iterable[
+                        Row
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Iterable[
+                                Cell
+                                | tuple[
+                                    Attr
+                                    | tuple[
+                                        str,
+                                        Iterable[str],
+                                        Iterable[tuple[str, str]] | Mapping[str, str],
+                                    ],
+                                    Alignment
+                                    | Literal[
+                                        "AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"
+                                    ],
+                                    int,
+                                    int,
+                                    Iterable[Block | Inline | str | Sequence[Inline | str]]
+                                    | Block
+                                    | Inline
+                                    | str,
+                                ]
+                            ],
+                        ]
+                    ],
+                    Iterable[
+                        Row
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Iterable[
+                                Cell
+                                | tuple[
+                                    Attr
+                                    | tuple[
+                                        str,
+                                        Iterable[str],
+                                        Iterable[tuple[str, str]] | Mapping[str, str],
+                                    ],
+                                    Alignment
+                                    | Literal[
+                                        "AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"
+                                    ],
+                                    int,
+                                    int,
+                                    Iterable[Block | Inline | str | Sequence[Inline | str]]
+                                    | Block
+                                    | Inline
+                                    | str,
+                                ]
+                            ],
+                        ]
+                    ],
+                ]
+            ],
+        ] = _Field()
+        foot: _Field[
+            TableFoot,
+            TableFoot
+            | tuple[
+                Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                Iterable[
+                    Row
+                    | tuple[
+                        Attr
+                        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                        Iterable[
+                            Cell
+                            | tuple[
+                                Attr
+                                | tuple[
+                                    str,
+                                    Iterable[str],
+                                    Iterable[tuple[str, str]] | Mapping[str, str],
+                                ],
+                                Alignment
+                                | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                                int,
+                                int,
+                                Iterable[Block | Inline | str | Sequence[Inline | str]]
+                                | Block
+                                | Inline
+                                | str,
+                            ]
+                        ],
+                    ]
+                ],
+            ],
+        ] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        attr: Attr
+        caption: Caption
+        col_specs: list[ColSpec]
+        head: TableHead
+        bodies: list[TableBody]
+        foot: TableFoot
 
     def __init__(
         self,
-        caption: Caption | None = None,
-        col_specs: Iterable[ColSpec] = (),
-        head: TableHead | None = None,
-        bodies: Iterable[TableBody] = (),
-        foot: TableFoot | None = None,
+        caption: Caption
+        | tuple[
+            Iterable[Inline | str] | Inline | str | None,
+            Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        ]
+        | None = None,
+        col_specs: Iterable[
+            ColSpec
+            | tuple[
+                Alignment | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                ColWidthBase,
+            ]
+        ] = (),
+        head: TableHead
+        | tuple[
+            Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+            Iterable[
+                Row
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Iterable[
+                        Cell
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Alignment
+                            | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                            int,
+                            int,
+                            Iterable[Block | Inline | str | Sequence[Inline | str]]
+                            | Block
+                            | Inline
+                            | str,
+                        ]
+                    ],
+                ]
+            ],
+        ]
+        | None = None,
+        bodies: Iterable[
+            TableBody
+            | tuple[
+                Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                int,
+                Iterable[
+                    Row
+                    | tuple[
+                        Attr
+                        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                        Iterable[
+                            Cell
+                            | tuple[
+                                Attr
+                                | tuple[
+                                    str,
+                                    Iterable[str],
+                                    Iterable[tuple[str, str]] | Mapping[str, str],
+                                ],
+                                Alignment
+                                | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                                int,
+                                int,
+                                Iterable[Block | Inline | str | Sequence[Inline | str]]
+                                | Block
+                                | Inline
+                                | str,
+                            ]
+                        ],
+                    ]
+                ],
+                Iterable[
+                    Row
+                    | tuple[
+                        Attr
+                        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                        Iterable[
+                            Cell
+                            | tuple[
+                                Attr
+                                | tuple[
+                                    str,
+                                    Iterable[str],
+                                    Iterable[tuple[str, str]] | Mapping[str, str],
+                                ],
+                                Alignment
+                                | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                                int,
+                                int,
+                                Iterable[Block | Inline | str | Sequence[Inline | str]]
+                                | Block
+                                | Inline
+                                | str,
+                            ]
+                        ],
+                    ]
+                ],
+            ]
+        ] = (),
+        foot: TableFoot
+        | tuple[
+            Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+            Iterable[
+                Row
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Iterable[
+                        Cell
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Alignment
+                            | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                            int,
+                            int,
+                            Iterable[Block | Inline | str | Sequence[Inline | str]]
+                            | Block
+                            | Inline
+                            | str,
+                        ]
+                    ],
+                ]
+            ],
+        ]
+        | None = None,
         *,
-        attr: Attr | None = None,
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Table",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(
-            self,
-            {
-                "attr": attr,
-                "caption": caption,
-                "col_specs": col_specs,
-                "head": head,
-                "bodies": bodies,
-                "foot": foot,
-            },
-        )
+        attr = _flat(Attr, "Table", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, caption, col_specs, head, bodies, foot))
 
 
 class Figure(Block):
     """pandoc's ``Figure``, a Block."""
 
-    __slots__ = (
-        "attr",
-        "caption",
-        "content",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "caption",
+            "content",
+        )
+    __match_args__ = ("content", "attr", "caption")
     _encoding = "array"
     _variadic = "content"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {"attr": ["", [], []], "caption": [None, []], "content": []}
 
-    attr: Attr
-    caption: Caption
-    content: list[Block]
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        caption: _Field[
+            Caption,
+            Caption
+            | tuple[
+                Iterable[Inline | str] | Inline | str | None,
+                Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+            ],
+        ] = _Field()
+        content: _Field[
+            NodeList[Block, Block | Inline | str | Sequence[Inline | str]],
+            Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        ] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        attr: Attr
+        caption: Caption
+        content: list[Block]
 
     def __init__(
         self,
-        *content: Block | str,
-        attr: Attr | None = None,
+        *content: Block | Inline | str | Sequence[Inline | str],
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
-        caption: Caption | None = None,
+        caption: Caption
+        | tuple[
+            Iterable[Inline | str] | Inline | str | None,
+            Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        ]
+        | None = None,
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Figure",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "caption": caption, "content": content})
+        attr = _flat(Attr, "Figure", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, caption, content))
 
 
 class Div(Block):
     """pandoc's ``Div``, a Block."""
 
-    __slots__ = (
-        "attr",
-        "content",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "content",
+        )
+    __match_args__ = ("content", "attr")
     _encoding = "array"
     _variadic = "content"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {"attr": ["", [], []], "content": []}
 
-    attr: Attr
-    content: list[Block]
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        content: _Field[
+            NodeList[Block, Block | Inline | str | Sequence[Inline | str]],
+            Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        ] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        attr: Attr
+        content: list[Block]
 
     def __init__(
         self,
-        *content: Block | str,
-        attr: Attr | None = None,
+        *content: Block | Inline | str | Sequence[Inline | str],
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Div",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "content": content})
+        attr = _flat(Attr, "Div", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, content))
 
 
 class MetaValue(Node):
@@ -477,89 +1050,118 @@ class MetaValue(Node):
 class MetaMap(MetaValue):
     """pandoc's ``MetaMap``, a MetaValue."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _defaults = {"content": {}}
     _positional = ("content",)
 
-    content: dict[str, MetaValue]
+    if TYPE_CHECKING:
+        content: _Field[NodeDict[MetaValue, _MetaValueIn], Mapping[str, _MetaValueIn]] = _Field()
+    else:
+        content: dict[str, MetaValue]
 
-    def __init__(self, content: Mapping[str, MetaValue] | None = None) -> None:
-        _init(self, {"content": content})
+    def __init__(self, content: Mapping[str, _MetaValueIn] | None = None) -> None:
+        _init(self, (content,))
 
 
 class MetaList(MetaValue):
     """pandoc's ``MetaList``, a MetaValue."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[MetaValue]
+    if TYPE_CHECKING:
+        content: _Field[NodeList[MetaValue, _MetaValueIn], Iterable[_MetaValueIn]] = _Field()
+    else:
+        content: list[MetaValue]
 
-    def __init__(self, *content: MetaValue) -> None:
-        _init(self, {"content": content})
+    def __init__(self, *content: _MetaValueIn) -> None:
+        _init(self, (content,))
 
 
 class MetaBool(MetaValue):
     """pandoc's ``MetaBool``, a MetaValue."""
 
-    __slots__ = ("value",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("value",)
+    __match_args__ = ("value",)
     _encoding = "value"
     _positional = ("value",)
 
-    value: bool
+    if TYPE_CHECKING:
+        value: _Field[bool, bool] = _Field()
+    else:
+        value: bool
 
     def __init__(self, value: bool) -> None:
-        _init(self, {"value": value})
+        _init(self, (value,))
 
 
 class MetaString(MetaValue):
     """pandoc's ``MetaString``, a MetaValue."""
 
-    __slots__ = ("text",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("text",)
+    __match_args__ = ("text",)
     _encoding = "value"
     _positional = ("text",)
 
-    text: str
+    if TYPE_CHECKING:
+        text: _Field[str, str] = _Field()
+    else:
+        text: str
 
     def __init__(self, text: str) -> None:
-        _init(self, {"text": text})
+        _init(self, (text,))
 
 
 class MetaInlines(MetaValue):
     """pandoc's ``MetaInlines``, a MetaValue."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Inline]
+    if TYPE_CHECKING:
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class MetaBlocks(MetaValue):
     """pandoc's ``MetaBlocks``, a MetaValue."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Block]
+    if TYPE_CHECKING:
+        content: _Field[
+            NodeList[Block, Block | Inline | str | Sequence[Inline | str]],
+            Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        ] = _Field()
+    else:
+        content: list[Block]
 
-    def __init__(self, *content: Block | str) -> None:
-        _init(self, {"content": content})
+    def __init__(self, *content: Block | Inline | str | Sequence[Inline | str]) -> None:
+        _init(self, (content,))
 
 
 class Inline(Node):
@@ -572,406 +1174,552 @@ class Inline(Node):
 class Str(Inline):
     """pandoc's ``Str``, a Inline."""
 
-    __slots__ = ("text",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("text",)
+    __match_args__ = ("text",)
     _encoding = "value"
     _positional = ("text",)
 
-    text: str
+    if TYPE_CHECKING:
+        text: _Field[str, str] = _Field()
+    else:
+        text: str
 
     def __init__(self, text: str) -> None:
-        _init(self, {"text": text})
+        _init(self, (text,))
 
 
 class Emph(Inline):
     """pandoc's ``Emph``, a Inline."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Inline]
+    if TYPE_CHECKING:
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Underline(Inline):
     """pandoc's ``Underline``, a Inline."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Inline]
+    if TYPE_CHECKING:
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Strong(Inline):
     """pandoc's ``Strong``, a Inline."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Inline]
+    if TYPE_CHECKING:
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Strikeout(Inline):
     """pandoc's ``Strikeout``, a Inline."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Inline]
+    if TYPE_CHECKING:
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Superscript(Inline):
     """pandoc's ``Superscript``, a Inline."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Inline]
+    if TYPE_CHECKING:
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Subscript(Inline):
     """pandoc's ``Subscript``, a Inline."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Inline]
+    if TYPE_CHECKING:
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class SmallCaps(Inline):
     """pandoc's ``SmallCaps``, a Inline."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Inline]
+    if TYPE_CHECKING:
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        content: list[Inline]
 
     def __init__(self, *content: Inline | str) -> None:
-        _init(self, {"content": content})
+        _init(self, (content,))
 
 
 class Quoted(Inline):
     """pandoc's ``Quoted``, a Inline."""
 
-    __slots__ = (
-        "quote_type",
-        "content",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "quote_type",
+            "content",
+        )
+    __match_args__ = ("quote_type", "content")
     _encoding = "array"
     _variadic = "content"
     _defaults = {"content": []}
     _positional = ("quote_type",)
 
-    quote_type: QuoteType
-    content: list[Inline]
+    if TYPE_CHECKING:
+        quote_type: _Field[QuoteType, QuoteType | Literal["SingleQuote", "DoubleQuote"]] = _Field()
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        quote_type: QuoteType
+        content: list[Inline]
 
-    def __init__(self, quote_type: QuoteType, *content: Inline | str) -> None:
-        _init(self, {"quote_type": quote_type, "content": content})
+    def __init__(
+        self,
+        quote_type: QuoteType | Literal["SingleQuote", "DoubleQuote"],
+        *content: Inline | str,
+    ) -> None:
+        _init(self, (quote_type, content))
 
 
 class Cite(Inline):
     """pandoc's ``Cite``, a Inline."""
 
-    __slots__ = (
-        "citations",
-        "content",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "citations",
+            "content",
+        )
+    __match_args__ = ("content", "citations")
     _encoding = "array"
     _defaults = {"citations": [], "content": []}
-    _positional = ("citations", "content")
+    _positional = ("content", "citations")
 
-    citations: list[Citation]
-    content: list[Inline]
+    if TYPE_CHECKING:
+        citations: _Field[NodeList[Citation, Citation], Iterable[Citation]] = _Field()
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+    else:
+        citations: list[Citation]
+        content: list[Inline]
 
     def __init__(
         self,
+        content: Iterable[Inline | str] | Inline | str = (),
         citations: Iterable[Citation] = (),
-        content: Iterable[Inline | str] | str = (),
     ) -> None:
-        _init(self, {"citations": citations, "content": content})
+        _init(self, (citations, content))
 
 
 class Code(Inline):
     """pandoc's ``Code``, a Inline."""
 
-    __slots__ = (
-        "attr",
-        "text",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "text",
+        )
+    __match_args__ = ("text", "attr")
     _encoding = "array"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {"attr": ["", [], []]}
     _positional = ("text",)
 
-    attr: Attr
-    text: str
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        text: _Field[str, str] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        attr: Attr
+        text: str
 
     def __init__(
         self,
         text: str,
         *,
-        attr: Attr | None = None,
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Code",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "text": text})
+        attr = _flat(Attr, "Code", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, text))
 
 
 class Space(Inline):
     """pandoc's ``Space``, a Inline."""
 
-    __slots__ = ()
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ()
+    __match_args__ = ()
     _encoding = "none"
 
 
 class SoftBreak(Inline):
     """pandoc's ``SoftBreak``, a Inline."""
 
-    __slots__ = ()
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ()
+    __match_args__ = ()
     _encoding = "none"
 
 
 class LineBreak(Inline):
     """pandoc's ``LineBreak``, a Inline."""
 
-    __slots__ = ()
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ()
+    __match_args__ = ()
     _encoding = "none"
 
 
 class Math(Inline):
     """pandoc's ``Math``, a Inline."""
 
-    __slots__ = (
-        "math_type",
-        "text",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "math_type",
+            "text",
+        )
+    __match_args__ = ("math_type", "text")
     _encoding = "array"
     _positional = ("math_type", "text")
 
-    math_type: MathType
-    text: str
+    if TYPE_CHECKING:
+        math_type: _Field[MathType, MathType | Literal["DisplayMath", "InlineMath"]] = _Field()
+        text: _Field[str, str] = _Field()
+    else:
+        math_type: MathType
+        text: str
 
-    def __init__(self, math_type: MathType, text: str) -> None:
-        _init(self, {"math_type": math_type, "text": text})
+    def __init__(
+        self,
+        math_type: MathType | Literal["DisplayMath", "InlineMath"],
+        text: str,
+    ) -> None:
+        _init(self, (math_type, text))
 
 
 class RawInline(Inline):
     """pandoc's ``RawInline``, a Inline."""
 
-    __slots__ = (
-        "format",
-        "text",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "format",
+            "text",
+        )
+    __match_args__ = ("format", "text")
     _encoding = "array"
     _positional = ("format", "text")
 
-    format: Format
-    text: str
+    if TYPE_CHECKING:
+        format: _Field[str, str] = _Field()
+        text: _Field[str, str] = _Field()
+    else:
+        format: Format
+        text: str
 
-    def __init__(self, format: Format, text: str) -> None:
-        _init(self, {"format": format, "text": text})
+    def __init__(self, format: str, text: str) -> None:
+        _init(self, (format, text))
 
 
 class Link(Inline):
     """pandoc's ``Link``, a Inline."""
 
-    __slots__ = (
-        "attr",
-        "content",
-        "target",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "content",
+            "target",
+        )
+    __match_args__ = ("content", "attr", "target")
     _encoding = "array"
     _variadic = "content"
     _flatten = ("attr", "target")
+    _parts = {
+        "identifier": "attr",
+        "classes": "attr",
+        "attributes": "attr",
+        "url": "target",
+        "title": "target",
+    }
     _defaults = {"attr": ["", [], []], "content": []}
 
-    attr: Attr
-    content: list[Inline]
-    target: Target
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+        target: _Field[Target, Target | tuple[str, str]] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+        url: _Field[str, str] = _Field()
+        title: _Field[str, str] = _Field()
+    else:
+        attr: Attr
+        content: list[Inline]
+        target: Target
 
     def __init__(
         self,
         *content: Inline | str,
-        attr: Attr | None = None,
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
-        target: Target | None = None,
+        target: Target | tuple[str, str] | None = None,
         url: str | None = None,
         title: str = "",
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Link",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        target = _flat(Target, "Link", "target", target, {"url": url, "title": title})
-        _init(self, {"attr": attr, "content": content, "target": target})
+        attr = _flat(Attr, "Link", "attr", attr, (identifier, classes, attributes))
+        target = _flat(Target, "Link", "target", target, (url, title))
+        _init(self, (attr, content, target))
 
 
 class Image(Inline):
     """pandoc's ``Image``, a Inline."""
 
-    __slots__ = (
-        "attr",
-        "content",
-        "target",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "content",
+            "target",
+        )
+    __match_args__ = ("content", "attr", "target")
     _encoding = "array"
     _variadic = "content"
     _flatten = ("attr", "target")
+    _parts = {
+        "identifier": "attr",
+        "classes": "attr",
+        "attributes": "attr",
+        "url": "target",
+        "title": "target",
+    }
     _defaults = {"attr": ["", [], []], "content": []}
 
-    attr: Attr
-    content: list[Inline]
-    target: Target
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+        target: _Field[Target, Target | tuple[str, str]] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+        url: _Field[str, str] = _Field()
+        title: _Field[str, str] = _Field()
+    else:
+        attr: Attr
+        content: list[Inline]
+        target: Target
 
     def __init__(
         self,
         *content: Inline | str,
-        attr: Attr | None = None,
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
-        target: Target | None = None,
+        target: Target | tuple[str, str] | None = None,
         url: str | None = None,
         title: str = "",
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Image",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        target = _flat(Target, "Image", "target", target, {"url": url, "title": title})
-        _init(self, {"attr": attr, "content": content, "target": target})
+        attr = _flat(Attr, "Image", "attr", attr, (identifier, classes, attributes))
+        target = _flat(Target, "Image", "target", target, (url, title))
+        _init(self, (attr, content, target))
 
 
 class Note(Inline):
     """pandoc's ``Note``, a Inline."""
 
-    __slots__ = ("content",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("content",)
+    __match_args__ = ("content",)
     _encoding = "value"
     _variadic = "content"
     _defaults = {"content": []}
 
-    content: list[Block]
+    if TYPE_CHECKING:
+        content: _Field[
+            NodeList[Block, Block | Inline | str | Sequence[Inline | str]],
+            Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        ] = _Field()
+    else:
+        content: list[Block]
 
-    def __init__(self, *content: Block | str) -> None:
-        _init(self, {"content": content})
+    def __init__(self, *content: Block | Inline | str | Sequence[Inline | str]) -> None:
+        _init(self, (content,))
 
 
 class Span(Inline):
     """pandoc's ``Span``, a Inline."""
 
-    __slots__ = (
-        "attr",
-        "content",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "content",
+        )
+    __match_args__ = ("content", "attr")
     _encoding = "array"
     _variadic = "content"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {"attr": ["", [], []], "content": []}
 
-    attr: Attr
-    content: list[Inline]
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        content: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        attr: Attr
+        content: list[Inline]
 
     def __init__(
         self,
         *content: Inline | str,
-        attr: Attr | None = None,
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Span",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "content": content})
+        attr = _flat(Attr, "Span", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, content))
 
 
 class Attr(Node):
     """pandoc's ``Attr``."""
 
-    __slots__ = (
-        "identifier",
-        "classes",
-        "attributes",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "identifier",
+            "classes",
+            "attributes",
+        )
+    __match_args__ = ("identifier", "classes", "attributes")
     _kind = "product"
     _encoding = "array"
     _defaults = {"identifier": "", "classes": [], "attributes": []}
     _positional = ("identifier", "classes", "attributes")
 
-    identifier: str
-    classes: list[str]
-    attributes: list[tuple[str, str]]
+    if TYPE_CHECKING:
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        identifier: str
+        classes: list[str]
+        attributes: list[tuple[str, str]]
 
     def __init__(
         self,
@@ -979,223 +1727,541 @@ class Attr(Node):
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        _init(
-            self,
-            {
-                "identifier": identifier,
-                "classes": classes,
-                "attributes": attributes,
-            },
-        )
+        _init(self, (identifier, classes, attributes))
 
 
 class ListAttributes(Node):
     """pandoc's ``ListAttributes``."""
 
-    __slots__ = (
-        "start",
-        "style",
-        "delimiter",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "start",
+            "style",
+            "delimiter",
+        )
+    __match_args__ = ("start", "style", "delimiter")
     _kind = "product"
     _encoding = "array"
     _defaults = {"start": 1, "style": {"t": "DefaultStyle"}, "delimiter": {"t": "DefaultDelim"}}
     _positional = ("start", "style", "delimiter")
 
-    start: int
-    style: ListNumberStyle
-    delimiter: ListNumberDelim
+    if TYPE_CHECKING:
+        start: _Field[int, int] = _Field()
+        style: _Field[
+            ListNumberStyle,
+            ListNumberStyle
+            | Literal[
+                "DefaultStyle",
+                "Example",
+                "Decimal",
+                "LowerRoman",
+                "UpperRoman",
+                "LowerAlpha",
+                "UpperAlpha",
+            ],
+        ] = _Field()
+        delimiter: _Field[
+            ListNumberDelim,
+            ListNumberDelim | Literal["DefaultDelim", "Period", "OneParen", "TwoParens"],
+        ] = _Field()
+    else:
+        start: int
+        style: ListNumberStyle
+        delimiter: ListNumberDelim
 
     def __init__(
         self,
         start: int = 1,
-        style: ListNumberStyle = ListNumberStyle.DefaultStyle,
-        delimiter: ListNumberDelim = ListNumberDelim.DefaultDelim,
+        style: ListNumberStyle
+        | Literal[
+            "DefaultStyle",
+            "Example",
+            "Decimal",
+            "LowerRoman",
+            "UpperRoman",
+            "LowerAlpha",
+            "UpperAlpha",
+        ] = ListNumberStyle.DefaultStyle,
+        delimiter: ListNumberDelim
+        | Literal["DefaultDelim", "Period", "OneParen", "TwoParens"] = ListNumberDelim.DefaultDelim,
     ) -> None:
-        _init(self, {"start": start, "style": style, "delimiter": delimiter})
+        _init(self, (start, style, delimiter))
 
 
 class Caption(Node):
     """pandoc's ``Caption``."""
 
-    __slots__ = (
-        "short",
-        "content",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "short",
+            "content",
+        )
+    __match_args__ = ("content", "short")
     _kind = "product"
     _encoding = "array"
     _variadic = "content"
     _defaults = {"short": None, "content": []}
 
-    short: ShortCaption | None
-    content: list[Block]
+    if TYPE_CHECKING:
+        short: _Field[
+            NodeList[Inline, Inline | str] | None, Iterable[Inline | str] | Inline | str | None
+        ] = _Field()
+        content: _Field[
+            NodeList[Block, Block | Inline | str | Sequence[Inline | str]],
+            Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        ] = _Field()
+    else:
+        short: ShortCaption | None
+        content: list[Block]
 
     def __init__(
         self,
-        *content: Block | str,
-        short: Iterable[Inline | str] | str | None = None,
+        *content: Block | Inline | str | Sequence[Inline | str],
+        short: Iterable[Inline | str] | Inline | str | None = None,
     ) -> None:
-        _init(self, {"short": short, "content": content})
+        _init(self, (short, content))
 
 
 class ColSpec(Node):
     """pandoc's ``ColSpec``."""
 
-    __slots__ = (
-        "alignment",
-        "width",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "alignment",
+            "width",
+        )
+    __match_args__ = ("alignment", "width")
     _kind = "product"
     _encoding = "array"
     _defaults = {"alignment": {"t": "AlignDefault"}, "width": {"t": "ColWidthDefault"}}
     _positional = ("alignment", "width")
 
-    alignment: Alignment
-    width: ColWidthBase
+    if TYPE_CHECKING:
+        alignment: _Field[
+            Alignment, Alignment | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"]
+        ] = _Field()
+        width: _Field[ColWidthBase, ColWidthBase] = _Field()
+    else:
+        alignment: Alignment
+        width: ColWidthBase
 
     def __init__(
         self,
-        alignment: Alignment = Alignment.AlignDefault,
+        alignment: Alignment
+        | Literal[
+            "AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"
+        ] = Alignment.AlignDefault,
         width: ColWidthBase | None = None,
     ) -> None:
-        _init(self, {"alignment": alignment, "width": width})
+        _init(self, (alignment, width))
 
 
 class TableHead(Node):
     """pandoc's ``TableHead``."""
 
-    __slots__ = (
-        "attr",
-        "rows",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "rows",
+        )
+    __match_args__ = ("rows", "attr")
     _kind = "product"
     _encoding = "array"
     _variadic = "rows"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {"attr": ["", [], []], "rows": []}
 
-    attr: Attr
-    rows: list[Row]
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        rows: _Field[
+            NodeList[
+                Row,
+                Row
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Iterable[
+                        Cell
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Alignment
+                            | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                            int,
+                            int,
+                            Iterable[Block | Inline | str | Sequence[Inline | str]]
+                            | Block
+                            | Inline
+                            | str,
+                        ]
+                    ],
+                ],
+            ],
+            Iterable[
+                Row
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Iterable[
+                        Cell
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Alignment
+                            | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                            int,
+                            int,
+                            Iterable[Block | Inline | str | Sequence[Inline | str]]
+                            | Block
+                            | Inline
+                            | str,
+                        ]
+                    ],
+                ]
+            ],
+        ] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        attr: Attr
+        rows: list[Row]
 
     def __init__(
         self,
-        *rows: Row,
-        attr: Attr | None = None,
+        *rows: Row
+        | tuple[
+            Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+            Iterable[
+                Cell
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Alignment | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                    int,
+                    int,
+                    Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+                ]
+            ],
+        ],
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "TableHead",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "rows": rows})
+        attr = _flat(Attr, "TableHead", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, rows))
 
 
 class TableBody(Node):
     """pandoc's ``TableBody``."""
 
-    __slots__ = (
-        "attr",
-        "row_head_columns",
-        "head",
-        "body",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "row_head_columns",
+            "head",
+            "body",
+        )
+    __match_args__ = ("body", "head", "row_head_columns", "attr")
     _kind = "product"
     _encoding = "array"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {"attr": ["", [], []], "row_head_columns": 0, "head": [], "body": []}
-    _positional = ("row_head_columns", "head", "body")
+    _positional = ("body", "head", "row_head_columns")
 
-    attr: Attr
-    row_head_columns: RowHeadColumns
-    head: list[Row]
-    body: list[Row]
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        row_head_columns: _Field[int, int] = _Field()
+        head: _Field[
+            NodeList[
+                Row,
+                Row
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Iterable[
+                        Cell
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Alignment
+                            | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                            int,
+                            int,
+                            Iterable[Block | Inline | str | Sequence[Inline | str]]
+                            | Block
+                            | Inline
+                            | str,
+                        ]
+                    ],
+                ],
+            ],
+            Iterable[
+                Row
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Iterable[
+                        Cell
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Alignment
+                            | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                            int,
+                            int,
+                            Iterable[Block | Inline | str | Sequence[Inline | str]]
+                            | Block
+                            | Inline
+                            | str,
+                        ]
+                    ],
+                ]
+            ],
+        ] = _Field()
+        body: _Field[
+            NodeList[
+                Row,
+                Row
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Iterable[
+                        Cell
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Alignment
+                            | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                            int,
+                            int,
+                            Iterable[Block | Inline | str | Sequence[Inline | str]]
+                            | Block
+                            | Inline
+                            | str,
+                        ]
+                    ],
+                ],
+            ],
+            Iterable[
+                Row
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Iterable[
+                        Cell
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Alignment
+                            | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                            int,
+                            int,
+                            Iterable[Block | Inline | str | Sequence[Inline | str]]
+                            | Block
+                            | Inline
+                            | str,
+                        ]
+                    ],
+                ]
+            ],
+        ] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        attr: Attr
+        row_head_columns: RowHeadColumns
+        head: list[Row]
+        body: list[Row]
 
     def __init__(
         self,
-        row_head_columns: RowHeadColumns = 0,
-        head: Iterable[Row] = (),
-        body: Iterable[Row] = (),
+        body: Iterable[
+            Row
+            | tuple[
+                Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                Iterable[
+                    Cell
+                    | tuple[
+                        Attr
+                        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                        Alignment
+                        | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                        int,
+                        int,
+                        Iterable[Block | Inline | str | Sequence[Inline | str]]
+                        | Block
+                        | Inline
+                        | str,
+                    ]
+                ],
+            ]
+        ] = (),
+        head: Iterable[
+            Row
+            | tuple[
+                Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                Iterable[
+                    Cell
+                    | tuple[
+                        Attr
+                        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                        Alignment
+                        | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                        int,
+                        int,
+                        Iterable[Block | Inline | str | Sequence[Inline | str]]
+                        | Block
+                        | Inline
+                        | str,
+                    ]
+                ],
+            ]
+        ] = (),
+        row_head_columns: int = 0,
         *,
-        attr: Attr | None = None,
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "TableBody",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(
-            self,
-            {
-                "attr": attr,
-                "row_head_columns": row_head_columns,
-                "head": head,
-                "body": body,
-            },
-        )
+        attr = _flat(Attr, "TableBody", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, row_head_columns, head, body))
 
 
 class TableFoot(Node):
     """pandoc's ``TableFoot``."""
 
-    __slots__ = (
-        "attr",
-        "rows",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "rows",
+        )
+    __match_args__ = ("rows", "attr")
     _kind = "product"
     _encoding = "array"
     _variadic = "rows"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {"attr": ["", [], []], "rows": []}
 
-    attr: Attr
-    rows: list[Row]
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        rows: _Field[
+            NodeList[
+                Row,
+                Row
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Iterable[
+                        Cell
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Alignment
+                            | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                            int,
+                            int,
+                            Iterable[Block | Inline | str | Sequence[Inline | str]]
+                            | Block
+                            | Inline
+                            | str,
+                        ]
+                    ],
+                ],
+            ],
+            Iterable[
+                Row
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Iterable[
+                        Cell
+                        | tuple[
+                            Attr
+                            | tuple[
+                                str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]
+                            ],
+                            Alignment
+                            | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                            int,
+                            int,
+                            Iterable[Block | Inline | str | Sequence[Inline | str]]
+                            | Block
+                            | Inline
+                            | str,
+                        ]
+                    ],
+                ]
+            ],
+        ] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        attr: Attr
+        rows: list[Row]
 
     def __init__(
         self,
-        *rows: Row,
-        attr: Attr | None = None,
+        *rows: Row
+        | tuple[
+            Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+            Iterable[
+                Cell
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Alignment | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                    int,
+                    int,
+                    Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+                ]
+            ],
+        ],
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "TableFoot",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "rows": rows})
+        attr = _flat(Attr, "TableFoot", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, rows))
 
 
 class Citation(Node):
     """pandoc's ``Citation``."""
 
-    __slots__ = (
-        "id",
-        "prefix",
-        "suffix",
-        "mode",
-        "note_num",
-        "hash",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "id",
+            "prefix",
+            "suffix",
+            "mode",
+            "note_num",
+            "hash",
+        )
+    __match_args__ = ("id", "mode", "prefix", "suffix", "note_num", "hash")
     _kind = "product"
     _encoding = "object"
     _keys = {
@@ -1213,55 +2279,65 @@ class Citation(Node):
         "note_num": 0,
         "hash": 0,
     }
-    _positional = ("id", "prefix", "suffix", "mode", "note_num", "hash")
+    _positional = ("id", "mode", "prefix", "suffix", "note_num", "hash")
 
-    id: str
-    prefix: list[Inline]
-    suffix: list[Inline]
-    mode: CitationMode
-    note_num: int
-    hash: int
+    if TYPE_CHECKING:
+        id: _Field[str, str] = _Field()
+        prefix: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+        suffix: _Field[NodeList[Inline, Inline | str], Iterable[Inline | str] | Inline | str] = (
+            _Field()
+        )
+        mode: _Field[
+            CitationMode, CitationMode | Literal["AuthorInText", "SuppressAuthor", "NormalCitation"]
+        ] = _Field()
+        note_num: _Field[int, int] = _Field()
+        hash: _Field[int, int] = _Field()
+    else:
+        id: str
+        prefix: list[Inline]
+        suffix: list[Inline]
+        mode: CitationMode
+        note_num: int
+        hash: int
 
     def __init__(
         self,
         id: str,
-        prefix: Iterable[Inline | str] | str = (),
-        suffix: Iterable[Inline | str] | str = (),
-        mode: CitationMode = CitationMode.NormalCitation,
+        mode: CitationMode
+        | Literal["AuthorInText", "SuppressAuthor", "NormalCitation"] = CitationMode.NormalCitation,
+        prefix: Iterable[Inline | str] | Inline | str = (),
+        suffix: Iterable[Inline | str] | Inline | str = (),
         note_num: int = 0,
         hash: int = 0,
     ) -> None:
-        _init(
-            self,
-            {
-                "id": id,
-                "prefix": prefix,
-                "suffix": suffix,
-                "mode": mode,
-                "note_num": note_num,
-                "hash": hash,
-            },
-        )
+        _init(self, (id, prefix, suffix, mode, note_num, hash))
 
 
 class Target(Node):
     """pandoc's ``Target``."""
 
-    __slots__ = (
-        "url",
-        "title",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "url",
+            "title",
+        )
+    __match_args__ = ("url", "title")
     _kind = "product"
     _encoding = "array"
     _defaults = {"title": ""}
     _positional = ("url", "title")
 
-    url: str
-    title: str
+    if TYPE_CHECKING:
+        url: _Field[str, str] = _Field()
+        title: _Field[str, str] = _Field()
+    else:
+        url: str
+        title: str
 
     def __init__(self, url: str, title: str = "") -> None:
-        _init(self, {"url": url, "title": title})
+        _init(self, (url, title))
 
 
 class ColWidthBase(Node):
@@ -1274,75 +2350,118 @@ class ColWidthBase(Node):
 class ColWidth(ColWidthBase):
     """pandoc's ``ColWidth``, a ColWidth."""
 
-    __slots__ = ("width",)
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ("width",)
+    __match_args__ = ("width",)
     _encoding = "value"
     _positional = ("width",)
 
-    width: float
+    if TYPE_CHECKING:
+        width: _Field[float, float] = _Field()
+    else:
+        width: float
 
     def __init__(self, width: float) -> None:
-        _init(self, {"width": width})
+        _init(self, (width,))
 
 
 class ColWidthDefault(ColWidthBase):
     """pandoc's ``ColWidthDefault``, a ColWidth."""
 
-    __slots__ = ()
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = ()
+    __match_args__ = ()
     _encoding = "none"
 
 
 class Row(Node):
     """pandoc's ``Row``."""
 
-    __slots__ = (
-        "attr",
-        "cells",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "cells",
+        )
+    __match_args__ = ("cells", "attr")
     _kind = "product"
     _encoding = "array"
     _variadic = "cells"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {"attr": ["", [], []], "cells": []}
 
-    attr: Attr
-    cells: list[Cell]
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        cells: _Field[
+            NodeList[
+                Cell,
+                Cell
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Alignment | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                    int,
+                    int,
+                    Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+                ],
+            ],
+            Iterable[
+                Cell
+                | tuple[
+                    Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                    Alignment | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                    int,
+                    int,
+                    Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+                ]
+            ],
+        ] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        attr: Attr
+        cells: list[Cell]
 
     def __init__(
         self,
-        *cells: Cell,
-        attr: Attr | None = None,
+        *cells: Cell
+        | tuple[
+            Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+            Alignment | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+            int,
+            int,
+            Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        ],
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Row",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(self, {"attr": attr, "cells": cells})
+        attr = _flat(Attr, "Row", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, cells))
 
 
 class Cell(Node):
     """pandoc's ``Cell``."""
 
-    __slots__ = (
-        "attr",
-        "alignment",
-        "row_span",
-        "col_span",
-        "content",
-    )
-    __match_args__ = __slots__
+    if not TYPE_CHECKING:
+        __slots__ = (
+            "attr",
+            "alignment",
+            "row_span",
+            "col_span",
+            "content",
+        )
+    __match_args__ = ("content", "attr", "alignment", "row_span", "col_span")
     _kind = "product"
     _encoding = "array"
     _variadic = "content"
     _flatten = ("attr",)
+    _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {
         "attr": ["", [], []],
         "alignment": {"t": "AlignDefault"},
@@ -1351,40 +2470,47 @@ class Cell(Node):
         "content": [],
     }
 
-    attr: Attr
-    alignment: Alignment
-    row_span: RowSpan
-    col_span: ColSpan
-    content: list[Block]
+    if TYPE_CHECKING:
+        attr: _Field[
+            Attr, Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        ] = _Field()
+        alignment: _Field[
+            Alignment, Alignment | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"]
+        ] = _Field()
+        row_span: _Field[int, int] = _Field()
+        col_span: _Field[int, int] = _Field()
+        content: _Field[
+            NodeList[Block, Block | Inline | str | Sequence[Inline | str]],
+            Iterable[Block | Inline | str | Sequence[Inline | str]] | Block | Inline | str,
+        ] = _Field()
+        identifier: _Field[str, str] = _Field()
+        classes: _Field[NodeList[str, str], Iterable[str]] = _Field()
+        attributes: _Field[Attributes, Iterable[tuple[str, str]] | Mapping[str, str]] = _Field()
+    else:
+        attr: Attr
+        alignment: Alignment
+        row_span: RowSpan
+        col_span: ColSpan
+        content: list[Block]
 
     def __init__(
         self,
-        *content: Block | str,
-        attr: Attr | None = None,
+        *content: Block | Inline | str | Sequence[Inline | str],
+        attr: Attr
+        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
+        | None = None,
         identifier: str = "",
         classes: Iterable[str] = (),
         attributes: Iterable[tuple[str, str]] | Mapping[str, str] = (),
-        alignment: Alignment = Alignment.AlignDefault,
-        row_span: RowSpan = 1,
-        col_span: ColSpan = 1,
+        alignment: Alignment
+        | Literal[
+            "AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"
+        ] = Alignment.AlignDefault,
+        row_span: int = 1,
+        col_span: int = 1,
     ) -> None:
-        attr = _flat(
-            Attr,
-            "Cell",
-            "attr",
-            attr,
-            {"identifier": identifier, "classes": classes, "attributes": attributes},
-        )
-        _init(
-            self,
-            {
-                "attr": attr,
-                "alignment": alignment,
-                "row_span": row_span,
-                "col_span": col_span,
-                "content": content,
-            },
-        )
+        attr = _flat(Attr, "Cell", "attr", attr, (identifier, classes, attributes))
+        _init(self, (attr, alignment, row_span, col_span, content))
 
 
 # pandoc-types' newtypes and type synonyms
@@ -1395,75 +2521,497 @@ RowHeadColumns: TypeAlias = int
 RowSpan: TypeAlias = int
 ColSpan: TypeAlias = int
 
+# What converts to metadata (a MetaValue, or a plain Python value: see
+# from_python), for constructors' parameters and fields' setters.
+_MetaValueIn: TypeAlias = (
+    "MetaValue | str | bool | int | float | Mapping[str, _MetaValueIn] | Sequence[_MetaValueIn]"
+)
+
 # How Filter.on types a filter's functions, for type checkers only: a
-# function for a kind of node takes it (and optionally a Context) and
-# returns None, a node of the same family, or a list of them.
+# function for a class of node takes it (and optionally a Context) and
+# returns None, a node of its type (or what converts to one), or, where
+# the type is in a list, a list of them. It keeps its own type.
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
-    from typing import Any, TypeVar, overload
+    from collections.abc import Callable
+    from typing import Any, Concatenate, ParamSpec, TypeVar, overload
 
     from ._walk import Context
 
     _F = TypeVar("_F", bound=Callable[..., Any])
-    _Node = TypeVar("_Node", bound=Node)
-    _Block = TypeVar("_Block", bound=Block)
-    _MetaValue = TypeVar("_MetaValue", bound=MetaValue)
-    _Inline = TypeVar("_Inline", bound=Inline)
-    _ColWidthBase = TypeVar("_ColWidthBase", bound=ColWidthBase)
+    _P = ParamSpec("_P")
+    _PandocResult: TypeAlias = "Pandoc | None"
+    _BlockResult: TypeAlias = (
+        "Block | Inline | str | Sequence[Block | Inline | str | Sequence[Inline | str]] | None"
+    )
+    _MetaValueResult: TypeAlias = "MetaValue | Sequence[MetaValue] | None"
+    _InlineResult: TypeAlias = "Inline | str | Sequence[Inline | str] | None"
+    _AttrResult: TypeAlias = "Attr | None"
+    _ListAttributesResult: TypeAlias = "ListAttributes | None"
+    _CaptionResult: TypeAlias = "Caption | None"
+    _ColSpecResult: TypeAlias = "ColSpec | Sequence[ColSpec] | None"
+    _TableHeadResult: TypeAlias = "TableHead | None"
+    _TableBodyResult: TypeAlias = "TableBody | Sequence[TableBody] | None"
+    _TableFootResult: TypeAlias = "TableFoot | None"
+    _CitationResult: TypeAlias = "Citation | Sequence[Citation] | None"
+    _TargetResult: TypeAlias = "Target | None"
+    _ColWidthResult: TypeAlias = "ColWidthBase | None"
+    _RowResult: TypeAlias = "Row | Sequence[Row] | None"
+    _CellResult: TypeAlias = "Cell | Sequence[Cell] | None"
+    _FPandoc = TypeVar(
+        "_FPandoc",
+        bound="Callable[[Pandoc], _PandocResult] | Callable[[Pandoc, Context], _PandocResult]",
+    )
+    _FPlain = TypeVar(
+        "_FPlain",
+        bound="Callable[[Plain], _BlockResult] | Callable[[Plain, Context], _BlockResult]",
+    )
+    _FPara = TypeVar(
+        "_FPara", bound="Callable[[Para], _BlockResult] | Callable[[Para, Context], _BlockResult]"
+    )
+    _FLineBlock = TypeVar(
+        "_FLineBlock",
+        bound="Callable[[LineBlock], _BlockResult] | Callable[[LineBlock, Context], _BlockResult]",
+    )
+    _FCodeBlock = TypeVar(
+        "_FCodeBlock",
+        bound="Callable[[CodeBlock], _BlockResult] | Callable[[CodeBlock, Context], _BlockResult]",
+    )
+    _FRawBlock = TypeVar(
+        "_FRawBlock",
+        bound="Callable[[RawBlock], _BlockResult] | Callable[[RawBlock, Context], _BlockResult]",
+    )
+    _FBlockQuote = TypeVar(
+        "_FBlockQuote",
+        bound="Callable[[BlockQuote], _BlockResult] | Callable[[BlockQuote, Context], _BlockResult]",
+    )
+    _FOrderedList = TypeVar(
+        "_FOrderedList",
+        bound="Callable[[OrderedList], _BlockResult] | Callable[[OrderedList, Context], _BlockResult]",
+    )
+    _FBulletList = TypeVar(
+        "_FBulletList",
+        bound="Callable[[BulletList], _BlockResult] | Callable[[BulletList, Context], _BlockResult]",
+    )
+    _FDefinitionList = TypeVar(
+        "_FDefinitionList",
+        bound="Callable[[DefinitionList], _BlockResult] | Callable[[DefinitionList, Context], _BlockResult]",
+    )
+    _FHeader = TypeVar(
+        "_FHeader",
+        bound="Callable[[Header], _BlockResult] | Callable[[Header, Context], _BlockResult]",
+    )
+    _FHorizontalRule = TypeVar(
+        "_FHorizontalRule",
+        bound="Callable[[HorizontalRule], _BlockResult] | Callable[[HorizontalRule, Context], _BlockResult]",
+    )
+    _FTable = TypeVar(
+        "_FTable",
+        bound="Callable[[Table], _BlockResult] | Callable[[Table, Context], _BlockResult]",
+    )
+    _FFigure = TypeVar(
+        "_FFigure",
+        bound="Callable[[Figure], _BlockResult] | Callable[[Figure, Context], _BlockResult]",
+    )
+    _FDiv = TypeVar(
+        "_FDiv", bound="Callable[[Div], _BlockResult] | Callable[[Div, Context], _BlockResult]"
+    )
+    _FMetaMap = TypeVar(
+        "_FMetaMap",
+        bound="Callable[[MetaMap], _MetaValueResult] | Callable[[MetaMap, Context], _MetaValueResult]",
+    )
+    _FMetaList = TypeVar(
+        "_FMetaList",
+        bound="Callable[[MetaList], _MetaValueResult] | Callable[[MetaList, Context], _MetaValueResult]",
+    )
+    _FMetaBool = TypeVar(
+        "_FMetaBool",
+        bound="Callable[[MetaBool], _MetaValueResult] | Callable[[MetaBool, Context], _MetaValueResult]",
+    )
+    _FMetaString = TypeVar(
+        "_FMetaString",
+        bound="Callable[[MetaString], _MetaValueResult] | Callable[[MetaString, Context], _MetaValueResult]",
+    )
+    _FMetaInlines = TypeVar(
+        "_FMetaInlines",
+        bound="Callable[[MetaInlines], _MetaValueResult] | Callable[[MetaInlines, Context], _MetaValueResult]",
+    )
+    _FMetaBlocks = TypeVar(
+        "_FMetaBlocks",
+        bound="Callable[[MetaBlocks], _MetaValueResult] | Callable[[MetaBlocks, Context], _MetaValueResult]",
+    )
+    _FStr = TypeVar(
+        "_FStr", bound="Callable[[Str], _InlineResult] | Callable[[Str, Context], _InlineResult]"
+    )
+    _FEmph = TypeVar(
+        "_FEmph", bound="Callable[[Emph], _InlineResult] | Callable[[Emph, Context], _InlineResult]"
+    )
+    _FUnderline = TypeVar(
+        "_FUnderline",
+        bound="Callable[[Underline], _InlineResult] | Callable[[Underline, Context], _InlineResult]",
+    )
+    _FStrong = TypeVar(
+        "_FStrong",
+        bound="Callable[[Strong], _InlineResult] | Callable[[Strong, Context], _InlineResult]",
+    )
+    _FStrikeout = TypeVar(
+        "_FStrikeout",
+        bound="Callable[[Strikeout], _InlineResult] | Callable[[Strikeout, Context], _InlineResult]",
+    )
+    _FSuperscript = TypeVar(
+        "_FSuperscript",
+        bound="Callable[[Superscript], _InlineResult] | Callable[[Superscript, Context], _InlineResult]",
+    )
+    _FSubscript = TypeVar(
+        "_FSubscript",
+        bound="Callable[[Subscript], _InlineResult] | Callable[[Subscript, Context], _InlineResult]",
+    )
+    _FSmallCaps = TypeVar(
+        "_FSmallCaps",
+        bound="Callable[[SmallCaps], _InlineResult] | Callable[[SmallCaps, Context], _InlineResult]",
+    )
+    _FQuoted = TypeVar(
+        "_FQuoted",
+        bound="Callable[[Quoted], _InlineResult] | Callable[[Quoted, Context], _InlineResult]",
+    )
+    _FCite = TypeVar(
+        "_FCite", bound="Callable[[Cite], _InlineResult] | Callable[[Cite, Context], _InlineResult]"
+    )
+    _FCode = TypeVar(
+        "_FCode", bound="Callable[[Code], _InlineResult] | Callable[[Code, Context], _InlineResult]"
+    )
+    _FSpace = TypeVar(
+        "_FSpace",
+        bound="Callable[[Space], _InlineResult] | Callable[[Space, Context], _InlineResult]",
+    )
+    _FSoftBreak = TypeVar(
+        "_FSoftBreak",
+        bound="Callable[[SoftBreak], _InlineResult] | Callable[[SoftBreak, Context], _InlineResult]",
+    )
+    _FLineBreak = TypeVar(
+        "_FLineBreak",
+        bound="Callable[[LineBreak], _InlineResult] | Callable[[LineBreak, Context], _InlineResult]",
+    )
+    _FMath = TypeVar(
+        "_FMath", bound="Callable[[Math], _InlineResult] | Callable[[Math, Context], _InlineResult]"
+    )
+    _FRawInline = TypeVar(
+        "_FRawInline",
+        bound="Callable[[RawInline], _InlineResult] | Callable[[RawInline, Context], _InlineResult]",
+    )
+    _FLink = TypeVar(
+        "_FLink", bound="Callable[[Link], _InlineResult] | Callable[[Link, Context], _InlineResult]"
+    )
+    _FImage = TypeVar(
+        "_FImage",
+        bound="Callable[[Image], _InlineResult] | Callable[[Image, Context], _InlineResult]",
+    )
+    _FNote = TypeVar(
+        "_FNote", bound="Callable[[Note], _InlineResult] | Callable[[Note, Context], _InlineResult]"
+    )
+    _FSpan = TypeVar(
+        "_FSpan", bound="Callable[[Span], _InlineResult] | Callable[[Span, Context], _InlineResult]"
+    )
+    _FAttr = TypeVar(
+        "_FAttr", bound="Callable[[Attr], _AttrResult] | Callable[[Attr, Context], _AttrResult]"
+    )
+    _FListAttributes = TypeVar(
+        "_FListAttributes",
+        bound="Callable[[ListAttributes], _ListAttributesResult] | Callable[[ListAttributes, Context], _ListAttributesResult]",
+    )
+    _FCaption = TypeVar(
+        "_FCaption",
+        bound="Callable[[Caption], _CaptionResult] | Callable[[Caption, Context], _CaptionResult]",
+    )
+    _FColSpec = TypeVar(
+        "_FColSpec",
+        bound="Callable[[ColSpec], _ColSpecResult] | Callable[[ColSpec, Context], _ColSpecResult]",
+    )
+    _FTableHead = TypeVar(
+        "_FTableHead",
+        bound="Callable[[TableHead], _TableHeadResult] | Callable[[TableHead, Context], _TableHeadResult]",
+    )
+    _FTableBody = TypeVar(
+        "_FTableBody",
+        bound="Callable[[TableBody], _TableBodyResult] | Callable[[TableBody, Context], _TableBodyResult]",
+    )
+    _FTableFoot = TypeVar(
+        "_FTableFoot",
+        bound="Callable[[TableFoot], _TableFootResult] | Callable[[TableFoot, Context], _TableFootResult]",
+    )
+    _FCitation = TypeVar(
+        "_FCitation",
+        bound="Callable[[Citation], _CitationResult] | Callable[[Citation, Context], _CitationResult]",
+    )
+    _FTarget = TypeVar(
+        "_FTarget",
+        bound="Callable[[Target], _TargetResult] | Callable[[Target, Context], _TargetResult]",
+    )
+    _FColWidth = TypeVar(
+        "_FColWidth",
+        bound="Callable[[ColWidth], _ColWidthResult] | Callable[[ColWidth, Context], _ColWidthResult]",
+    )
+    _FColWidthDefault = TypeVar(
+        "_FColWidthDefault",
+        bound="Callable[[ColWidthDefault], _ColWidthResult] | Callable[[ColWidthDefault, Context], _ColWidthResult]",
+    )
+    _FRow = TypeVar(
+        "_FRow", bound="Callable[[Row], _RowResult] | Callable[[Row, Context], _RowResult]"
+    )
+    _FCell = TypeVar(
+        "_FCell", bound="Callable[[Cell], _CellResult] | Callable[[Cell, Context], _CellResult]"
+    )
+    _FBlock = TypeVar(
+        "_FBlock",
+        bound="Callable[[Block], _BlockResult] | Callable[[Block, Context], _BlockResult]",
+    )
+    _FMetaValue = TypeVar(
+        "_FMetaValue",
+        bound="Callable[[MetaValue], _MetaValueResult] | Callable[[MetaValue, Context], _MetaValueResult]",
+    )
+    _FInline = TypeVar(
+        "_FInline",
+        bound="Callable[[Inline], _InlineResult] | Callable[[Inline, Context], _InlineResult]",
+    )
+    _FColWidthBase = TypeVar(
+        "_FColWidthBase",
+        bound="Callable[[ColWidthBase], _ColWidthResult] | Callable[[ColWidthBase, Context], _ColWidthResult]",
+    )
+    _NBlock = TypeVar("_NBlock", bound=Block)
+    _RBlock = TypeVar("_RBlock", bound="_BlockResult")
+    _NMetaValue = TypeVar("_NMetaValue", bound=MetaValue)
+    _RMetaValue = TypeVar("_RMetaValue", bound="_MetaValueResult")
+    _NInline = TypeVar("_NInline", bound=Inline)
+    _RInline = TypeVar("_RInline", bound="_InlineResult")
+    _NColWidthBase = TypeVar("_NColWidthBase", bound=ColWidthBase)
+    _RColWidthBase = TypeVar("_RColWidthBase", bound="_ColWidthResult")
+
+    @overload
+    def _typed_on(self: Any, type: type[Pandoc], /) -> Callable[[_FPandoc], _FPandoc]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Plain], /) -> Callable[[_FPlain], _FPlain]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Para], /) -> Callable[[_FPara], _FPara]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[LineBlock], /) -> Callable[[_FLineBlock], _FLineBlock]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[CodeBlock], /) -> Callable[[_FCodeBlock], _FCodeBlock]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[RawBlock], /) -> Callable[[_FRawBlock], _FRawBlock]: ...
 
     @overload
     def _typed_on(
-        self: Any, type: type[_Block], /, *types: type[_Block]
+        self: Any, type: type[BlockQuote], /
+    ) -> Callable[[_FBlockQuote], _FBlockQuote]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[OrderedList], /
+    ) -> Callable[[_FOrderedList], _FOrderedList]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[BulletList], /
+    ) -> Callable[[_FBulletList], _FBulletList]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[DefinitionList], /
+    ) -> Callable[[_FDefinitionList], _FDefinitionList]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Header], /) -> Callable[[_FHeader], _FHeader]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[HorizontalRule], /
+    ) -> Callable[[_FHorizontalRule], _FHorizontalRule]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Table], /) -> Callable[[_FTable], _FTable]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Figure], /) -> Callable[[_FFigure], _FFigure]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Div], /) -> Callable[[_FDiv], _FDiv]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[MetaMap], /) -> Callable[[_FMetaMap], _FMetaMap]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[MetaList], /) -> Callable[[_FMetaList], _FMetaList]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[MetaBool], /) -> Callable[[_FMetaBool], _FMetaBool]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[MetaString], /
+    ) -> Callable[[_FMetaString], _FMetaString]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[MetaInlines], /
+    ) -> Callable[[_FMetaInlines], _FMetaInlines]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[MetaBlocks], /
+    ) -> Callable[[_FMetaBlocks], _FMetaBlocks]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Str], /) -> Callable[[_FStr], _FStr]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Emph], /) -> Callable[[_FEmph], _FEmph]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Underline], /) -> Callable[[_FUnderline], _FUnderline]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Strong], /) -> Callable[[_FStrong], _FStrong]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Strikeout], /) -> Callable[[_FStrikeout], _FStrikeout]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[Superscript], /
+    ) -> Callable[[_FSuperscript], _FSuperscript]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Subscript], /) -> Callable[[_FSubscript], _FSubscript]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[SmallCaps], /) -> Callable[[_FSmallCaps], _FSmallCaps]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Quoted], /) -> Callable[[_FQuoted], _FQuoted]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Cite], /) -> Callable[[_FCite], _FCite]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Code], /) -> Callable[[_FCode], _FCode]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Space], /) -> Callable[[_FSpace], _FSpace]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[SoftBreak], /) -> Callable[[_FSoftBreak], _FSoftBreak]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[LineBreak], /) -> Callable[[_FLineBreak], _FLineBreak]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Math], /) -> Callable[[_FMath], _FMath]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[RawInline], /) -> Callable[[_FRawInline], _FRawInline]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Link], /) -> Callable[[_FLink], _FLink]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Image], /) -> Callable[[_FImage], _FImage]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Note], /) -> Callable[[_FNote], _FNote]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Span], /) -> Callable[[_FSpan], _FSpan]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Attr], /) -> Callable[[_FAttr], _FAttr]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[ListAttributes], /
+    ) -> Callable[[_FListAttributes], _FListAttributes]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Caption], /) -> Callable[[_FCaption], _FCaption]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[ColSpec], /) -> Callable[[_FColSpec], _FColSpec]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[TableHead], /) -> Callable[[_FTableHead], _FTableHead]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[TableBody], /) -> Callable[[_FTableBody], _FTableBody]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[TableFoot], /) -> Callable[[_FTableFoot], _FTableFoot]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Citation], /) -> Callable[[_FCitation], _FCitation]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Target], /) -> Callable[[_FTarget], _FTarget]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[ColWidth], /) -> Callable[[_FColWidth], _FColWidth]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[ColWidthDefault], /
+    ) -> Callable[[_FColWidthDefault], _FColWidthDefault]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Row], /) -> Callable[[_FRow], _FRow]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Cell], /) -> Callable[[_FCell], _FCell]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Block], /) -> Callable[[_FBlock], _FBlock]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[MetaValue], /) -> Callable[[_FMetaValue], _FMetaValue]: ...
+
+    @overload
+    def _typed_on(self: Any, type: type[Inline], /) -> Callable[[_FInline], _FInline]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[ColWidthBase], /
+    ) -> Callable[[_FColWidthBase], _FColWidthBase]: ...
+
+    @overload
+    def _typed_on(
+        self: Any, type: type[_NBlock], /, *types: type[_NBlock]
     ) -> Callable[
-        [
-            Callable[[_Block], Block | Sequence[Block] | None]
-            | Callable[[_Block, Context], Block | Sequence[Block] | None]
-        ],
-        Callable[..., Any],
+        [Callable[Concatenate[_NBlock, _P], _RBlock]], Callable[Concatenate[_NBlock, _P], _RBlock]
     ]: ...
 
     @overload
     def _typed_on(
-        self: Any, type: type[_MetaValue], /, *types: type[_MetaValue]
+        self: Any, type: type[_NMetaValue], /, *types: type[_NMetaValue]
     ) -> Callable[
-        [
-            Callable[[_MetaValue], MetaValue | Sequence[MetaValue] | None]
-            | Callable[[_MetaValue, Context], MetaValue | Sequence[MetaValue] | None]
-        ],
-        Callable[..., Any],
+        [Callable[Concatenate[_NMetaValue, _P], _RMetaValue]],
+        Callable[Concatenate[_NMetaValue, _P], _RMetaValue],
     ]: ...
 
     @overload
     def _typed_on(
-        self: Any, type: type[_Inline], /, *types: type[_Inline]
+        self: Any, type: type[_NInline], /, *types: type[_NInline]
     ) -> Callable[
-        [
-            Callable[[_Inline], Inline | Sequence[Inline] | None]
-            | Callable[[_Inline, Context], Inline | Sequence[Inline] | None]
-        ],
-        Callable[..., Any],
+        [Callable[Concatenate[_NInline, _P], _RInline]],
+        Callable[Concatenate[_NInline, _P], _RInline],
     ]: ...
 
     @overload
     def _typed_on(
-        self: Any, type: type[_ColWidthBase], /, *types: type[_ColWidthBase]
+        self: Any, type: type[_NColWidthBase], /, *types: type[_NColWidthBase]
     ) -> Callable[
-        [
-            Callable[[_ColWidthBase], ColWidthBase | Sequence[ColWidthBase] | None]
-            | Callable[[_ColWidthBase, Context], ColWidthBase | Sequence[ColWidthBase] | None]
-        ],
-        Callable[..., Any],
-    ]: ...
-
-    @overload
-    def _typed_on(
-        self: Any, type: type[_Node], /, *types: type[_Node]
-    ) -> Callable[
-        [
-            Callable[[_Node], _Node | Sequence[_Node] | None]
-            | Callable[[_Node, Context], _Node | Sequence[_Node] | None]
-        ],
-        Callable[..., Any],
+        [Callable[Concatenate[_NColWidthBase, _P], _RColWidthBase]],
+        Callable[Concatenate[_NColWidthBase, _P], _RColWidthBase],
     ]: ...
 
     @overload

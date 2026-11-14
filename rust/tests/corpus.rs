@@ -89,13 +89,15 @@ fn contents_before_tag() {
     // pandoc writes "t" first; other tools may not (sorted keys)
     let doc = r#"{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"c":[{"c":42,"t":"Str"}],"t":"Para"}]}"#;
     let e = from_str(doc).unwrap_err();
+    // the whole path, through each level read out of order
+    assert_eq!(e.path, "blocks[0].c[0].c");
+    assert_eq!(e.message, "invalid type: integer `42`, expected a string");
+    // where the reader was: at the end of the outer node's tag
+    assert_eq!((e.line, e.column), (1, 88));
+    // and the next document's error has its own path
+    let e = from_str(&doc.replace("42", "\"x\"").replace("\"Para\"", "\"Parx\"")).unwrap_err();
     assert_eq!(e.path, "blocks[0]");
-    // each level decoded out of order adds its part of the path
-    assert!(
-        e.message.starts_with("c[0]: c: invalid type: integer `42`"),
-        "{}",
-        e.message
-    );
+    assert!(e.message.starts_with("unknown variant `Parx`"), "{e}");
 }
 
 #[test]
@@ -118,11 +120,7 @@ fn invalid() {
             Ok(_) => panic!("accepted {}", case.name),
             Err(e) => {
                 println!("{}: {e}", case.name);
-                let got = if e.path == "." {
-                    String::new()
-                } else {
-                    e.path.clone()
-                };
+                let got = e.path.clone();
                 let with_c = if want.is_empty() {
                     "c".to_string()
                 } else {
@@ -210,6 +208,13 @@ fn an_errors_path_is_where_tracking_every_value_finds_it() {
                 if tracked == "." { "" } else { &tracked },
                 "{e}\n{doc}"
             );
+            // the same with every node's contents before its tag (keys
+            // sorted): the path goes on through each, read out of order
+            let sorted = serde_json::from_str::<serde_json::Value>(&doc)
+                .unwrap()
+                .to_string();
+            let s = from_str(&sorted).unwrap_err();
+            assert_eq!((&s.path, &s.message), (&e.path, &e.message), "{sorted}");
             errors += 1;
         }
     }

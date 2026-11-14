@@ -8,6 +8,7 @@
 use serde::de;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
+use std::hash::Hash;
 
 use crate::Text;
 
@@ -15,11 +16,12 @@ use crate::Text;
 pub const PANDOC_API_VERSION: [i64; 4] = [1, 23, 1, 2];
 
 /// pandoc's `Pandoc`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Pandoc {
-    #[serde(rename = "pandoc-api-version")]
-    pub api_version: Vec<i64>,
+    #[serde(rename = "pandoc-api-version", deserialize_with = "crate::api_version")]
+    pub(crate) api_version: Vec<i64>,
     pub meta: Meta,
+    #[serde(deserialize_with = "crate::list")]
     pub blocks: Vec<Block>,
 }
 
@@ -49,7 +51,7 @@ impl crate::Json for Pandoc {
 pub type Meta = BTreeMap<Text, MetaValue>;
 
 /// pandoc's `Block`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "t", content = "c")]
 pub enum Block {
     Plain(Vec<Inline>),
@@ -111,12 +113,18 @@ impl<'de> Deserialize<'de> for Block {
                             None => early = Some(map.next_value()?),
                             Some(t) => {
                                 value = Some(match t {
-                                    "Plain" => Block::Plain(map.next_value()?),
-                                    "Para" => Block::Para(map.next_value()?),
+                                    "Plain" => {
+                                        Block::Plain(map.next_value::<crate::List<Inline>>()?.0)
+                                    }
+                                    "Para" => {
+                                        Block::Para(map.next_value::<crate::List<Inline>>()?.0)
+                                    }
                                     "LineBlock" => Block::LineBlock(map.next_value()?),
                                     "CodeBlock" => Block::CodeBlock(map.next_value()?),
                                     "RawBlock" => Block::RawBlock(map.next_value()?),
-                                    "BlockQuote" => Block::BlockQuote(map.next_value()?),
+                                    "BlockQuote" => {
+                                        Block::BlockQuote(map.next_value::<crate::List<Block>>()?.0)
+                                    }
                                     "OrderedList" => Block::OrderedList(map.next_value()?),
                                     "BulletList" => Block::BulletList(map.next_value()?),
                                     "DefinitionList" => Block::DefinitionList(map.next_value()?),
@@ -147,12 +155,12 @@ impl<'de> Deserialize<'de> for Block {
         // once "t" is known
         fn later<E: de::Error>(t: &str, c: &serde_json::value::RawValue) -> Result<Block, E> {
             Ok(match t {
-                "Plain" => Block::Plain(crate::contents(c)?),
-                "Para" => Block::Para(crate::contents(c)?),
+                "Plain" => Block::Plain(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "Para" => Block::Para(crate::contents::<crate::List<Inline>, E>(c)?.0),
                 "LineBlock" => Block::LineBlock(crate::contents(c)?),
                 "CodeBlock" => Block::CodeBlock(crate::contents(c)?),
                 "RawBlock" => Block::RawBlock(crate::contents(c)?),
-                "BlockQuote" => Block::BlockQuote(crate::contents(c)?),
+                "BlockQuote" => Block::BlockQuote(crate::contents::<crate::List<Block>, E>(c)?.0),
                 "OrderedList" => Block::OrderedList(crate::contents(c)?),
                 "BulletList" => Block::BulletList(crate::contents(c)?),
                 "DefinitionList" => Block::DefinitionList(crate::contents(c)?),
@@ -290,7 +298,7 @@ impl From<Div> for Block {
 }
 
 /// pandoc's `CodeBlock`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CodeBlock {
     pub attr: Attr,
     pub text: Text,
@@ -320,7 +328,7 @@ impl<'de> Deserialize<'de> for CodeBlock {
 }
 
 /// pandoc's `RawBlock`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RawBlock {
     pub format: Format,
     pub text: Text,
@@ -350,7 +358,7 @@ impl<'de> Deserialize<'de> for RawBlock {
 }
 
 /// pandoc's `OrderedList`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OrderedList {
     pub list_attributes: ListAttributes,
     pub content: Vec<Vec<Block>>,
@@ -392,7 +400,7 @@ impl<'de> Deserialize<'de> for OrderedList {
 }
 
 /// pandoc's `Header`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Header {
     pub level: i64,
     pub attr: Attr,
@@ -419,17 +427,17 @@ impl Serialize for Header {
 
 impl<'de> Deserialize<'de> for Header {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (level, attr, content) = <(i64, Attr, Vec<Inline>)>::deserialize(d)?;
+        let (level, attr, content) = <(i64, Attr, crate::List<Inline>)>::deserialize(d)?;
         Ok(Header {
             level,
             attr,
-            content,
+            content: content.0,
         })
     }
 }
 
 /// pandoc's `Table`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Table {
     pub attr: Attr,
     pub caption: Caption,
@@ -506,7 +514,7 @@ impl<'de> Deserialize<'de> for Table {
 }
 
 /// pandoc's `Figure`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Figure {
     pub attr: Attr,
     pub caption: Caption,
@@ -543,17 +551,17 @@ impl Serialize for Figure {
 
 impl<'de> Deserialize<'de> for Figure {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (attr, caption, content) = <(Attr, Caption, Vec<Block>)>::deserialize(d)?;
+        let (attr, caption, content) = <(Attr, Caption, crate::List<Block>)>::deserialize(d)?;
         Ok(Figure {
             attr,
             caption,
-            content,
+            content: content.0,
         })
     }
 }
 
 /// pandoc's `Div`, a `Block`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Div {
     pub attr: Attr,
     pub content: Vec<Block>,
@@ -586,13 +594,16 @@ impl Serialize for Div {
 
 impl<'de> Deserialize<'de> for Div {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (attr, content) = <(Attr, Vec<Block>)>::deserialize(d)?;
-        Ok(Div { attr, content })
+        let (attr, content) = <(Attr, crate::List<Block>)>::deserialize(d)?;
+        Ok(Div {
+            attr,
+            content: content.0,
+        })
     }
 }
 
 /// pandoc's `MetaValue`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "t", content = "c")]
 pub enum MetaValue {
     MetaMap(BTreeMap<Text, MetaValue>),
@@ -642,8 +653,12 @@ impl<'de> Deserialize<'de> for MetaValue {
                                     "MetaList" => MetaValue::MetaList(map.next_value()?),
                                     "MetaBool" => MetaValue::MetaBool(map.next_value()?),
                                     "MetaString" => MetaValue::MetaString(map.next_value()?),
-                                    "MetaInlines" => MetaValue::MetaInlines(map.next_value()?),
-                                    "MetaBlocks" => MetaValue::MetaBlocks(map.next_value()?),
+                                    "MetaInlines" => MetaValue::MetaInlines(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
+                                    "MetaBlocks" => MetaValue::MetaBlocks(
+                                        map.next_value::<crate::List<Block>>()?.0,
+                                    ),
                                     _ => unreachable!(),
                                 })
                             }
@@ -667,8 +682,12 @@ impl<'de> Deserialize<'de> for MetaValue {
                 "MetaList" => MetaValue::MetaList(crate::contents(c)?),
                 "MetaBool" => MetaValue::MetaBool(crate::contents(c)?),
                 "MetaString" => MetaValue::MetaString(crate::contents(c)?),
-                "MetaInlines" => MetaValue::MetaInlines(crate::contents(c)?),
-                "MetaBlocks" => MetaValue::MetaBlocks(crate::contents(c)?),
+                "MetaInlines" => {
+                    MetaValue::MetaInlines(crate::contents::<crate::List<Inline>, E>(c)?.0)
+                }
+                "MetaBlocks" => {
+                    MetaValue::MetaBlocks(crate::contents::<crate::List<Block>, E>(c)?.0)
+                }
                 _ => unreachable!(),
             })
         }
@@ -719,7 +738,7 @@ impl crate::Json for MetaValue {
 }
 
 /// pandoc's `Inline`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(tag = "t", content = "c")]
 pub enum Inline {
     Str(Text),
@@ -794,13 +813,27 @@ impl<'de> Deserialize<'de> for Inline {
                             Some(t) => {
                                 value = Some(match t {
                                     "Str" => Inline::Str(map.next_value()?),
-                                    "Emph" => Inline::Emph(map.next_value()?),
-                                    "Underline" => Inline::Underline(map.next_value()?),
-                                    "Strong" => Inline::Strong(map.next_value()?),
-                                    "Strikeout" => Inline::Strikeout(map.next_value()?),
-                                    "Superscript" => Inline::Superscript(map.next_value()?),
-                                    "Subscript" => Inline::Subscript(map.next_value()?),
-                                    "SmallCaps" => Inline::SmallCaps(map.next_value()?),
+                                    "Emph" => {
+                                        Inline::Emph(map.next_value::<crate::List<Inline>>()?.0)
+                                    }
+                                    "Underline" => Inline::Underline(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
+                                    "Strong" => {
+                                        Inline::Strong(map.next_value::<crate::List<Inline>>()?.0)
+                                    }
+                                    "Strikeout" => Inline::Strikeout(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
+                                    "Superscript" => Inline::Superscript(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
+                                    "Subscript" => Inline::Subscript(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
+                                    "SmallCaps" => Inline::SmallCaps(
+                                        map.next_value::<crate::List<Inline>>()?.0,
+                                    ),
                                     "Quoted" => Inline::Quoted(map.next_value()?),
                                     "Cite" => Inline::Cite(map.next_value()?),
                                     "Code" => Inline::Code(map.next_value()?),
@@ -820,7 +853,9 @@ impl<'de> Deserialize<'de> for Inline {
                                     "RawInline" => Inline::RawInline(map.next_value()?),
                                     "Link" => Inline::Link(map.next_value()?),
                                     "Image" => Inline::Image(map.next_value()?),
-                                    "Note" => Inline::Note(map.next_value()?),
+                                    "Note" => {
+                                        Inline::Note(map.next_value::<crate::List<Block>>()?.0)
+                                    }
                                     "Span" => Inline::Span(map.next_value()?),
                                     _ => unreachable!(),
                                 })
@@ -842,13 +877,15 @@ impl<'de> Deserialize<'de> for Inline {
         fn later<E: de::Error>(t: &str, c: &serde_json::value::RawValue) -> Result<Inline, E> {
             Ok(match t {
                 "Str" => Inline::Str(crate::contents(c)?),
-                "Emph" => Inline::Emph(crate::contents(c)?),
-                "Underline" => Inline::Underline(crate::contents(c)?),
-                "Strong" => Inline::Strong(crate::contents(c)?),
-                "Strikeout" => Inline::Strikeout(crate::contents(c)?),
-                "Superscript" => Inline::Superscript(crate::contents(c)?),
-                "Subscript" => Inline::Subscript(crate::contents(c)?),
-                "SmallCaps" => Inline::SmallCaps(crate::contents(c)?),
+                "Emph" => Inline::Emph(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "Underline" => Inline::Underline(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "Strong" => Inline::Strong(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "Strikeout" => Inline::Strikeout(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "Superscript" => {
+                    Inline::Superscript(crate::contents::<crate::List<Inline>, E>(c)?.0)
+                }
+                "Subscript" => Inline::Subscript(crate::contents::<crate::List<Inline>, E>(c)?.0),
+                "SmallCaps" => Inline::SmallCaps(crate::contents::<crate::List<Inline>, E>(c)?.0),
                 "Quoted" => Inline::Quoted(crate::contents(c)?),
                 "Cite" => Inline::Cite(crate::contents(c)?),
                 "Code" => Inline::Code(crate::contents(c)?),
@@ -859,7 +896,7 @@ impl<'de> Deserialize<'de> for Inline {
                 "RawInline" => Inline::RawInline(crate::contents(c)?),
                 "Link" => Inline::Link(crate::contents(c)?),
                 "Image" => Inline::Image(crate::contents(c)?),
-                "Note" => Inline::Note(crate::contents(c)?),
+                "Note" => Inline::Note(crate::contents::<crate::List<Block>, E>(c)?.0),
                 "Span" => Inline::Span(crate::contents(c)?),
                 _ => unreachable!(),
             })
@@ -1020,7 +1057,7 @@ impl From<Span> for Inline {
 }
 
 /// pandoc's `Quoted`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Quoted {
     pub quote_type: QuoteType,
     pub content: Vec<Inline>,
@@ -1044,16 +1081,16 @@ impl Serialize for Quoted {
 
 impl<'de> Deserialize<'de> for Quoted {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (quote_type, content) = <(QuoteType, Vec<Inline>)>::deserialize(d)?;
+        let (quote_type, content) = <(QuoteType, crate::List<Inline>)>::deserialize(d)?;
         Ok(Quoted {
             quote_type,
-            content,
+            content: content.0,
         })
     }
 }
 
 /// pandoc's `Cite`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Cite {
     pub citations: Vec<Citation>,
     pub content: Vec<Inline>,
@@ -1086,13 +1123,16 @@ impl Serialize for Cite {
 
 impl<'de> Deserialize<'de> for Cite {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (citations, content) = <(Vec<Citation>, Vec<Inline>)>::deserialize(d)?;
-        Ok(Cite { citations, content })
+        let (citations, content) = <(Vec<Citation>, crate::List<Inline>)>::deserialize(d)?;
+        Ok(Cite {
+            citations,
+            content: content.0,
+        })
     }
 }
 
 /// pandoc's `Code`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Code {
     pub attr: Attr,
     pub text: Text,
@@ -1122,7 +1162,7 @@ impl<'de> Deserialize<'de> for Code {
 }
 
 /// pandoc's `Math`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Math {
     pub math_type: MathType,
     pub text: Text,
@@ -1152,7 +1192,7 @@ impl<'de> Deserialize<'de> for Math {
 }
 
 /// pandoc's `RawInline`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RawInline {
     pub format: Format,
     pub text: Text,
@@ -1182,7 +1222,7 @@ impl<'de> Deserialize<'de> for RawInline {
 }
 
 /// pandoc's `Link`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Link {
     pub attr: Attr,
     pub content: Vec<Inline>,
@@ -1209,17 +1249,17 @@ impl Serialize for Link {
 
 impl<'de> Deserialize<'de> for Link {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (attr, content, target) = <(Attr, Vec<Inline>, Target)>::deserialize(d)?;
+        let (attr, content, target) = <(Attr, crate::List<Inline>, Target)>::deserialize(d)?;
         Ok(Link {
             attr,
-            content,
+            content: content.0,
             target,
         })
     }
 }
 
 /// pandoc's `Image`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Image {
     pub attr: Attr,
     pub content: Vec<Inline>,
@@ -1246,17 +1286,17 @@ impl Serialize for Image {
 
 impl<'de> Deserialize<'de> for Image {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (attr, content, target) = <(Attr, Vec<Inline>, Target)>::deserialize(d)?;
+        let (attr, content, target) = <(Attr, crate::List<Inline>, Target)>::deserialize(d)?;
         Ok(Image {
             attr,
-            content,
+            content: content.0,
             target,
         })
     }
 }
 
 /// pandoc's `Span`, a `Inline`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Span {
     pub attr: Attr,
     pub content: Vec<Inline>,
@@ -1289,13 +1329,16 @@ impl Serialize for Span {
 
 impl<'de> Deserialize<'de> for Span {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (attr, content) = <(Attr, Vec<Inline>)>::deserialize(d)?;
-        Ok(Span { attr, content })
+        let (attr, content) = <(Attr, crate::List<Inline>)>::deserialize(d)?;
+        Ok(Span {
+            attr,
+            content: content.0,
+        })
     }
 }
 
 /// pandoc's `Attr`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Attr {
     pub identifier: Text,
     pub classes: Vec<Text>,
@@ -1346,7 +1389,7 @@ impl<'de> Deserialize<'de> for Attr {
 pub type Format = Text;
 
 /// pandoc's `ListAttributes`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ListAttributes {
     pub start: i64,
     pub style: ListNumberStyle,
@@ -1393,7 +1436,7 @@ impl<'de> Deserialize<'de> for ListAttributes {
 }
 
 /// pandoc's `Caption`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Caption {
     pub short: Option<ShortCaption>,
     pub content: Vec<Block>,
@@ -1426,13 +1469,16 @@ impl Serialize for Caption {
 
 impl<'de> Deserialize<'de> for Caption {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let (short, content) = <(Option<ShortCaption>, Vec<Block>)>::deserialize(d)?;
-        Ok(Caption { short, content })
+        let (short, content) = <(Option<ShortCaption>, crate::List<Block>)>::deserialize(d)?;
+        Ok(Caption {
+            short,
+            content: content.0,
+        })
     }
 }
 
 /// pandoc's `ColSpec`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ColSpec {
     pub alignment: Alignment,
     pub width: ColWidth,
@@ -1471,7 +1517,7 @@ impl<'de> Deserialize<'de> for ColSpec {
 }
 
 /// pandoc's `TableHead`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableHead {
     pub attr: Attr,
     pub rows: Vec<Row>,
@@ -1510,7 +1556,7 @@ impl<'de> Deserialize<'de> for TableHead {
 }
 
 /// pandoc's `TableBody`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableBody {
     pub attr: Attr,
     pub row_head_columns: RowHeadColumns,
@@ -1563,7 +1609,7 @@ impl<'de> Deserialize<'de> for TableBody {
 }
 
 /// pandoc's `TableFoot`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableFoot {
     pub attr: Attr,
     pub rows: Vec<Row>,
@@ -1631,13 +1677,13 @@ impl crate::Json for QuoteType {
 }
 
 /// pandoc's `Citation`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Citation {
     #[serde(rename = "citationId")]
     pub id: Text,
-    #[serde(rename = "citationPrefix")]
+    #[serde(rename = "citationPrefix", deserialize_with = "crate::list")]
     pub prefix: Vec<Inline>,
-    #[serde(rename = "citationSuffix")]
+    #[serde(rename = "citationSuffix", deserialize_with = "crate::list")]
     pub suffix: Vec<Inline>,
     #[serde(rename = "citationMode")]
     pub mode: CitationMode,
@@ -1695,7 +1741,7 @@ impl crate::Json for MathType {
 }
 
 /// pandoc's `Target`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Target {
     pub url: Text,
     pub title: Text,
@@ -1850,11 +1896,34 @@ impl crate::Json for Alignment {
 }
 
 /// pandoc's `ColWidth`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "t", content = "c")]
 pub enum ColWidth {
     ColWidth(#[serde(serialize_with = "crate::aeson_double")] f64),
     ColWidthDefault,
+}
+
+/// Equal when the same number, bit for bit: one that isn't a number
+/// (pandoc's `null`) equals itself, so that `Eq` and `Hash` hold.
+impl PartialEq for ColWidth {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ColWidth::ColWidth(a), ColWidth::ColWidth(b)) => a.to_bits() == b.to_bits(),
+            (ColWidth::ColWidthDefault, ColWidth::ColWidthDefault) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ColWidth {}
+
+impl Hash for ColWidth {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        Hash::hash(&std::mem::discriminant(self), h);
+        if let ColWidth::ColWidth(x) = self {
+            Hash::hash(&x.to_bits(), h);
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for ColWidth {
@@ -1939,7 +2008,7 @@ impl crate::Json for ColWidth {
 }
 
 /// pandoc's `Row`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Row {
     pub attr: Attr,
     pub cells: Vec<Cell>,
@@ -2013,7 +2082,7 @@ impl crate::Json for CitationMode {
 }
 
 /// pandoc's `Cell`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Cell {
     pub attr: Attr,
     pub alignment: Alignment,
@@ -2066,13 +2135,13 @@ impl Serialize for Cell {
 impl<'de> Deserialize<'de> for Cell {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let (attr, alignment, row_span, col_span, content) =
-            <(Attr, Alignment, RowSpan, ColSpan, Vec<Block>)>::deserialize(d)?;
+            <(Attr, Alignment, RowSpan, ColSpan, crate::List<Block>)>::deserialize(d)?;
         Ok(Cell {
             attr,
             alignment,
             row_span,
             col_span,
-            content,
+            content: content.0,
         })
     }
 }

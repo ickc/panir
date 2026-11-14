@@ -15,7 +15,17 @@ from __future__ import annotations
 from typing import IO, Any
 
 from . import _fast, _types
-from ._core import ASTDecodeError, ASTError, ASTTypeError, Node, NodeDict, NodeList
+from ._core import (
+    ASTDecodeError,
+    ASTDepthError,
+    ASTError,
+    ASTTypeError,
+    Attributes,
+    Node,
+    NodeDict,
+    NodeList,
+    unwritable,
+)
 from ._types import *  # noqa: F403  the AST classes
 from ._types import Pandoc
 from ._walk import Context, walk
@@ -44,14 +54,24 @@ def dumps(doc: Pandoc) -> str:
 
 
 def dump(doc: Pandoc, fp: IO[str]) -> None:
-    """Write a document as pandoc's JSON."""
-    fp.write(dumps(doc))
+    """Write a document as pandoc's JSON (``fp`` in UTF-8, as pandoc reads
+    it). A string UTF-8 can't hold (a lone surrogate) is an ``ASTTypeError``
+    that says where."""
+    try:
+        fp.write(dumps(doc))
+    except UnicodeEncodeError as e:
+        error = unwritable(doc)
+        if error is None:
+            raise
+        raise error from e
 
 
 __all__ = [
     "ASTDecodeError",
+    "ASTDepthError",
     "ASTError",
     "ASTTypeError",
+    "Attributes",
     "Context",
     "Conversion",
     "Filter",

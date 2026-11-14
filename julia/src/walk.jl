@@ -39,9 +39,10 @@ Where a node is, for a filter method that takes it: `parent` (the node whose
 field holds it), `field`, `container` (the list it is in, or the map) and
 its `index` there (or key), so that `ctx.container[ctx.index]` is the node;
 `next` and `prev`, its neighbours in that list (or `nothing`); `path` from
-the document, as in errors and in pandoc's JSON, which count from 0
-(`[:blocks, 0, :content, 3]`); `doc`, `conversion` (the pandoc run, a
-`Conversion`) and `format` (its output format's name).
+the document (or the fragment), as in errors and in pandoc's JSON, which
+count from 0 (`[:blocks, 0, :content, 3]`); `doc` (`nothing` in a
+fragment), `conversion` (the pandoc run, a `Conversion`) and `format` (its
+output format's name).
 
 A method may change `container` itself (remove the node before this one,
 say); it may not take its own node out of it (return an empty vector).
@@ -57,15 +58,6 @@ struct Context
     format::Union{Nothing, String}
     topdown::Bool
     skip::Base.RefValue{Bool}
-    _walker::Any  # the walk (a _Walker), or nothing
-end
-
-# The lists being walked made what they are now before any is looked at
-# (`_many` makes a list's result aside: `_Splice`).
-function _mend(ctx::Context)
-    w = getfield(ctx, :_walker)
-    w === nothing || isempty(w.splicing) || _mend!(w)
-    nothing
 end
 
 "The neighbour of a node in its list, `step` after it, or `nothing`."
@@ -73,26 +65,12 @@ function sibling(ctx::Context, step::Integer)
     container, index = getfield(ctx, :container), getfield(ctx, :index)
     container isa AbstractVector && index isa Integer || return nothing
     i = index + step
-    i >= 1 || return nothing
-    w = getfield(ctx, :_walker)
-    if w !== nothing
-        for sp in w.splicing
-            sp.list === container || continue
-            # changed from elsewhere
-            length(container) == length((sp::_Splice).was) || (_mend!(w); break)
-            return _at(sp, i)  # the list as it is now, without making it so
-        end
-    end
-    i <= length(container) ? container[i] : nothing
+    1 <= i <= length(container) ? container[i] : nothing
 end
 
-Base.propertynames(::Context) = (filter(!=(:_walker), fieldnames(Context))..., :next, :prev)
-function Base.getproperty(ctx::Context, name::Symbol)
-    name === :next && return sibling(ctx, 1)
-    name === :prev && return sibling(ctx, -1)
-    (name === :parent || name === :container || name === :doc) && _mend(ctx)
-    getfield(ctx, name)
-end
+Base.propertynames(::Context) = (fieldnames(Context)..., :next, :prev)
+Base.getproperty(ctx::Context, name::Symbol) =
+    name === :next ? sibling(ctx, 1) : name === :prev ? sibling(ctx, -1) : getfield(ctx, name)
 
 """
     skip_children!(ctx)
@@ -128,7 +106,7 @@ function _steps(path::Union{Nothing, _Path})
     reverse!(steps)
 end
 
-const _Frame = Tuple{Any, Symbol, Any, Any, Union{Nothing, _Path}}  # parent, field, container, index, path
+const _Frame = Tuple{Any, Symbol, Any, Any, Union{Nothing, _Path}}  # parent, field (:_ for none), container, index, path
 
 # Which nodes a walk calls the filter on, and which lists: bits. (As
 # closures they were compiled again for every type of node.)
@@ -152,94 +130,6 @@ mutable struct _Walker
     wants::UInt8   # which nodes this walk calls `f` on (_INLINES | ...)
     lists::UInt8   # which lists
     arity::Dict{DataType, Int}   # by node type: 2 for f(x, ctx), 1 for f(x), 0 for neither
-    # the lists being walked whose result is made aside (`_Splice`): those of
-    # every pass of a walk (a context may be kept from one to the next)
-    splicing::Vector{Any}
-end
-
-# The walk of a list once one of its nodes was replaced by none or several
-# (`_aside!`): the list keeps its nodes (but for those replaced by one) while
-# the result is made aside, in `out`; `list[at:end]` are the nodes not in it
-# yet, the first perhaps being walked. The list as it is now is `out` and
-# then those: it becomes that (`_mend!`) at the end of its walk, or when
-# anything reaches it through a Context; `out` is then `nothing`.
-#
-# `was` is what the list holds as the walk left it, and the nodes it went
-# through: something else may have changed it meanwhile (a method, through
-# the document it closed over). `marks`, in pairs: from the k-th of those
-# nodes on, the results of each begin `off` after its own place, from where
-# that changes.
-mutable struct _Splice
-    list::Vector
-    out::Union{Nothing, Vector}
-    at::Int
-    was::Vector
-    marks::Vector{Int}
-end
-
-# Make every list being walked what it is now.
-function _mend!(w::_Walker)
-    for sp in w.splicing
-        _mend!(sp::_Splice)
-    end
-    empty!(w.splicing)
-end
-
-function _mend!(sp::_Splice)
-    out = sp.out
-    out === nothing && return
-    list, was = sp.list, sp.was
-    if length(list) == length(was) && all(k -> list[k] === was[k], eachindex(list))
-        splice!(list, 1:sp.at - 1, out)
-    else
-        merged = _merged(sp, out)
-        empty!(list)
-        append!(list, merged)
-    end
-    sp.out = nothing
-end
-
-# The list as changed from elsewhere, each node the walk went through
-# replaced by what it made of it.
-function _merged(sp::_Splice, out::Vector)
-    at, was, marks = sp.at, sp.was, sp.marks
-    starts = Int[]
-    off, m = 0, 1
-    for k in 1:at
-        while m <= length(marks) && marks[m] <= k
-            off = marks[m + 1]
-            m += 2
-        end
-        push!(starts, k + off)
-    end
-    walked = IdDict{Any, Int}(was[k] => k for k in 1:at - 1)
-    merged = empty(out)
-    for x in sp.list
-        k = get(walked, x, 0)
-        k == 0 ? push!(merged, x) : append!(merged, @view out[starts[k]:starts[k + 1] - 1])
-    end
-    merged
-end
-
-# Make the list `sp` is of what it is now; its walk goes on in place.
-function _unsplice!(w::_Walker, sp::_Splice)
-    sp.out === nothing && return
-    _mend!(sp)
-    _forget!(w, sp)
-end
-
-# The node at `p` in the list as it is now (`out` being made), or `nothing`.
-function _at(sp::_Splice, p::Int)
-    out = sp.out::Vector
-    p <= length(out) && return out[p]
-    k = sp.at + p - length(out) - 1
-    k <= length(sp.list) ? sp.list[k] : nothing
-end
-
-function _forget!(w::_Walker, sp::_Splice)
-    for k in lastindex(w.splicing):-1:1
-        w.splicing[k] === sp && return (deleteat!(w.splicing, k); nothing)
-    end
 end
 
 # `f`'s method for `x`: with the context (2), without (1), or none (0);
@@ -267,8 +157,8 @@ end
 
 function _context(w::_Walker)
     parent, field, container, index, path = isempty(w.stack) ? (nothing, :_, nothing, nothing, nothing) : w.stack[end]
-    Context(parent, isempty(w.stack) ? nothing : field, container, index, _steps(path), w.doc, w.conversion,
-            w.conversion.format, w.topdown, Ref(false), w)
+    Context(parent, field === :_ ? nothing : field, container, index, _steps(path), w.doc, w.conversion,
+            w.conversion.format, w.topdown, Ref(false))
 end
 
 # `f` on `x` (with the context if it has such a method); the result, and
@@ -322,6 +212,56 @@ function _distinct(items::Vector)
     out
 end
 
+# A wrong value `r`, returned by `f`'s method for `x`, where `expected` goes
+# (the walk's place).
+function _wrong(w::_Walker, x, r, expected::String)
+    m = which(w.f, _arity(w, x) == 2 ? Tuple{typeof(x), Context} : Tuple{typeof(x)})
+    path = isempty(w.stack) ? Any[] : _steps(w.stack[end][5])
+    ASTTypeError(path, expected, _got(r), sprint(show, m))
+end
+
+# What a method returned where nodes of type `T` go in a list, as a vector
+# of them, converted as pandoc's Lua converts it (as `convert`, in core.jl):
+# a string is inlines (its words) or Plain text, an inline a Plain where
+# blocks go, one node a list of it; in a vector, a string is a Str or Plain
+# text, an inline or a vector of inlines a Plain. `nothing` if it doesn't.
+function _as_list(::Type{T}, r) where {T}
+    r isa T && return T[r]
+    r isa AbstractVector || return _as_lone(T, r)
+    out = Vector{T}(undef, length(r))
+    for (k, x) in enumerate(r)
+        y = _as_item(T, x)
+        y === nothing && return nothing
+        out[k] = y
+    end
+    out
+end
+_as_lone(::Type, r) = nothing
+_as_lone(::Type{Inline}, r::AbstractString) = inlines(r)
+_as_lone(::Type{Block}, r::Union{AbstractString, Inline}) = Block[convert(Block, r)]
+_as_item(::Type{T}, x) where {T} = x isa T ? x : nothing
+_as_item(::Type{Inline}, x) = x isa Inline ? x : x isa AbstractString ? Str(String(x)) : nothing
+function _as_item(::Type{Block}, x)
+    x isa Block && return x
+    x isa Union{AbstractString, Inline} && return convert(Block, x)
+    x isa AbstractVector || return nothing
+    xs = _as_list(Inline, x)
+    xs === nothing ? nothing : Plain(_FIELDS, xs)
+end
+
+_expected(T) = "$(nameof(T)), a vector of them, " * (T <: Union{Inline, Block} ? "a string, or nothing" : "or nothing")
+
+# The type of node that goes where `x` is: its sum type, or itself.
+_family(::Type{T}) where {T} = supertype(T) in _SUMS ? supertype(T) : T
+
+# What a method returned for `x`, a single node: `x` for nothing, or a node of its family.
+function _replacement(w::_Walker, x, r)
+    r === nothing && return x
+    F = _family(typeof(x))
+    r isa F || throw(_wrong(w, x, r, "$(nameof(F)) or nothing"))
+    r
+end
+
 # Where `node` is in a list its method changed (`ctx.container`).
 function _find(list::Vector, node)
     i = findfirst(x -> x === node, list)
@@ -334,16 +274,13 @@ end
 function _one(w::_Walker, x::Node)
     if w.topdown
         r, skip = _call(w, x)
-        r === nothing || (r isa Node ? (x = r) : throw(ArgumentError(
-            "a filter returned $(typeof(r)) where one node belongs")))
+        r === nothing || (x = _replacement(w, x, r))
         skip || _children(w, x)
         return x
     end
     _children(w, x)
     r, _ = _call(w, x)
-    r === nothing && return x
-    r isa Node || throw(ArgumentError("a filter returned $(typeof(r)) where one node belongs"))
-    r
+    r === nothing ? x : _replacement(w, x, r)
 end
 
 # The list function on `list`: the list, or a new one of what it returned
@@ -355,11 +292,9 @@ function _whole(w::_Walker, list::Vector, parent, field, path)
     try
         r, skip = _call_whole(w, list)
         (r === nothing || r === list) && return list, skip
-        # (a string, as in pandoc's Lua: its words, or Plain text)
-        r isa Union{AbstractVector, AbstractString} || throw(ArgumentError(
-            "a filter returned $(typeof(r)) for a list of $(eltype(list))s"))
-        items = _distinct(convert(typeof(list), r isa AbstractString ? r : collect(r)))
-        (items === list ? copy(items) : items), skip
+        items = _as_list(eltype(list), r)  # (new)
+        items === nothing && throw(_wrong(w, list, r, _expected(eltype(list))))
+        _distinct(items), skip
     finally
         pop!(w.stack)
     end
@@ -371,7 +306,6 @@ function _many(w::_Walker, list::Vector{T}, parent, field, path) where {T <: Nod
         list, skip = _whole(w, list, parent, field, path)
         skip && return list
     end
-    rest, rskip = nothing, false
     i = 1
     while i <= length(list)
         push!(w.stack, (parent, field, list, i, _Path(path, i - 1)))
@@ -389,115 +323,24 @@ function _many(w::_Walker, list::Vector{T}, parent, field, path) where {T <: Nod
                 i += 1
                 continue
             end
-            items = r isa Node ? T[r] : _distinct(convert(Vector{T}, r))
-            if length(items) != 1
-                # none or several: the rest of the walk makes the list aside
-                rest, rskip = items, skip
-                break
+            items = r isa T ? T[r] : _as_list(T, r)
+            items === nothing && throw(_wrong(w, node, r, _expected(T)))
+            items = _distinct(items)
+            # in place, so that the list is as it is now however it is
+            # reached (moving what follows: a few milliseconds at 25,000)
+            length(items) == 1 ? (list[i] = items[1]) : splice!(list, i, items)
+            if w.topdown && !skip
+                for k in 0:length(items) - 1
+                    w.stack[end] = (parent, field, list, i + k, _Path(path, i - 1 + k))
+                    _children(w, list[i + k])
+                end
             end
-            list[i] = items[1]
-            w.topdown && !skip && _children(w, list[i])
-            i += 1
+            i += length(items)
         finally
             pop!(w.stack)
         end
     end
-    rest === nothing || _aside!(w, list, parent, field, path, i, rest, rskip)
     w.topdown ? list : first(_whole(w, list, parent, field, path))
-end
-
-# The rest of `_many`'s walk once `list[i]` was replaced by `items` (none or
-# several nodes): the result is made aside, in `out`.
-#
-# Replacing in place moved all that follows, every time (quadratic).
-# Meanwhile the list keeps the nodes still to walk, whoever looks at it, and
-# it becomes `out` and then those at the end, after an error too. Anything
-# that reaches it through a Context makes it that first (`_mend!`:
-# `sp.out` is then `nothing`), and the walk goes on in place (`aside`
-# false), as before; and so does a change to it from elsewhere (seen by its
-# length, or the node's place). `i` is the node's place in the result;
-# aside, the node is `list[sp.at]`, and `i == length(out) + 1` until it is
-# in `out`.
-@noinline function _aside!(w::_Walker, list::Vector{T}, parent, field, path, i::Int, items::Vector{T},
-                           skip::Bool) where {T <: Node}
-    out = list[1:i - 1]
-    append!(out, items)
-    sp = _Splice(list, out, i + 1, copy(list), [i + 1, length(out) - i])
-    push!(w.splicing, sp)
-    n0 = length(list)  # (as long as nothing else changes it)
-    aside = true
-    try
-        # (the first node's replacements, then each node's)
-        n = length(items)
-        while true
-            if w.topdown && !skip
-                for k in 0:n - 1
-                    push!(w.stack, (parent, field, list, i + k, _Path(path, i - 1 + k)))
-                    try
-                        _children(w, aside ? out[i + k] : list[i + k])
-                    finally
-                        pop!(w.stack)
-                    end
-                    if aside && (sp.out === nothing || length(list) != n0)
-                        _unsplice!(w, sp)
-                        aside = false  # mended: in place
-                    end
-                end
-            end
-            i += n
-            # the next node
-            j = aside ? sp.at : i
-            j <= length(list) || break
-            push!(w.stack, (parent, field, list, i, _Path(path, i - 1)))
-            try
-                node = list[j]
-                aside && (sp.was[j] = node)  # (another may have put it there)
-                w.topdown || _children(w, node)
-                r, skip = _call(w, node)
-                if aside && (sp.out === nothing || length(list) != n0 || list[sp.at] !== node)
-                    _unsplice!(w, sp)
-                    aside = false  # mended (below, or by the method): in place
-                end
-                if !aside && !(i <= length(list) && list[i] === node)
-                    # the method changed the list itself (ctx.container)
-                    i = _find(list, node)
-                    w.stack[end] = (parent, field, list, i, _Path(path, i - 1))  # (for what is below it)
-                end
-                if r === nothing
-                    if aside
-                        push!(out, node)
-                        sp.at += 1
-                    end
-                    if w.topdown && !skip
-                        _children(w, node)
-                        if aside && (sp.out === nothing || length(list) != n0)
-                            _unsplice!(w, sp)
-                            aside = false  # mended: in place
-                        end
-                    end
-                    n, skip = 0, true
-                    i += 1
-                    continue
-                end
-                items = r isa Node ? T[r] : _distinct(convert(Vector{T}, r))
-                n = length(items)
-                if !aside
-                    n == 1 ? (list[i] = items[1]) : splice!(list, i, items)
-                else
-                    n == 1 && (list[sp.at] = sp.was[sp.at] = items[1])  # in the list too
-                    append!(out, items)
-                    sp.at += 1
-                    n == 1 || push!(sp.marks, sp.at, length(out) + 1 - sp.at)
-                end
-            finally
-                pop!(w.stack)
-            end
-        end
-    finally
-        # (all walked, or an error: the list whole either way)
-        _unsplice!(w, sp)
-    end
-    nothing
 end
 
 function _value(w::_Walker, @nospecialize(x), parent, field, path)
@@ -554,6 +397,9 @@ end
 # Whether `f` has a method for some node of type `T`.
 _handles(@nospecialize(f), T) = any(m -> typeintersect(_first(m), T) !== Union{}, methods(f))
 
+# Whether `f` has a method of its own for `T`, not one for anything.
+_handles_own(@nospecialize(f), T) = any(m -> (p = _first(m); p !== Any && typeintersect(p, T) !== Union{}), methods(f))
+
 # Whether `f` has a method for a node that isn't an Inline, a Block or the document.
 _handles_other(@nospecialize(f)) = any(methods(f)) do m
     p = _first(m)
@@ -561,17 +407,28 @@ _handles_other(@nospecialize(f)) = any(methods(f)) do m
 end
 
 """
-    walk!(f, node; traverse = :typewise, format = nothing)
+    walk!(f, doc; traverse = :typewise, format = nothing)
+    walk!(f, fragment; ...)
 
-Call `f(x, ctx)` (or `f(x)`) on `node` and every node in it, where `f` has
-a method for `x`: define methods for the node types to change, and the
-most specific one is called, as Julia dispatches. `f` returns `nothing` to
-keep the node (changed in place or not), a node to replace it, or, in a
-list, a vector of nodes to splice in its place (empty: delete). As in
-pandoc's Lua filters, a method for `Vector{Inline}` or `Vector{Block}` is
-called on every list of them, and one for `Panir.Meta` on the metadata
-(methods for anything don't count; `Meta` alone is `Base.Meta` outside
-`Panir`); each returns a replacement, or `nothing`.
+Call `f(x, ctx)` (or `f(x)`) on every node in `doc`, and `doc` itself,
+where `f` has a method for `x`: define methods for the node types to
+change, and the most specific one is called, as Julia dispatches. `f`
+returns `nothing` to keep the node (changed in place or not), a node to
+replace it, or, in a list, a vector of nodes to splice in its place
+(empty: delete). As in pandoc's Lua filters, a method for `Vector{Inline}`
+or `Vector{Block}` is called on every list of them, and one for
+`Panir.Meta` on the metadata (methods for anything don't count; `Meta`
+alone is `Base.Meta` outside `Panir`); each returns a replacement, or
+`nothing`. What a method returns converts as pandoc's Lua converts it (a
+string is its words where inlines go, Plain text where blocks go; an
+inline a `Plain` where a block goes); anything else is an `ASTTypeError`
+that names the method and the place.
+
+A fragment is any other node, or a `Vector{Inline}` or `Vector{Block}`: as
+Lua's `el:walk{...}`, the methods apply to what is in it but not to the
+node itself, a list's method also to the list itself, and the metadata and
+`Pandoc` methods not at all. Unlike Lua, the fragment is changed in place
+(a list too), and returned; `ctx.path` is from it, `ctx.doc` `nothing`.
 
 `traverse` is the order:
 - `:typewise` (the default, as pandoc's Lua filters and Haskell's `walk`):
@@ -586,7 +443,8 @@ called on every list of them, and one for `Panir.Meta` on the metadata
   after its elements, the metadata after what is in it, `Pandoc` last.
 
 `format` is the output format's name, or the whole `Conversion` (then in
-`ctx.conversion`). Returns `node` or its replacement.
+`ctx.conversion`). Returns the document or its replacement, or the
+fragment.
 
 ```julia
 demote(h::Header) = (h.level += 1; nothing)
@@ -594,67 +452,104 @@ shout(s::Str, ctx) = ctx.format == "html" ? Strong(Str(uppercase(s.text))) : not
 walk!(demote, doc)
 ```
 """
-function walk!(@nospecialize(f), node::Node; traverse::Symbol = :typewise, format = nothing)
+function walk!(@nospecialize(f), x::Union{Node, Vector{Inline}, Vector{Block}};
+               traverse::Symbol = :typewise, format = nothing)
     traverse in (:typewise, :topdown, :bottomup) || throw(ArgumentError(
         "traverse: expected :typewise, :topdown or :bottomup, got $(repr(traverse))"))
     # With the methods there are now: `f`'s may be newer than the caller (a
     # filter script a host just included), and a walk that didn't see them
     # would call none, and say nothing.
-    Base.invokelatest(_walk!, f, node, traverse, _conversion(format))
+    Base.invokelatest(_walk!, f, x, traverse, _conversion(format))
 end
 
-function _walk!(@nospecialize(f), node::Node, traverse::Symbol, conversion::Conversion)
-    # not compiled again for each filter: what calls it is dynamic anyway
-    splicing = Any[]  # every pass's
-    topdown = traverse === :topdown
-    arity = Dict{DataType, Int}()
-    walker(doc, wants, lists) = _Walker(f, topdown, doc, conversion, _Frame[], wants, lists, arity, splicing)
-    every, nodes, lists = 0xff, _INLINES | _BLOCKS | _OTHERS, _INLINES | _BLOCKS
-    node isa Pandoc || return traverse === :typewise ?
-        foldl((x, (wants, lists)) -> _one(walker(node, wants, lists), x), _passes(f); init = node) :
-        _one(walker(node, every, lists), node)
+function _walk!(@nospecialize(f), node, traverse::Symbol, conversion::Conversion)
+    # Nothing here is compiled again for each filter (what calls it is
+    # dynamic anyway): no closure holds `f`, whose type it would take.
+    s = _Walk(f, traverse === :topdown, conversion, Dict{DataType, Int}())
+    nodes, lists = _INLINES | _BLOCKS | _OTHERS, _INLINES | _BLOCKS
+    node isa Pandoc || return _fragment!(s, node, traverse === :typewise ? _passes(f) : [(nodes, lists)])
     doc = node
-    function root(d)
-        r, skip = _call(walker(d, every, 0x00), d)
-        r === nothing && return d, skip
-        r isa Pandoc || throw(ArgumentError("a filter returned $(typeof(r)) for the Pandoc"))
-        r, skip
-    end
-    function meta(d)
-        w = walker(d, every, 0x00)
-        push!(w.stack, (d, :meta, nothing, nothing, _Path(nothing, :meta)))
-        r, skip = _call_whole(w, d.meta)
-        r === nothing || (d.meta = r)
-        skip
-    end
-    if topdown
-        doc, skip = root(doc)  # the method's document, if it returned one, is the one walked
+    if s.topdown
+        doc, skip = _root(s, doc)  # the method's document, if it returned one, is the one walked
         skip && return doc
-        skipmeta = meta(doc)
-        _children(walker(doc, nodes, lists), doc; skip = skipmeta ? :meta : nothing)
+        skipmeta = _meta(s, doc)
+        _children(_walker(s, doc, nodes, lists), doc; skip = skipmeta ? :meta : nothing)
         return doc
     end
     if traverse === :bottomup
-        _children(walker(doc, nodes, lists), doc; after = :meta, then = meta)
-        return first(root(doc))
+        _children(_walker(s, doc, nodes, lists), doc; after = :meta, then = d -> _meta(s, d))
+        return first(_root(s, doc))
     end
     for (wants, lists) in _passes(f)
-        _children(walker(doc, wants, lists), doc)
+        _children(_walker(s, doc, wants, lists), doc)
     end
-    meta(doc)
-    first(root(doc))
+    _meta(s, doc)
+    first(_root(s, doc))
+end
+
+# What the passes of a walk share.
+struct _Walk
+    f::Any
+    topdown::Bool
+    conversion::Conversion
+    arity::Dict{DataType, Int}
+end
+
+_walker(s::_Walk, doc, wants, lists) = _Walker(s.f, s.topdown, doc, s.conversion, _Frame[], wants, lists, s.arity)
+
+# The Pandoc method: the document, or its replacement; whether to skip.
+function _root(s::_Walk, d::Pandoc)
+    w = _walker(s, d, 0xff, 0x00)
+    r, skip = _call(w, d)
+    r === nothing ? (d, skip) : (_replacement(w, d, r), skip)
+end
+
+# The metadata method; whether to skip what is in the metadata.
+function _meta(s::_Walk, d::Pandoc)
+    w = _walker(s, d, 0xff, 0x00)
+    push!(w.stack, (d, :meta, nothing, nothing, _Path(nothing, :meta)))
+    r, skip = _call_whole(w, d.meta)
+    r === nothing || r === d.meta || (d.meta = _as_meta(w, d.meta, r))
+    skip
+end
+
+# A fragment: as Lua's el:walk{}, what is in it (a list's own method too),
+# not the node itself; in place.
+function _fragment!(s::_Walk, x, passes)
+    for (wants, lists) in passes
+        w = _walker(s, nothing, wants, lists)
+        if x isa Vector
+            out = _many(w, x, nothing, :_, nothing)  # (no parent, no field)
+            out === x || append!(empty!(x), out)
+        else
+            _children(w, x)
+        end
+    end
+    x
+end
+
+# What a metadata method returned: metadata, converted as pandoc's Lua
+# converts it (`doc.meta["draft"] = true`).
+function _as_meta(w::_Walker, meta, r)
+    r isa AbstractDict || throw(_wrong(w, meta, r, "metadata (a Dict) or nothing"))
+    r isa Meta && return r
+    try
+        _own(Meta, r)
+    catch e
+        e isa MethodError && e.f === convert || rethrow()
+        throw(_wrong(w, meta, r, "metadata (a Dict of what converts to a MetaValue) or nothing"))
+    end
 end
 
 # The typewise walks `f` needs: which nodes, and which lists, each calls it
 # on. A list's walk only for a method that is the list's own: one for
 # anything isn't called on lists (`_specific`).
 function _passes(@nospecialize(f))
-    own(T) = any(m -> (p = _first(m); p !== Any && typeintersect(p, T) !== Union{}), methods(f))
     passes = [
         (_INLINES, 0x00, _handles(f, Inline)),
-        (0x00, _INLINES, own(Vector{Inline})),
+        (0x00, _INLINES, _handles_own(f, Vector{Inline})),
         (_BLOCKS, 0x00, _handles(f, Block)),
-        (0x00, _BLOCKS, own(Vector{Block})),
+        (0x00, _BLOCKS, _handles_own(f, Vector{Block})),
         (_OTHERS, 0x00, _handles_other(f)),
     ]
     [(wants, lists) for (wants, lists, needed) in passes if needed]
@@ -668,11 +563,14 @@ stdout. `ctx.conversion` is what pandoc says of the conversion: the output
 format (its first argument, also `ctx.format`), and its environment.
 """
 function run_filter(f; traverse::Symbol = :typewise)
-    h = get(task_local_storage(), _HANDOFF, nothing)
-    h === nothing || (h[] = (f, traverse); return nothing)
-    doc = parse(read(stdin, String))
-    doc = walk!(f, doc; traverse, format = Conversion(ARGS, ENV))
-    write(stdout, serialize(doc))
+    hand_over(f, traverse) && return nothing
+    _run(f, traverse, stdin, stdout, ARGS, ENV)
+end
+
+function _run(@nospecialize(f), traverse::Symbol, input::IO, output::IO, args, env)
+    doc = parse(read(input, String))
+    doc = walk!(f, doc; traverse, format = Conversion(args, env))
+    write(output, serialize(doc))
     nothing
 end
 
@@ -693,10 +591,30 @@ function handoff(run)
     h[]
 end
 
-const _QUOTES =Dict(SingleQuote => ("‘", "’"), DoubleQuote => ("“", "”"))
+"""
+    Panir.hand_over(f, traverse) -> Bool
+
+For a function like `run_filter` that runs something else as a filter (as
+LibPandoc.jl's `run_filter(::RawFilter)`): in a script run inside
+`Panir.handoff`, hands `(f, traverse)` over to it and returns `true`, and
+the function is to return without reading stdin; otherwise `false`.
+"""
+function hand_over(f, traverse::Symbol)
+    h = get(task_local_storage(), _HANDOFF, nothing)
+    h === nothing && return false
+    h[] = (f, traverse)
+    true
+end
+
+const _QUOTES = Dict(SingleQuote => ("‘", "’"), DoubleQuote => ("“", "”"))
 
 """
-The text of a node or nodes, without markup, as pandoc's `stringify`.
+    stringify(x)
+
+The text of a node or nodes, without markup, as pandoc's Lua
+`pandoc.utils.stringify`: a document's is its inlines' (its metadata's
+too, but no `MetaString` or `MetaBool`); metadata's, or a `MetaValue`'s,
+has its strings and booleans too; maps go in the order of their keys.
 """
 stringify(x) = (io = IOBuffer(); _text(io, x); String(take!(io)))
 
@@ -710,6 +628,15 @@ _text(io, x::RawInline) = x.format == "html" && startswith(x.text, "<br") && pri
 _text(io, ::Note) = nothing
 _text(io, x::Cite) = _text(io, x.content)
 _text(io, x::MetaBool) = print(io, x.value ? "true" : "false")
+# a document's: its inlines' text (pandoc queries it for inlines)
+function _text(io, d::Pandoc)
+    foreach(k -> _inlines_text(io, d.meta[k]), sort!(collect(keys(d.meta))))
+    _text(io, d.blocks)
+end
+_inlines_text(io, x::Union{MetaInlines, MetaBlocks}) = _text(io, x.content)
+_inlines_text(io, x::MetaList) = foreach(y -> _inlines_text(io, y), x.content)
+_inlines_text(io, x::MetaMap) = foreach(k -> _inlines_text(io, x.content[k]), sort!(collect(keys(x.content))))
+_inlines_text(io, ::Union{MetaString, MetaBool}) = nothing
 function _text(io, x::Quoted)
     l, r = _QUOTES[x.quote_type]
     print(io, l); _text(io, x.content); print(io, r)

@@ -118,11 +118,40 @@ function scenario_meta()
     Filters([(f, :typewise)])
 end
 
+function scenario_newdoc()
+    function f(d::Pandoc)
+        title = d.meta["title"]::MetaInlines
+        Pandoc(Header(1, title.content), Para("made anew"); meta = d.meta)
+    end
+    f(s::Str) = Str(uppercase(s.text))
+    Filters([(f, :topdown)])
+end
+
+function scenario_twice()
+    f(c::Code) = [c, c]
+    function f(p::Para)
+        i = findfirst(x -> x isa Code, p.content)
+        i === nothing || (p.content[i].text = "changed")
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
+function scenario_metacount()
+    add(m::Panir.Meta) = (m["added"] = MetaInlines(Str("new")); nothing)
+    n = Ref(0)
+    number(s::Str) = Str(s.text * string(n[] += 1))
+    number(m::Panir.Meta) = (m["calls"] = MetaString(string(n[] += 1)); nothing)
+    number(d::Pandoc) = (push!(d.blocks, Para("calls: $(n[] += 1)")); nothing)
+    Filters([(add, :typewise), (number, :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
     "bottomup" => scenario_bottomup, "skip" => scenario_skip, "toplists" => scenario_toplists,
     "once" => scenario_once, "lists" => scenario_lists, "meta" => scenario_meta,
+    "newdoc" => scenario_newdoc, "twice" => scenario_twice, "metacount" => scenario_metacount,
 )
 
 @testset "filters as pandoc's Lua" begin

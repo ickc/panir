@@ -79,9 +79,10 @@ def test_tuples_and_dicts_become_products_and_pairs():
         ("p.content += [Para()]", "Para.content[3]: expected Inline"),
         ("p.content[1:2] = [Str('x'), Para()]", "Para.content[2]: expected Inline"),
         ("p.content[0] = 1.5", "Para.content[0]: expected Inline, got float 1.5"),
-        ("p.content = Str('x')", "wrap it in a list"),
+        ("Row().cells = Cell()", "wrap it in a list"),
+        ("Span(classes={'a', 'b'})", "a set has no order"),
         ("Header(True, Str('x'))", "Header.level: expected an int, got bool True"),
-        ("BulletList([Para()], [Str('y')])", "BulletList.content[*][0]: expected Block"),
+        ("BulletList([Para()], [1])", "BulletList.content[*][0]: expected Block"),
         ("Math('Bogus', 'x')", "one of: DisplayMath, InlineMath"),
         ("Pandoc(meta={'x': object()})", "Pandoc.meta['x']: expected MetaValue"),
     ],
@@ -138,17 +139,24 @@ def test_copy_and_pickle():
         other.blocks[0].content.append(Str("y"))
         assert other != doc
         with pytest.raises(ASTTypeError):
-            other.blocks.append(Str("x"))
+            other.blocks.append(1)
     shallow = copy.copy(doc)
     assert shallow.blocks is doc.blocks
 
 
 def test_pattern_matching():
-    match Header(1, Str("Hi")):
-        case Header(1, _, [Str(text)]):
+    # positional patterns in the constructor's order, not the fields'
+    match Header(1, Str("Hi"), identifier="h"):
+        case Header(1, [Str(text)], Attr("h")):
             assert text == "Hi"
         case _:
             pytest.fail("no match")
+    match Link(Str("x"), url="u"):
+        case Link([Str("x")], Attr(), Target(url)):
+            assert url == "u"
+        case _:
+            pytest.fail("no match")
+    assert Cell.__match_args__ == ("content", "attr", "alignment", "row_span", "col_span")
 
 
 def test_isinstance_by_type():

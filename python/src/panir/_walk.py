@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, TypeVar, overload
 
 from ._core import (
     ASTTypeError,
@@ -20,9 +20,11 @@ from ._core import (
     _MapSpec,
     _MaybeSpec,
     _Spec,
+    _sum_of,
     _TupleSpec,
     add_note,
     format_path,
+    too_deep,
 )
 from .conversion import Conversion
 
@@ -47,18 +49,18 @@ class Context:
     """
 
     __slots__ = (
-        "_container",
-        "_doc",
         "_frames",
         "_keys",
-        "_parent",
+        "_root",
         "_skip",
         "_top_down",
-        "_walker",
+        "container",
         "conversion",
+        "doc",
         "field",
         "format",
         "index",
+        "parent",
     )
 
     def __init__(
@@ -67,42 +69,20 @@ class Context:
         doc: Any,
         conversion: Conversion,
         top_down: bool = False,
-        walker: _Walker | None = None,
+        root: str = "",
     ) -> None:
         self._frames, self._top_down, self._skip = frames, top_down, False
-        self._walker = walker
+        self._root = root
         # each frame's key now: the walker changes them as it goes on
         self._keys = tuple([f[3] for f in frames])
-        self._doc, self.conversion, self.format = doc, conversion, conversion.format
+        self.doc, self.conversion, self.format = doc, conversion, conversion.format
         if frames:
-            self._parent, self.field, self._container, key = frames[-1]
+            self.parent, self.field, self.container, key = frames[-1]
             # in a list of lists (a BulletList's items), the place in the
             # innermost list; the rest of the key is only in the path
             self.index = key[-1] if type(key) is tuple else key
         else:
-            self._parent = self.field = self._container = self.index = None
-
-    def _mend(self) -> None:
-        # the lists being walked made what they are now before any is looked
-        # at (_Walker.many makes a list's result aside: _Splice)
-        w = self._walker
-        if w is not None and w.splicing:
-            w.mend()
-
-    @property
-    def parent(self) -> Any:
-        self._mend()
-        return self._parent
-
-    @property
-    def container(self) -> Any:
-        self._mend()
-        return self._container
-
-    @property
-    def doc(self) -> Any:
-        self._mend()
-        return self._doc
+            self.parent = self.field = self.container = self.index = None
 
     @property
     def path(self) -> tuple:
@@ -116,34 +96,30 @@ class Context:
 
     @property
     def where(self) -> str:
-        return format_path(self.path) or "the document"
+        """``path`` as text, from the document, or from the fragment being
+        walked: ``Para.content[1]``, ``inlines[0]``."""
+        path = format_path(self.path)
+        if not self._root:
+            return path or "the document"
+        if not path or path.startswith("["):
+            return self._root + path
+        return f"{self._root}.{path}"
 
     @property
     def ancestors(self) -> list[Node]:
         """The nodes above this one, the document first, the parent last."""
-        self._mend()
         seen: list[Node] = []
         for parent, *_ in self._frames:
-            if not seen or seen[-1] is not parent:
+            if parent is not None and (not seen or seen[-1] is not parent):
                 seen.append(parent)
         return seen
 
     def _sibling(self, step: int) -> Any:
-        container, index = self._container, self.index
+        container, index = self.container, self.index
         if not isinstance(container, list) or not isinstance(index, int):
             return None
         i = index + step
-        if i < 0:
-            return None
-        w = self._walker
-        if w is not None:
-            for sp in w.splicing:
-                if sp.lst is container:
-                    if len(container) != len(sp.was):  # changed from elsewhere
-                        w.mend()
-                        break
-                    return sp.get(i)  # the list as it is now, without making it so
-        return container[i] if i < len(container) else None
+        return container[i] if 0 <= i < len(container) else None
 
     @property
     def next(self) -> Any:
@@ -229,69 +205,6 @@ def _find(lst: list, node: Node, label: str) -> int:
     )
 
 
-class _Splice:
-    """The walk of a list once one of its nodes was replaced by none or
-    several: the list keeps its nodes (but for those replaced by one) while
-    the result is made aside, in ``out``; ``lst[at:]`` are the nodes not in it
-    yet, the first perhaps being walked. The list as it is now is ``out +
-    lst[at:]``: it becomes that (``mend``) at the end of its walk, or when
-    anything reaches it through a Context; ``out`` is then None.
-
-    ``was`` is what the list holds as the walk left it, and the nodes it
-    went through: something else may have changed it meanwhile (a function,
-    through the document it closed over). ``marks``: from the k-th of those
-    nodes on, the results of each begin ``off`` after its own place, ``(k,
-    off)``, from where that changes."""
-
-    __slots__ = ("at", "lst", "marks", "out", "was")
-
-    def __init__(self, lst: list, out: list, at: int) -> None:
-        self.lst, self.at = lst, at
-        self.out: list | None = out
-        self.was = list.copy(lst)
-        self.marks = [(at, len(out) - at)]
-
-    def mend(self) -> None:
-        out = self.out
-        if out is None:
-            return
-        lst = self.lst
-        if list.__eq__(lst, self.was):  # (nodes as they were, or equal ones)
-            list.__setitem__(lst, slice(0, self.at), out)
-        else:
-            list.__setitem__(lst, slice(None), self.merged(out))
-        self.out = None
-
-    def merged(self, out: list) -> list:
-        """The list as changed from elsewhere, each node the walk went
-        through replaced by what it made of it."""
-        at, was = self.at, self.was
-        starts, off, marks, m = [], 0, self.marks, 0
-        for k in range(at + 1):
-            while m < len(marks) and marks[m][0] <= k:
-                off = marks[m][1]
-                m += 1
-            starts.append(k + off)
-        walked = {id(was[k]): k for k in range(at)}
-        new: list = []
-        for x in self.lst:
-            k = walked.get(id(x))
-            if k is None:
-                new.append(x)
-            else:
-                new.extend(out[starts[k] : starts[k + 1]])
-        return new
-
-    def get(self, p: int) -> Any:
-        """The node at ``p`` in the list as it is now, or None."""
-        out = self.out
-        assert out is not None
-        if p < len(out):
-            return out[p]
-        k = self.at + p - len(out)
-        return self.lst[k] if k < len(self.lst) else None
-
-
 Action = Callable[[Node, Context], Any]
 # A function and whether it takes the context, for a class of nodes or for
 # lists of a class's nodes.
@@ -315,28 +228,13 @@ class _Walker:
         doc: Any,
         conversion: Conversion,
         lists: dict[type, Handler] | None = None,
-        splicing: list[_Splice] | None = None,
+        root: str = "",
     ) -> None:
-        self.find, self.top_down = find, top_down
+        self.find, self.top_down, self.root = find, top_down, root
         self.doc, self.conversion = doc, conversion
         self.lists = lists or {}
         self.frames: list = []
         self.plans: dict[type, tuple] = {}
-        # the lists being walked whose result is made aside: those of every
-        # pass of a filter's walk (a context may be kept from one to the next)
-        self.splicing: list[_Splice] = [] if splicing is None else splicing
-
-    def mend(self) -> None:
-        """Make every list being walked what it is now (out + the rest)."""
-        for sp in self.splicing:
-            sp.mend()
-        self.splicing.clear()
-
-    def unsplice(self, sp: _Splice) -> None:
-        """Make the list ``sp`` is of what it is now; its walk goes on in place."""
-        if sp.out is not None:
-            sp.mend()
-            self.splicing.remove(sp)
 
     def plan(self, cls: type) -> tuple:
         """For nodes of ``cls``: (kids, function or None, whether it takes the context)."""
@@ -345,7 +243,14 @@ class _Walker:
         return plan
 
     def context(self) -> Context:
-        return Context(tuple(self.frames), self.doc, self.conversion, self.top_down, self)
+        return Context(tuple(self.frames), self.doc, self.conversion, self.top_down, self.root)
+
+    def returned(self, e: BaseException, fn: Callable[..., Any], what: str) -> None:
+        """Note on an error in what ``fn`` returned which function, and where."""
+        if not getattr(e, "_panir_noted", False):
+            where = self.context().where
+            add_note(e, f"returned by filter function {fn.__qualname__}, for the {what} at {where}")
+            e._panir_noted = True  # type: ignore[attr-defined]
 
     def call(self, fn: Callable[..., Any], wants_ctx: bool, x: Any, what: str) -> tuple[Any, bool]:
         """``fn`` on ``x``: its result, and whether to skip what is in ``x``.
@@ -371,7 +276,7 @@ class _Walker:
             if fn is not None:
                 result, skip = self.call(fn, wants_ctx, node, type(node).__name__)
                 if result is not None and result is not node:
-                    node = self.single(result, where)
+                    node = self.single(result, where, fn, type(node).__name__)
                     kids = (self.plans.get(type(node)) or self.plan(type(node)))[0]
             if kids and not skip:
                 self.children(node, kids)
@@ -381,14 +286,17 @@ class _Walker:
         if fn is not None:
             result = self.call(fn, wants_ctx, node, type(node).__name__)[0]
             if result is not None:
-                node = self.single(result, where)
+                node = self.single(result, where, fn, type(node).__name__)
         return node
 
-    @staticmethod
-    def single(result: Any, where: str) -> Node:
+    def single(self, result: Any, where: str, fn: Callable[..., Any], what: str) -> Node:
+        """What a function returned for a node in a position that holds one
+        (pandoc's Lua has no functions for these: no conversions)."""
         if isinstance(result, Node):
             return result
-        raise ASTTypeError(where, "one node (this position holds one)", _describe(result))
+        e = ASTTypeError(where, "one node (this position holds one)", _describe(result))
+        self.returned(e, fn, what)
+        raise e
 
     def whole(
         self, lst: list, spec: _ListSpec, parent: Node, field: str | None, key: tuple
@@ -400,12 +308,23 @@ class _Walker:
         if handler is None:
             return lst, False
         self.frames.append([parent, field, None, key or None])
+        what = f"list of {cls.__name__}s"
         try:
-            result, skip = self.call(*handler, lst, f"list of {cls.__name__}s")
+            result, skip = self.call(*handler, lst, what)
             if result is not None and result is not lst:
-                if isinstance(result, (Node, str)) or not isinstance(result, (list, tuple)):
-                    raise ASTTypeError(spec.label, f"a list of {cls.__name__}s", _describe(result))
-                lst = NodeList(spec, _distinct(result))  # checked
+                try:
+                    # as pandoc's Lua: a string is its words (Plain text,
+                    # where blocks go), one node a list of it
+                    if isinstance(result, (Node, str)):
+                        result = spec.coerce(result)
+                    elif not isinstance(result, (list, tuple)):
+                        raise ASTTypeError(
+                            spec.label, f"a list of {cls.__name__}s", _describe(result)
+                        )
+                    lst = spec.cls(spec, _distinct(result))  # checked
+                except ASTTypeError as e:
+                    self.returned(e, handler[0], what)
+                    raise
             return lst, skip
         finally:
             self.frames.pop()
@@ -449,141 +368,52 @@ class _Walker:
                         self.children(node, kids)
                     i += 1
                     continue
-                if not isinstance(result, item):
-                    new = self.several(result, lst, spec, i)
-                    if len(new) != 1:
-                        # none or several: the rest of the walk makes the list aside
-                        self.aside(lst, spec, frame, outer, i, new, skip)
-                        break
-                    result = new[0]
-                list.__setitem__(lst, i, result)
+                if isinstance(result, item):
+                    list.__setitem__(lst, i, result)
+                    n = 1
+                else:
+                    new = self.several(result, lst, spec, i, fn, type(node).__name__)
+                    list.__setitem__(lst, slice(i, i + 1), new)  # (checked)
+                    n = len(new)
                 if top_down and not skip:
-                    kids = (plans.get(type(result)) or plan(type(result)))[0]
-                    if kids:
-                        self.children(result, kids)
-                i += 1
+                    for _ in range(n):
+                        frame[3] = outer + (i,) if outer else i
+                        node = lst[i]
+                        kids = (plans.get(type(node)) or plan(type(node)))[0]
+                        if kids:
+                            self.children(node, kids)
+                        i += 1
+                else:
+                    i += n
         finally:
             self.frames.pop()
         if self.lists and not top_down:
             return self.whole(lst, spec, parent, field, outer)[0]
         return lst
 
-    @staticmethod
-    def several(result: Any, lst: list, spec: _ListSpec, i: int) -> list:
-        """What a function returned for ``lst[i]``, not one node of its list's class."""
-        if isinstance(result, Node):
-            result = [result]  # of another type: NodeList says so
-        elif isinstance(result, tuple):
-            result = list(result)
-        elif not isinstance(result, list):
-            raise ASTTypeError(
-                spec.label + f"[{i}]", "a node, a list of nodes or None", _describe(result)
-            )
-        check = lst._check  # type: ignore[attr-defined]
-        return [check(x, i + k) for k, x in enumerate(_distinct(result))]
-
-    def aside(
-        self, lst: list, spec: _ListSpec, frame: list, outer: tuple, i: int, new: list, skip: bool
-    ) -> None:
-        """The rest of ``many``'s walk once ``lst[i]`` was replaced by ``new``
-        (none or several nodes): the result is made aside, in ``out``.
-
-        Replacing in place moved all that follows, every time (quadratic).
-        Meanwhile the list keeps the nodes still to walk, whoever looks at it,
-        and it becomes out + those at the end, after an error too. Anything
-        that reaches it through a Context makes it that first (mend: ``sp.out``
-        is then None), as does a change to it from elsewhere (seen by its
-        length, or the node's place), and the walk goes on in place (``out``
-        None), as before. ``i`` is the node's place in the result; aside, the
-        node is ``lst[sp.at]``, and ``i == len(out)`` until it is in ``out``.
-        """
-        top_down, plans, plan = self.top_down, self.plans, self.plan
-        item = spec.item.cls  # type: ignore[attr-defined]
-        out: list | None = list.__getitem__(lst, slice(0, i))
-        out.extend(new)
-        sp = _Splice(lst, out, i + 1)
-        self.splicing.append(sp)
-        n0 = len(lst)  # (as long as nothing else changes it)
+    def several(
+        self, result: Any, lst: list, spec: _ListSpec, i: int, fn: Callable[..., Any], what: str
+    ) -> list:
+        """What a function returned for ``lst[i]``, not one node of its
+        list's class: none, one or several to put there, converted as
+        pandoc's Lua converts them (a string where inlines go is its words,
+        where blocks go Plain text; an inline where blocks go, Plain)."""
         try:
-            n = len(new)
-            while True:
-                # (here the node's n replacements are in the result, from i)
-                if top_down and not skip:
-                    for _ in range(n):
-                        frame[3] = outer + (i,) if outer else i
-                        node = lst[i] if out is None else out[i]
-                        kids = (plans.get(type(node)) or plan(type(node)))[0]
-                        if kids:
-                            self.children(node, kids)
-                            if out is not None and (sp.out is None or len(lst) != n0):
-                                self.unsplice(sp)
-                                out = None  # mended: in place
-                        i += 1
-                else:
-                    i += n
-                # the next node
-                if out is None:
-                    if i >= len(lst):
-                        break
-                    node = lst[i]
-                else:
-                    if sp.at >= len(lst):
-                        break
-                    node = sp.was[sp.at] = lst[sp.at]  # (another may have put it there)
-                kids, fn, wants_ctx = plans.get(type(node)) or plan(type(node))
-                frame[3] = outer + (i,) if outer else i
-                if fn is None:
-                    if kids:
-                        self.children(node, kids)
-                        if out is not None and (
-                            sp.out is None or len(lst) != n0 or lst[sp.at] is not node
-                        ):
-                            self.unsplice(sp)
-                            out = None  # mended: in place, the node at i
-                    if out is not None:
-                        out.append(node)
-                        sp.at += 1
-                    n, skip = 1, True
-                    continue
-                if kids and not top_down:
-                    self.children(node, kids)
-                result, skip = self.call(fn, wants_ctx, node, type(node).__name__)
-                if out is not None and (sp.out is None or len(lst) != n0 or lst[sp.at] is not node):
-                    self.unsplice(sp)
-                    out = None  # mended (below, or by the function): in place
-                if out is None and (i >= len(lst) or lst[i] is not node):
-                    # the function changed the list itself (ctx.container)
-                    i = _find(lst, node, spec.label)
-                    frame[3] = outer + (i,) if outer else i
-                n = 1
-                if result is None or result is node:
-                    if out is not None:
-                        out.append(node)
-                        sp.at += 1
-                    continue
-                if not isinstance(result, item):
-                    new = self.several(result, lst, spec, i)
-                    n = len(new)
-                    if n == 1:
-                        result = new[0]
-                if n == 1:
-                    if out is None:
-                        list.__setitem__(lst, i, result)
-                    else:
-                        list.__setitem__(lst, sp.at, result)  # in the list too
-                        sp.was[sp.at] = result
-                        out.append(result)
-                        sp.at += 1
-                    continue
-                if out is not None:
-                    out.extend(new)
-                    sp.at += 1
-                    sp.marks.append((sp.at, len(out) - sp.at))
-                else:
-                    list.__setitem__(lst, slice(i, i + 1), new)
-        finally:
-            # (all walked, or an error: the list whole either way)
-            self.unsplice(sp)
+            if isinstance(result, Node):
+                result = [result]  # (one of another class: converted, or an error)
+            elif isinstance(result, str):
+                result = spec.coerce(result)
+            elif isinstance(result, tuple):
+                result = list(result)
+            elif not isinstance(result, list):
+                raise ASTTypeError(
+                    spec.label + f"[{i}]", "a node, a list of nodes or None", _describe(result)
+                )
+            check = lst._check  # type: ignore[attr-defined]
+            return [check(x, i + k) for k, x in enumerate(_distinct(result))]
+        except ASTTypeError as e:
+            self.returned(e, fn, what)
+            raise
 
     def value(self, value: Any, spec: _Spec, parent: Node, field: str | None, key: tuple) -> Any:
         """Walk a field's value; returns it, or its replacement."""
@@ -625,7 +455,7 @@ class _Walker:
                             del value[k]
                             continue
                         if result is not None and result is not x:
-                            x = self.single(result, f"{spec.label}[{k!r}]")
+                            x = self.single(result, f"{spec.label}[{k!r}]", fn, type(x).__name__)  # type: ignore[arg-type]
                             value[k] = x
                             kids = (self.plans.get(type(x)) or self.plan(type(x)))[0]
                         if self.top_down and kids and not skip:
@@ -663,8 +493,35 @@ class _Walker:
                 setattr(node, f, new)
 
 
+_N = TypeVar("_N", bound=Node)
+_L = TypeVar("_L", bound=list)
+
+
+@overload
+def walk(
+    node: _L,
+    action: Action,
+    *,
+    top_down: bool = False,
+    format: str | None = None,
+    conversion: Conversion | None = None,
+    doc: Any = None,
+    wants: Callable[[type], bool] | None = None,
+) -> _L: ...
+@overload
 def walk(
     node: Node,
+    action: Action,
+    *,
+    top_down: bool = False,
+    format: str | None = None,
+    conversion: Conversion | None = None,
+    doc: Any = None,
+    wants: Callable[[type], bool] | None = None,
+) -> Node: ...
+@too_deep("walk")
+def walk(
+    node: Any,
     action: Action,
     *,
     top_down: bool = False,
@@ -683,10 +540,46 @@ def walk(
     ``conversion`` (or just its output ``format``) is what ``ctx.conversion``
     tells the action.
 
-    Returns ``node``, or what replaced it.
+    Returns ``node``, or what replaced it. ``node`` may also be a list of
+    nodes (``para.content``): each is walked, and the list changed in place
+    and returned.
     """
     conv = conversion if conversion is not None else Conversion(format)
     handler = (action, True)
     find = (lambda cls: handler) if wants is None else (lambda cls: handler if wants(cls) else None)
-    w = _Walker(find, top_down, node if doc is None else doc, conv)
-    return w.one(node, type(node).__name__)
+    if isinstance(node, Node):
+        # (paths from the document, or else from the node, named)
+        root = "" if doc is not None or node._encoding == "root" else type(node).__name__
+        w = _Walker(find, top_down, node if doc is None else doc, conv, root=root)
+        return w.one(node, type(node).__name__)
+    if isinstance(node, NodeList) and isinstance(node._spec.item, _ClassSpec):
+        lst, spec = node, node._spec
+    elif isinstance(node, list):
+        if not node:
+            return node
+        spec = _nodes_spec(node)
+        lst = spec.cls(spec, node)
+    else:
+        raise TypeError(f"walk() takes a node or a list of nodes, got {_describe(node)}")
+    w = _Walker(find, top_down, doc, conv, root=spec.label)
+    w.many(lst, spec, None, None, ())  # type: ignore[arg-type]
+    if lst is not node:
+        node[:] = lst
+    return node
+
+
+_NODES_SPECS: dict[type, _ListSpec] = {}
+
+
+def _nodes_spec(items: list) -> _ListSpec:
+    """How to check a list of nodes not in the AST: by its elements' type
+    (the sum type all are of, or their class)."""
+    kinds = {_sum_of(type(x)) or type(x) for x in items}
+    if len(kinds) != 1 or not issubclass(next(iter(kinds)), Node):
+        raise TypeError(f"expected a list of nodes of one type, got {_describe(items)}")
+    cls = next(iter(kinds))
+    spec = _NODES_SPECS.get(cls)
+    if spec is None:
+        name = cls.__name__.removesuffix("Base").lower() + "s"
+        spec = _NODES_SPECS[cls] = _ListSpec(_ClassSpec(cls, name + "[*]"), name)
+    return spec
