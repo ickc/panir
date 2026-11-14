@@ -21,6 +21,7 @@
 mod attr;
 mod filter;
 mod generated;
+mod meta;
 mod path;
 mod stringify;
 mod text;

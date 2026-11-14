@@ -256,6 +256,25 @@ What a port of a Lua filter trips over:
 - Strings convert as in pandoc's Lua: `inlines("hello world")` is its words
   and spaces, `blocks("...")` `Plain` text, and `"x".into()` is a `Str`
   where one inline goes, `Plain` text where one block goes.
+- Metadata converts from plain values as in pandoc's Lua (`From`, and
+  `collect`): a string is a `MetaString`, a `bool` a `MetaBool`, an inline
+  or a `Vec<Inline>` `MetaInlines`, a block or a `Vec<Block>` `MetaBlocks`,
+  a `Vec<MetaValue>` (or anything collected) a `MetaList`, a `Meta` (or
+  pairs collected) a `MetaMap`: a map of lists of strings is one expression.
+
+  ```rust
+  use std::collections::BTreeMap;
+  use panir::MetaValue;
+
+  let by_property = BTreeMap::from([("cites", vec!["a", "b"]), ("extends", vec![])]);
+  let cites: MetaValue = by_property
+      .into_iter()
+      .map(|(p, keys)| (p, keys.into_iter().collect::<MetaValue>()))
+      .collect();
+  let mut doc = panir::Pandoc::new(vec![]);
+  doc.meta.insert("cito_cites".into(), cites);
+  doc.meta.insert("draft".into(), true.into());
+  ```
 - `stringify(&x)` is pandoc's Lua `pandoc.utils.stringify`, exactly (both
   corpora and metadata of every kind are checked against pandoc): the text
   of a document, its `meta`, a block, an inline, a metadata value, a
