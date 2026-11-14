@@ -253,6 +253,13 @@ What a port of a Lua filter trips over:
   `header-includes` takes): `items(meta.get("x"))`, a `MetaList`'s items,
   nothing for a missing value, any other value alone; a new list, of the
   document's values.
+- **Writing metadata** (Lua's `meta.x = v`): setting a field converts a
+  plain value as Lua does (`from_python`): a string is a `MetaString`, a
+  bool a `MetaBool`, a number a `MetaString` of it, an inline or a list of
+  inlines `MetaInlines`, a block or a list of blocks `MetaBlocks`, another
+  list a `MetaList`, a dict a `MetaMap`. `to_python(v)` reads metadata as
+  Lua gives it: strings, bools, lists, dicts, and inlines and blocks as
+  lists of them (copies, as Lua's are values); `stringify(v)` its text.
 
 ```python
 >>> meta = Pandoc(meta={"draft": False, "title": "", "toc": {"depth": "2"}, "tags": "a"}).meta
@@ -264,6 +271,11 @@ MetaString('final')
 (MetaString('2'), None)
 >>> items(meta.get("tags")), items(meta.get("missing"))
 ([MetaString('a')], [])
+>>> meta["name"] = [Str("Ada"), Space(), Str("L.")]
+>>> meta["name"]
+MetaInlines(Str('Ada'), Space(), Str('L.'))
+>>> to_python(meta["toc"]), to_python(meta["name"])[0]
+({'depth': '2'}, Str('Ada'))
 ```
 
 ### Fragments

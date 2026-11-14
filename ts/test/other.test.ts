@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  applyFilter, ASTDecodeError, ASTTypeError, Attr, Caption, Cell, check, Cite, Citation, fromJSON, Math, MetaBool,
+  applyFilter, ASTDecodeError, ASTTypeError, Attr, Caption, Cell, check, Cite, Citation, Emph, fromJSON, Math, MetaBool,
   MetaInlines, MetaList, MetaString, Pandoc, Para, Quoted, RawInline, Row, serialize, Str, stringify, Table, TableBody,
   TableHead, toJSON, toPlain, walk,
 } from "../src/index.ts";
@@ -147,9 +147,14 @@ test("an enum takes only its values", () => {
 });
 
 test("toPlain of each kind, stringify of a raw <br>", () => {
-  assert.equal(toPlain(MetaInlines(["a", RawInline("html", "<br>"), "b"])), "a b");
-  assert.equal(toPlain(MetaInlines(["a", RawInline("latex", "<br>"), "b"])), "ab");
-  assert.equal(toPlain(MetaInlines(["a", RawInline("html", "<b>"), "b"])), "ab");
+  assert.equal(stringify(MetaInlines(["a", RawInline("html", "<br>"), "b"])), "a b");
+  assert.equal(stringify(MetaInlines(["a", RawInline("latex", "<br>"), "b"])), "ab");
+  assert.equal(stringify(MetaInlines(["a", RawInline("html", "<b>"), "b"])), "ab");
+  // inlines as Lua's Inlines: a list of them, copies
+  const inl = MetaInlines(["a", Emph("b")]);
+  const plain = toPlain(inl) as unknown[];
+  assert.deepEqual(plain, inl.content);
+  assert.notEqual(plain[1], inl.content[1]);
   assert.equal(toPlain(MetaString("s")), "s");
   assert.equal(toPlain(MetaBool(false)), false);
   assert.deepEqual(serialize(Pandoc([], { meta: { k: toPlain(MetaList(["a"])) as string[] } })),

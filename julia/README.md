@@ -225,12 +225,17 @@ What a port of a Lua filter trips over:
   `header-includes` takes): `items(get(meta, "x", nothing))`, a
   `MetaList`'s items, nothing for a missing value, any other value alone;
   a new vector, of the document's values.
+- **Writing metadata** (Lua's `meta.x = v`): setting a field converts a
+  plain value as Lua does (above, in "The AST"); reading needs no
+  conversion: a `MetaMap`'s content is a `Dict`, a `MetaList`'s a
+  `Vector`, `MetaInlines`' a `Vector{Inline}`.
 
 ```julia
 meta = Pandoc(; meta = Dict("draft" => false, "title" => "", "toc" => Dict("depth" => "2"), "tags" => "a")).meta
 truthy(get(meta, "draft", nothing)), truthy(meta["title"]), truthy(get(meta, "missing", nothing))  # (false, true, false)
 lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")  # (MetaString("2"), nothing)
 items(meta["tags"]), items(get(meta, "missing", nothing))  # ([MetaString("a")], MetaValue[])
+meta["name"] = [Str("Ada"), Space(), Str("L.")]  # MetaInlines(Str("Ada"), Space(), Str("L."))
 ```
 
 ### Fragments

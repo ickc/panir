@@ -337,14 +337,26 @@ What a port of a Lua filter trips over:
   `header-includes` takes): `items(meta.x)`, a `MetaList`'s items, nothing
   for a missing value, any other value alone; a new array, of the
   document's values.
+- **Writing metadata** (Lua's `meta.x = v`): the metadata is a plain
+  object, whose fields don't convert what is put there: `fromPlain(v)`
+  converts a plain value as Lua does (a string is a `MetaString`, a
+  boolean a `MetaBool`, a number a `MetaString` of it, an inline or a list
+  of inlines `MetaInlines`, a block or a list of blocks `MetaBlocks`,
+  another list a `MetaList`, an object a `MetaMap`), as the constructors
+  do. `toPlain(v)` reads metadata as Lua gives it: strings, booleans,
+  arrays, objects, and inlines and blocks as arrays of them (copies, as
+  Lua's are values); `stringify(v)` its text.
 
 ```ts
-import { items, lookup, truthy } from "panir";
+import { fromPlain, items, lookup, toPlain, truthy } from "panir";
 
 const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" }, tags: "a" } }).meta;
 assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
 assert.deepEqual([lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")], [MetaString("2"), undefined]);
 assert.deepEqual([items(meta.tags), items(meta.missing)], [[MetaString("a")], []]);
+meta.name = fromPlain([Str("Ada"), Space(), Str("L.")]);
+assert.deepEqual(meta.name, MetaInlines([Str("Ada"), Space(), Str("L.")]));
+assert.deepEqual(toPlain(meta.toc!), { depth: "2" });
 ```
 
 ### Fragments

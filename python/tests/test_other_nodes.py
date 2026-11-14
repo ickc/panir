@@ -207,10 +207,13 @@ def test_setdefault_checks_and_converts():
     assert "x" not in doc.meta
 
 
-def test_to_python_of_text():
-    assert to_python(MetaBlocks(Para("a b"), Para("c"))) == "a bc"
-    assert to_python(MetaInlines(Str("a"), Emph(Str("b")))) == "ab"
-    assert to_python(MetaMap({"k": MetaInlines(Str("v"))})) == {"k": "v"}
+def test_to_python_of_inlines_and_blocks():
+    # lists of them, as Lua's Inlines and Blocks: copies
+    blocks = MetaBlocks(Para("a b"), Para("c"))
+    assert to_python(blocks) == [Para("a b"), Para("c")]
+    assert to_python(blocks)[0] is not blocks.content[0]
+    assert to_python(MetaInlines(Str("a"), Emph(Str("b")))) == [Str("a"), Emph(Str("b"))]
+    assert to_python(MetaMap({"k": MetaInlines(Str("v"))})) == {"k": [Str("v")]}
 
 
 def test_stringify_a_raw_br():

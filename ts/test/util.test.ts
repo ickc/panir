@@ -98,12 +98,16 @@ test("metadata to and from plain values, as pandoc's Lua converts", () => {
     draft: MetaBool(true), n: MetaString("3"), tags: MetaList([MetaString("a"), MetaInlines([Str("b")])]),
     title: MetaInlines([Str("T")]), body: MetaBlocks([Para("p")]), m: MetaMap({ k: MetaBool(false) }),
   }));
-  assert.deepEqual(toPlain(meta), { draft: true, n: "3", tags: ["a", "b"], title: "T", body: "p", m: { k: false } });
-  // a MetaBlocks and a MetaInlines become their text
-  assert.equal(toPlain(MetaBlocks([Para("a b"), Para("c")])), "a bc");
-  assert.equal(toPlain(MetaInlines([Emph("x"), Str("y")])), "xy");
+  const plain = { draft: true, n: "3", tags: ["a", [Str("b")]], title: [Str("T")], body: [Para("p")], m: { k: false } };
+  assert.deepEqual(toPlain(meta), plain);
+  // and back (as Lua: the inlines and blocks lists of them)
+  assert.deepEqual(fromPlain(plain), meta);
+  // a MetaBlocks and a MetaInlines become lists of them (copies), as Lua's Blocks and Inlines
+  assert.deepEqual(toPlain(MetaBlocks([Para("a b"), Para("c")])), [Para("a b"), Para("c")]);
+  assert.deepEqual(toPlain(MetaInlines([Emph("x"), Str("y")])), [Emph("x"), Str("y")]);
   assert.deepEqual(toPlain(parse(serialize(everyKindOfMetadata())).meta), {
-    z: "zs", b: true, m: { y: "my", a: "ma", f: false, l: ["l1", "l2"] }, i: "in ", k: "bl",
+    z: "zs", b: true, m: { y: "my", a: [Str("ma")], f: false, l: ["l1", [Para("l2")]] },
+    i: [Str("in"), Note([Para("note")]), RawInline("html", "<br/>")], k: [Para("bl")],
   });
   // what doesn't convert
   for (const bad of [null, undefined, () => 1, [1, Symbol("s")]]) {

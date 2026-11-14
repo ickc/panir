@@ -266,7 +266,7 @@ def test_stringify():
 
 def test_to_python():
     d = Pandoc(meta={"a": [True, "x", {"k": A.MetaInlines(Str("i"), Space(), Str("j"))}]})
-    assert A.to_python(d.meta) == {"a": [True, "x", {"k": "i j"}]}
+    assert A.to_python(d.meta) == {"a": [True, "x", {"k": [Str("i"), Space(), Str("j")]}]}
 
 
 def test_json_text_round_trip():

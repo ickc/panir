@@ -496,11 +496,11 @@ class Gen:
 # The sum types whose values convert from others, as in pandoc's Lua: a
 # string is a Str where one inline goes; where one block goes, a string is
 # Plain text, an inline or a list of inlines a Plain of them; metadata
-# converts from plain Python values (``from_python``).
+# converts from plain Python values, inlines and blocks (``from_python``).
 CONVERTED = {
     "Inline": "Inline | str",
     "Block": "Block | Inline | str | Sequence[Inline | str]",
-    "MetaValue": "MetaValue | str | bool | int | float"
+    "MetaValue": "MetaValue | Inline | Block | str | bool | int | float"
     " | Mapping[str, _MetaValueIn] | Sequence[_MetaValueIn]",
 }
 

@@ -212,6 +212,10 @@ What a port of a Lua filter trips over:
   `header-includes` takes): `items(meta.get("x"))`, a `MetaList`'s items,
   nothing for a missing value, any other value alone: a slice, borrowed
   from the document.
+- **Writing metadata** (Lua's `meta.x = v`): `meta.insert("x".into(),
+  v.into())` converts a plain value as Lua does (below, in "Types");
+  reading needs no conversion: a `MetaMap`'s content is a `BTreeMap`, a
+  `MetaList`'s a `Vec`, `MetaInlines`' a `Vec<Inline>`.
 
 ```rust
 use panir::{MetaValue, Pandoc, items, lookup, truthy};

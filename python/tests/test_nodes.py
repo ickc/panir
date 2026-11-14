@@ -19,7 +19,9 @@ from panir import (
     ListNumberStyle,
     Math,
     MathType,
+    MetaBlocks,
     MetaBool,
+    MetaInlines,
     MetaList,
     MetaMap,
     MetaString,
@@ -33,6 +35,8 @@ from panir import (
     Str,
     Table,
     Target,
+    from_python,
+    inlines,
 )
 
 
@@ -121,6 +125,27 @@ def test_metadata_from_python():
     assert doc.meta["m"] == MetaMap({"k": MetaString("v")})
     doc.meta["later"] = False
     assert doc.meta["later"] == MetaBool(False)
+    # inlines and blocks, as pandoc's Lua converts them; a list of other
+    # values (strings with inlines too) a MetaList of each
+    doc.meta["name"] = [Str("Ada"), Space(), Emph(Str("L"))]
+    assert doc.meta["name"] == MetaInlines(Str("Ada"), Space(), Emph(Str("L")))
+    doc.meta["one"] = Str("x")
+    assert doc.meta["one"] == MetaInlines(Str("x"))
+    doc.meta["body"] = [Para("p")]
+    assert doc.meta["body"] == MetaBlocks(Para("p"))
+    doc.meta["b"] = Para("p")
+    assert doc.meta["b"] == MetaBlocks(Para("p"))
+    doc.meta["mixed"] = [Str("a"), "x", Para("p")]
+    assert doc.meta["mixed"] == MetaList(
+        MetaInlines(Str("a")), MetaString("x"), MetaBlocks(Para("p"))
+    )
+    doc.meta["empty"] = []
+    assert doc.meta["empty"] == MetaList()
+    para = Para("a b")
+    doc.meta["from"] = para.content  # a node's list: a list of inlines too
+    assert doc.meta["from"] == MetaInlines(*inlines("a b"))
+    # and back: to_python's lists of inlines and blocks convert again
+    assert from_python(A.to_python(doc.meta["name"])) == doc.meta["name"]
 
 
 def test_repr_is_constructor_syntax():

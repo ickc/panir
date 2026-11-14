@@ -254,7 +254,14 @@ export function items(value: MetaValue | null | undefined): MetaValue[] {
   return value.t === "MetaList" ? [...value.content] : [value];
 }
 
-/** Metadata as plain values: string, boolean, array, object. `MetaInlines` and `MetaBlocks` become their text (`stringify`). */
+/**
+ * Metadata as plain values, as pandoc's Lua gives them to a filter: a
+ * `MetaString` a string, a `MetaBool` a boolean, a `MetaList` an array, a
+ * `MetaMap` (or the metadata) an object, `MetaInlines` and `MetaBlocks` an
+ * array of their inlines or blocks (copies: as in Lua, the plain value is
+ * not the document's). `fromPlain` converts it back (an empty array to a
+ * `MetaList`). For their text, `stringify`.
+ */
 export function toPlain(value: MetaValue | Meta): unknown {
   return deep("toPlain", () => plain(value));
 }
@@ -272,7 +279,7 @@ function plain(value: unknown): unknown {
       return (v as { text: string }).text;
     case "MetaInlines":
     case "MetaBlocks":
-      return stringify((v as { content: unknown }).content);
+      return copyOf((v as { content: unknown[] }).content);
   }
   if (typeof value === "object" && value !== null && !Array.isArray(value) && isMetaMap(value as Record<string, unknown>)) {
     const out: Record<string, unknown> = {};

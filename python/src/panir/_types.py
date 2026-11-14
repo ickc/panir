@@ -2537,9 +2537,7 @@ ColSpan: TypeAlias = int
 
 # What converts to metadata (a MetaValue, or a plain Python value: see
 # from_python), for constructors' parameters and fields' setters.
-_MetaValueIn: TypeAlias = (
-    "MetaValue | str | bool | int | float | Mapping[str, _MetaValueIn] | Sequence[_MetaValueIn]"
-)
+_MetaValueIn: TypeAlias = "MetaValue | Inline | Block | str | bool | int | float | Mapping[str, _MetaValueIn] | Sequence[_MetaValueIn]"
 
 # How Filter.on types a filter's functions, for type checkers only: a
 # function for a class of node takes it (and optionally a Context) and

@@ -161,13 +161,14 @@ def test_to_python():
     assert to_python(doc.meta) == {
         "z": "zs",
         "b": True,
-        "m": {"y": "my", "a": "ma", "f": False, "l": ["l1", "l2"]},
-        "i": "in ",
-        "k": "bl",
+        "m": {"y": "my", "a": [Str("ma")], "f": False, "l": ["l1", [Para("l2")]]},
+        "i": [Str("in"), Note(Para("note")), RawInline("html", "<br/>")],
+        "k": [Para("bl")],
     }
-    assert to_python(MetaBlocks(Para("a"), Para("b"))) == "ab"
     with pytest.raises(TypeError, match="not metadata"):
         to_python(Str("x"))  # type: ignore[arg-type]
+    # back again, but for an empty list of inlines (a MetaList)
+    assert Pandoc(meta=to_python(doc.meta)).meta == doc.meta
 
 
 def test_filter_metadata_function_sees_metadata():
