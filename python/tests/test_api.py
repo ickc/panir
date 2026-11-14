@@ -14,6 +14,7 @@ import subprocess
 import panir
 import pytest
 from panir import (
+    Alignment,
     ASTTypeError,
     Attr,
     Attributes,
@@ -195,8 +196,10 @@ def test_a_flattened_products_fields_through_the_node():
 LUA_ORDER = """
 function Pandoc(d)
   local c = pandoc.Citation("id", "AuthorInText", {pandoc.Str("pre")}, {pandoc.Str("suf")}, 3, 7)
+  local cell = pandoc.Cell(
+    {pandoc.Para("p"), pandoc.Para("q")}, "AlignRight", 2, 3, pandoc.Attr("c"))
   local body = pandoc.TableBody(
-    {pandoc.Row({pandoc.Cell("b")})}, {pandoc.Row({pandoc.Cell("h")})}, 1, pandoc.Attr("tb"))
+    {pandoc.Row({pandoc.Cell("b"), cell})}, {pandoc.Row({pandoc.Cell("h")})}, 1, pandoc.Attr("tb"))
   return pandoc.Pandoc({
     pandoc.Para({pandoc.Cite({pandoc.Str("txt")}, {c})}),
     pandoc.Table(pandoc.Caption("cap"), {{"AlignLeft", 0.5}}, pandoc.TableHead(), {body},
@@ -208,7 +211,8 @@ end
 
 def lua_order() -> Pandoc:
     c = Citation("id", "AuthorInText", "pre", "suf", 3, 7)
-    body = TableBody([Row(Cell("b"))], [Row(Cell("h"))], 1, identifier="tb")
+    cell = Cell([Para("p"), Para("q")], "AlignRight", 2, 3, identifier="c")
+    body = TableBody([Row(Cell("b"), cell)], [Row(Cell("h"))], 1, identifier="tb")
     table = Table(
         Caption("cap"),
         [("AlignLeft", ColWidth(0.5))],
@@ -227,12 +231,25 @@ def test_constructors_in_luas_order():
     assert (cite.citations[0].note_num, cite.citations[0].hash) == (3, 7)
     body = doc.blocks[1].bodies[0]
     assert (body.row_head_columns, len(body.head), len(body.body)) == (1, 1, 1)
+    cell = body.body[0].cells[1]
+    assert (cell.alignment, cell.row_span, cell.col_span) == (Alignment.AlignRight, 2, 3)
+    assert (len(cell.content), cell.identifier) == (2, "c")
     assert eval(repr(doc), vars(panir)) == doc
     match cite:
         case Cite(content, [Citation(id, mode)]):
             assert (stringify(content), id, mode) == ("txt", "id", CitationMode.AuthorInText)
         case _:
             raise AssertionError(cite)
+    match cell:
+        case Cell(content, Alignment.AlignRight, 2, col_span):
+            assert (stringify(content), col_span) == ("pq", 3)
+        case _:
+            raise AssertionError(cell)
+    # the content is one argument, as in Lua (it was *content)
+    assert Cell("a b") == Cell([Plain("a b")])
+    assert Cell("a", col_span=2).col_span == 2
+    with pytest.raises(ASTTypeError, match=r"Cell\.alignment"):
+        Cell(Para("a"), Para("b"))  # type: ignore[arg-type]
 
 
 @pytest.mark.skipif(PANDOC is None, reason="needs pandoc")

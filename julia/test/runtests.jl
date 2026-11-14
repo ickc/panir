@@ -47,7 +47,7 @@ end
     @test Div(xs).content == xs && Div(xs; identifier = "d").attr.identifier == "d"
     @test Header(2, [Str("a"), "b"]; identifier = "h").content == [Str("a"), Str("b")]
     @test Link([Str("x")]; url = "u").content == [Str("x")]
-    @test Cell(xs; col_span = 2).content == xs
+    @test Cell(xs, AlignDefault, 1, 2).content == xs && Cell(; content = xs, col_span = 2).col_span == 2
     @test Pandoc(xs).blocks == xs
     @test Row([Cell(), Cell()]).cells == [Cell(), Cell()]
     @test OrderedList([Plain("a")], [Plain("b")]).content == [[Plain(Str("a"))], [Plain(Str("b"))]]

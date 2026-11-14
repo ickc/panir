@@ -479,14 +479,14 @@ _default(::Type{Cell}, ::Val{:alignment}) = AlignDefault
 _default(::Type{Cell}, ::Val{:row_span}) = 1
 _default(::Type{Cell}, ::Val{:col_span}) = 1
 _default(::Type{Cell}, ::Val{:content}) = Block[]
-Cell(attr::Attr, alignment, row_span, col_span, content::AbstractVector) = Cell(_FIELDS, _own(Attr, attr), _own(Alignment, alignment), _own(RowSpan, row_span), _own(ColSpan, col_span), _own(Vector{Block}, content))
-function Cell(content::Union{Block, Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, alignment = AlignDefault, row_span = 1, col_span = 1)
+function Cell(content, alignment = AlignDefault, row_span = 1, col_span = 1; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Cell, :attr; identifier, classes, attributes)
-    Cell(_FIELDS, __attr, _own(Alignment, alignment), _own(RowSpan, row_span), _own(ColSpan, col_span), _variadic(Block, content))
+    Cell(_FIELDS, __attr, _own(Alignment, alignment), _own(RowSpan, row_span), _own(ColSpan, col_span), _own(Vector{Block}, content))
 end
-function Cell(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, alignment = AlignDefault, row_span = 1, col_span = 1)
+Base.show(io::IO, x::Cell) = _show_call(io, x, (:content, :alignment, :row_span, :col_span,), (:attr,))
+function Cell(; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, alignment = AlignDefault, row_span = 1, col_span = 1, content = Block[])
     __attr = _flat(Attr, attr, :Cell, :attr; identifier, classes, attributes)
-    Cell(_FIELDS, __attr, _own(Alignment, alignment), _own(RowSpan, row_span), _own(ColSpan, col_span), _variadic(Block, content))
+    Cell(_FIELDS, __attr, _own(Alignment, alignment), _own(RowSpan, row_span), _own(ColSpan, col_span), _own(Vector{Block}, content))
 end
 
 "pandoc's `CodeBlock`, a `Block`."
