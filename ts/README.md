@@ -214,7 +214,9 @@ its `index` there, `next`/`prev`, `path` and `where`, the `doc`,
 nodes of the list were deleted or spliced: a node replaced by none or
 several is spliced in place, so a list is as it is now however it is
 reached. Its types follow the function's: `ctx.next` of an inline is an
-`Inline`.
+`Inline`; `ctx.doc` is a `Pandoc` in a filter written in `runFilter`'s
+call (which runs on a document), elsewhere perhaps `undefined` (a
+fragment has none).
 
 ```ts
 const shout: Filter = {

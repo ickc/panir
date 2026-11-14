@@ -172,8 +172,12 @@ export type Traverse = "typewise" | "topdown" | "bottomup";
 /** The context a function gets when it can't skip children (not top-down: the children came first). */
 export type WalkedContext<S = unknown> = Omit<Context<S>, "skipChildren">;
 
-/** A function's context: top-down, one that can skip children. */
-type ContextFor<S, T extends Traverse> = [T] extends ["topdown"] ? Context<S> : WalkedContext<S>;
+/**
+ * A function's context: top-down, one that can skip children; `D`, the
+ * document's type (`Pandoc` where the filter always runs on one).
+ */
+type ContextFor<S, T extends Traverse, D> =
+  ([T] extends ["topdown"] ? Context<S> : WalkedContext<S>) & ([D] extends [Pandoc] ? { readonly doc: Pandoc } : unknown);
 
 /** What a function may return: nothing to keep the node, or what converts to its replacement. */
 type Returned<R> = R | void | undefined | null;
@@ -185,13 +189,16 @@ type Returned<R> = R | void | undefined | null;
  */
 type Fn<N, C, R> = { fn(node: N, ctx: C): Returned<R> }["fn"];
 
-/** A filter's functions, for the order `T`. */
-export type FilterFunctions<T extends Traverse = Traverse> = {
-  [K in keyof FilterTypes]?: Fn<FilterTypes[K]["node"], ContextFor<FilterTypes[K]["sibling"], T>, FilterTypes[K]["returns"]>;
+/**
+ * A filter's functions, for the order `T`; `D` is `Pandoc` for functions
+ * that always run on a document (`runFilter`'s): their `ctx.doc` is one.
+ */
+export type FilterFunctions<T extends Traverse = Traverse, D = Pandoc | undefined> = {
+  [K in keyof FilterTypes]?: Fn<FilterTypes[K]["node"], ContextFor<FilterTypes[K]["sibling"], T, D>, FilterTypes[K]["returns"]>;
 } & {
-  Inlines?: Fn<Inline[], ContextFor<never, T>, Inlines>;
-  Blocks?: Fn<Block[], ContextFor<never, T>, Blocks>;
-  Meta?: Fn<Meta, ContextFor<never, T>, { readonly [key: string]: MetaValueInit }>;
+  Inlines?: Fn<Inline[], ContextFor<never, T, D>, Inlines>;
+  Blocks?: Fn<Block[], ContextFor<never, T, D>, Blocks>;
+  Meta?: Fn<Meta, ContextFor<never, T, D>, { readonly [key: string]: MetaValueInit }>;
 };
 
 /**
