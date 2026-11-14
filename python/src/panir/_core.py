@@ -125,6 +125,12 @@ def _limit() -> str:
     )
 
 
+def fn_name(fn: Any) -> str:
+    """A filter function's name for messages (a callable object has no
+    ``__qualname__``)."""
+    return getattr(fn, "__qualname__", None) or repr(fn)
+
+
 def _filters_own(e: BaseException) -> bool:
     """Whether a ``RecursionError`` is a filter function's own, not the
     document's depth: it came out of a filter function (the walk noted

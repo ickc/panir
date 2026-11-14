@@ -35,6 +35,7 @@ from ._core import (
     _describe,
     _ListSpec,
     add_note,
+    fn_name,
     too_deep,
     unwritable,
 )
@@ -415,7 +416,7 @@ def _fragment(x: Any) -> tuple[NodeList, _ListSpec] | None:
 
 def _returned(e: BaseException, fn: Callable[..., Any], what: str, ctx: Context) -> None:
     if not getattr(e, "_panir_noted", False):
-        add_note(e, f"returned by filter function {fn.__qualname__}, for the {what} at {ctx.where}")
+        add_note(e, f"returned by filter function {fn_name(fn)}, for the {what} at {ctx.where}")
         e._panir_noted = True  # type: ignore[attr-defined]
 
 
@@ -425,7 +426,7 @@ def _call(fn: Callable[..., Any], wants_ctx: bool, x: Any, ctx: Context, what: s
         return fn(x, ctx) if wants_ctx else fn(x)
     except Exception as e:
         if not getattr(e, "_panir_noted", False):
-            add_note(e, f"in filter function {fn.__qualname__}, on the {what} at {ctx.where}")
+            add_note(e, f"in filter function {fn_name(fn)}, on the {what} at {ctx.where}")
             e._panir_noted = True  # type: ignore[attr-defined]
         raise
 
@@ -454,7 +455,7 @@ def _takes_context(fn: Callable[..., Any]) -> bool:
     if len(required) > 2 or not positional and not any(p.kind == p.VAR_POSITIONAL for p in params):
         raise TypeError(
             f"a filter function takes the node, and optionally a Context; "
-            f"{fn.__qualname__} takes {len(required)} arguments"
+            f"{fn_name(fn)} takes {len(required)} arguments"
         )
     if len(required) == 2:
         return True

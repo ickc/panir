@@ -173,3 +173,16 @@ def test_a_higher_recursion_limit_goes_deeper():
         everything(text("div", 400))
     finally:
         sys.setrecursionlimit(limit)
+
+
+def test_error_in_a_callable_object_keeps_its_error():
+    """A callable object has no ``__qualname__``: its error is its own,
+    noted (it was an AttributeError about ``__qualname__``)."""
+
+    class Boom:
+        def __call__(self, el, ctx):
+            raise ValueError("mine")
+
+    with pytest.raises(ValueError, match="mine") as e:
+        walk(Para("a"), Boom())
+    assert any("in filter function" in n for n in e.value.__notes__)
