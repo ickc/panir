@@ -21,7 +21,7 @@ function _example(T::Type, depth::Int)
     T isa Union && return _example(Base.typesplit(T, Nothing), depth)
     T <: Tuple && return T(Tuple(_example(F, depth) for F in fieldtypes(T)))
     isabstracttype(T) && return first(_examples(T, depth))
-    T((_example(F, depth) for F in fieldtypes(T))...)
+    fieldcount(T) == 0 ? T() : T(_FIELDS, (_example(F, depth) for F in fieldtypes(T))...)
 end
 
 _kinds(T) = sort!([S for (S, sum) in values(_tags()) if sum === T]; by = string)

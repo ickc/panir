@@ -55,85 +55,93 @@ const ColSpan = Int
 mutable struct Pandoc <: Node
     meta::Meta
     blocks::Vector{Block}
-    Pandoc(meta::AbstractDict, blocks::AbstractVector) = new(meta, blocks)
+    Pandoc(::_Fields, meta::Meta, blocks::Vector{Block}) = new(meta, blocks)
 end
 _encoding(::Type{Pandoc}) = :root
 _default(::Type{Pandoc}, ::Val{:meta}) = Dict{String, MetaValue}()
 _default(::Type{Pandoc}, ::Val{:blocks}) = Block[]
 _keys(::Type{Pandoc}) = ("meta", "blocks",)
-function Pandoc(blocks::Union{Block, AbstractString}...; meta = Dict{String, MetaValue}())
-    Pandoc(meta, _variadic(Block, blocks))
+Pandoc(meta::AbstractDict, blocks::AbstractVector) = Pandoc(_FIELDS, _own(Meta, meta), _own(Vector{Block}, blocks))
+function Pandoc(blocks::Union{Block, Inline, AbstractString}...; meta = Dict{String, MetaValue}())
+    Pandoc(_FIELDS, _own(Meta, meta), _variadic(Block, blocks))
 end
 function Pandoc(blocks::AbstractVector; meta = Dict{String, MetaValue}())
-    Pandoc(meta, _variadic(Block, blocks))
+    Pandoc(_FIELDS, _own(Meta, meta), _variadic(Block, blocks))
 end
 
 "pandoc's `Plain`, a `Block`."
 mutable struct Plain <: Block
     content::Vector{Inline}
-    Plain(content::AbstractVector) = new(content)
+    Plain(::_Fields, content::Vector{Inline}) = new(content)
 end
 _encoding(::Type{Plain}) = :value
+Plain(content::AbstractVector) = Plain(_FIELDS, _own(Vector{Inline}, content))
 function Plain(content::Union{Inline, AbstractString}...)
-    Plain(_variadic(Inline, content))
+    Plain(_FIELDS, _variadic(Inline, content))
 end
 
 "pandoc's `Para`, a `Block`."
 mutable struct Para <: Block
     content::Vector{Inline}
-    Para(content::AbstractVector) = new(content)
+    Para(::_Fields, content::Vector{Inline}) = new(content)
 end
 _encoding(::Type{Para}) = :value
+Para(content::AbstractVector) = Para(_FIELDS, _own(Vector{Inline}, content))
 function Para(content::Union{Inline, AbstractString}...)
-    Para(_variadic(Inline, content))
+    Para(_FIELDS, _variadic(Inline, content))
 end
 
 "pandoc's `LineBlock`, a `Block`."
 mutable struct LineBlock <: Block
     content::Vector{Vector{Inline}}
-    LineBlock(content::AbstractVector{<:AbstractVector}) = new(content)
+    LineBlock(::_Fields, content::Vector{Vector{Inline}}) = new(content)
 end
 _encoding(::Type{LineBlock}) = :value
-function LineBlock(content::Union{AbstractVector, AbstractString}...)
-    LineBlock(_variadic(Vector{Inline}, content))
+LineBlock(content::AbstractVector{<:AbstractVector}) = LineBlock(_FIELDS, _own(Vector{Vector{Inline}}, content))
+function LineBlock(content::Union{AbstractVector, Inline, AbstractString}...)
+    LineBlock(_FIELDS, _variadic(Vector{Inline}, content))
 end
 
 "pandoc's `RawBlock`, a `Block`."
 mutable struct RawBlock <: Block
     format::Format
     text::String
-    RawBlock(format, text) = new(format, text)
+    RawBlock(::_Fields, format::Format, text::String) = new(format, text)
 end
 _encoding(::Type{RawBlock}) = :array
+RawBlock(format, text) = RawBlock(_FIELDS, _own(Format, format), _own(String, text))
 
 "pandoc's `BlockQuote`, a `Block`."
 mutable struct BlockQuote <: Block
     content::Vector{Block}
-    BlockQuote(content::AbstractVector) = new(content)
+    BlockQuote(::_Fields, content::Vector{Block}) = new(content)
 end
 _encoding(::Type{BlockQuote}) = :value
-function BlockQuote(content::Union{Block, AbstractString}...)
-    BlockQuote(_variadic(Block, content))
+BlockQuote(content::AbstractVector) = BlockQuote(_FIELDS, _own(Vector{Block}, content))
+function BlockQuote(content::Union{Block, Inline, AbstractString}...)
+    BlockQuote(_FIELDS, _variadic(Block, content))
 end
 
 "pandoc's `BulletList`, a `Block`."
 mutable struct BulletList <: Block
     content::Vector{Vector{Block}}
-    BulletList(content::AbstractVector{<:AbstractVector}) = new(content)
+    BulletList(::_Fields, content::Vector{Vector{Block}}) = new(content)
 end
 _encoding(::Type{BulletList}) = :value
-function BulletList(content::Union{AbstractVector, AbstractString}...)
-    BulletList(_variadic(Vector{Block}, content))
+BulletList(content::AbstractVector{<:AbstractVector}) = BulletList(_FIELDS, _own(Vector{Vector{Block}}, content))
+function BulletList(content::Union{AbstractVector, Block, Inline, AbstractString}...)
+    BulletList(_FIELDS, _variadic(Vector{Block}, content))
 end
 
 "pandoc's `DefinitionList`, a `Block`."
 mutable struct DefinitionList <: Block
     content::Vector{Tuple{Vector{Inline}, Vector{Vector{Block}}}}
-    DefinitionList(content::AbstractVector{<:Tuple}) = new(content)
+    DefinitionList(::_Fields, content::Vector{Tuple{Vector{Inline}, Vector{Vector{Block}}}}) = new(content)
 end
 _encoding(::Type{DefinitionList}) = :value
+DefinitionList(content::AbstractVector{<:Tuple}) = DefinitionList(_FIELDS, _own(Vector{Tuple{Vector{Inline}, Vector{Vector{Block}}}}, content))
 function DefinitionList(content::Tuple...)
-    DefinitionList(_variadic(Tuple{Vector{Inline}, Vector{Vector{Block}}}, content))
+    DefinitionList(_FIELDS, _variadic(Tuple{Vector{Inline}, Vector{Vector{Block}}}, content))
 end
 
 "pandoc's `HorizontalRule`, a `Block`."
@@ -144,143 +152,158 @@ _encoding(::Type{HorizontalRule}) = :none
 "pandoc's `MetaMap`, a `MetaValue`."
 mutable struct MetaMap <: MetaValue
     content::Dict{String, MetaValue}
-    MetaMap(content::AbstractDict) = new(content)
+    MetaMap(::_Fields, content::Dict{String, MetaValue}) = new(content)
 end
 _encoding(::Type{MetaMap}) = :value
+MetaMap(content::AbstractDict) = MetaMap(_FIELDS, _own(Dict{String, MetaValue}, content))
 function MetaMap(; content = Dict{String, MetaValue}())
-    MetaMap(content)
+    MetaMap(_FIELDS, _own(Dict{String, MetaValue}, content))
 end
 
 "pandoc's `MetaList`, a `MetaValue`."
 mutable struct MetaList <: MetaValue
     content::Vector{MetaValue}
-    MetaList(content::AbstractVector) = new(content)
+    MetaList(::_Fields, content::Vector{MetaValue}) = new(content)
 end
 _encoding(::Type{MetaList}) = :value
-function MetaList(content::MetaValue...)
-    MetaList(_variadic(MetaValue, content))
+MetaList(content::AbstractVector) = MetaList(_FIELDS, _own(Vector{MetaValue}, content))
+function MetaList(content::Any...)
+    MetaList(_FIELDS, _variadic(MetaValue, content))
 end
 
 "pandoc's `MetaBool`, a `MetaValue`."
 mutable struct MetaBool <: MetaValue
     value::Bool
-    MetaBool(value) = new(value)
+    MetaBool(::_Fields, value::Bool) = new(value)
 end
 _encoding(::Type{MetaBool}) = :value
+MetaBool(value) = MetaBool(_FIELDS, _own(Bool, value))
 
 "pandoc's `MetaString`, a `MetaValue`."
 mutable struct MetaString <: MetaValue
     text::String
-    MetaString(text) = new(text)
+    MetaString(::_Fields, text::String) = new(text)
 end
 _encoding(::Type{MetaString}) = :value
+MetaString(text) = MetaString(_FIELDS, _own(String, text))
 
 "pandoc's `MetaInlines`, a `MetaValue`."
 mutable struct MetaInlines <: MetaValue
     content::Vector{Inline}
-    MetaInlines(content::AbstractVector) = new(content)
+    MetaInlines(::_Fields, content::Vector{Inline}) = new(content)
 end
 _encoding(::Type{MetaInlines}) = :value
+MetaInlines(content::AbstractVector) = MetaInlines(_FIELDS, _own(Vector{Inline}, content))
 function MetaInlines(content::Union{Inline, AbstractString}...)
-    MetaInlines(_variadic(Inline, content))
+    MetaInlines(_FIELDS, _variadic(Inline, content))
 end
 
 "pandoc's `MetaBlocks`, a `MetaValue`."
 mutable struct MetaBlocks <: MetaValue
     content::Vector{Block}
-    MetaBlocks(content::AbstractVector) = new(content)
+    MetaBlocks(::_Fields, content::Vector{Block}) = new(content)
 end
 _encoding(::Type{MetaBlocks}) = :value
-function MetaBlocks(content::Union{Block, AbstractString}...)
-    MetaBlocks(_variadic(Block, content))
+MetaBlocks(content::AbstractVector) = MetaBlocks(_FIELDS, _own(Vector{Block}, content))
+function MetaBlocks(content::Union{Block, Inline, AbstractString}...)
+    MetaBlocks(_FIELDS, _variadic(Block, content))
 end
 
 "pandoc's `Str`, a `Inline`."
 mutable struct Str <: Inline
     text::String
-    Str(text) = new(text)
+    Str(::_Fields, text::String) = new(text)
 end
 _encoding(::Type{Str}) = :value
+Str(text) = Str(_FIELDS, _own(String, text))
 
 "pandoc's `Emph`, a `Inline`."
 mutable struct Emph <: Inline
     content::Vector{Inline}
-    Emph(content::AbstractVector) = new(content)
+    Emph(::_Fields, content::Vector{Inline}) = new(content)
 end
 _encoding(::Type{Emph}) = :value
+Emph(content::AbstractVector) = Emph(_FIELDS, _own(Vector{Inline}, content))
 function Emph(content::Union{Inline, AbstractString}...)
-    Emph(_variadic(Inline, content))
+    Emph(_FIELDS, _variadic(Inline, content))
 end
 
 "pandoc's `Underline`, a `Inline`."
 mutable struct Underline <: Inline
     content::Vector{Inline}
-    Underline(content::AbstractVector) = new(content)
+    Underline(::_Fields, content::Vector{Inline}) = new(content)
 end
 _encoding(::Type{Underline}) = :value
+Underline(content::AbstractVector) = Underline(_FIELDS, _own(Vector{Inline}, content))
 function Underline(content::Union{Inline, AbstractString}...)
-    Underline(_variadic(Inline, content))
+    Underline(_FIELDS, _variadic(Inline, content))
 end
 
 "pandoc's `Strong`, a `Inline`."
 mutable struct Strong <: Inline
     content::Vector{Inline}
-    Strong(content::AbstractVector) = new(content)
+    Strong(::_Fields, content::Vector{Inline}) = new(content)
 end
 _encoding(::Type{Strong}) = :value
+Strong(content::AbstractVector) = Strong(_FIELDS, _own(Vector{Inline}, content))
 function Strong(content::Union{Inline, AbstractString}...)
-    Strong(_variadic(Inline, content))
+    Strong(_FIELDS, _variadic(Inline, content))
 end
 
 "pandoc's `Strikeout`, a `Inline`."
 mutable struct Strikeout <: Inline
     content::Vector{Inline}
-    Strikeout(content::AbstractVector) = new(content)
+    Strikeout(::_Fields, content::Vector{Inline}) = new(content)
 end
 _encoding(::Type{Strikeout}) = :value
+Strikeout(content::AbstractVector) = Strikeout(_FIELDS, _own(Vector{Inline}, content))
 function Strikeout(content::Union{Inline, AbstractString}...)
-    Strikeout(_variadic(Inline, content))
+    Strikeout(_FIELDS, _variadic(Inline, content))
 end
 
 "pandoc's `Superscript`, a `Inline`."
 mutable struct Superscript <: Inline
     content::Vector{Inline}
-    Superscript(content::AbstractVector) = new(content)
+    Superscript(::_Fields, content::Vector{Inline}) = new(content)
 end
 _encoding(::Type{Superscript}) = :value
+Superscript(content::AbstractVector) = Superscript(_FIELDS, _own(Vector{Inline}, content))
 function Superscript(content::Union{Inline, AbstractString}...)
-    Superscript(_variadic(Inline, content))
+    Superscript(_FIELDS, _variadic(Inline, content))
 end
 
 "pandoc's `Subscript`, a `Inline`."
 mutable struct Subscript <: Inline
     content::Vector{Inline}
-    Subscript(content::AbstractVector) = new(content)
+    Subscript(::_Fields, content::Vector{Inline}) = new(content)
 end
 _encoding(::Type{Subscript}) = :value
+Subscript(content::AbstractVector) = Subscript(_FIELDS, _own(Vector{Inline}, content))
 function Subscript(content::Union{Inline, AbstractString}...)
-    Subscript(_variadic(Inline, content))
+    Subscript(_FIELDS, _variadic(Inline, content))
 end
 
 "pandoc's `SmallCaps`, a `Inline`."
 mutable struct SmallCaps <: Inline
     content::Vector{Inline}
-    SmallCaps(content::AbstractVector) = new(content)
+    SmallCaps(::_Fields, content::Vector{Inline}) = new(content)
 end
 _encoding(::Type{SmallCaps}) = :value
+SmallCaps(content::AbstractVector) = SmallCaps(_FIELDS, _own(Vector{Inline}, content))
 function SmallCaps(content::Union{Inline, AbstractString}...)
-    SmallCaps(_variadic(Inline, content))
+    SmallCaps(_FIELDS, _variadic(Inline, content))
 end
 
 "pandoc's `Quoted`, a `Inline`."
 mutable struct Quoted <: Inline
     quote_type::QuoteType
     content::Vector{Inline}
-    Quoted(quote_type, content::AbstractVector) = new(quote_type, content)
+    Quoted(::_Fields, quote_type::QuoteType, content::Vector{Inline}) = new(quote_type, content)
 end
 _encoding(::Type{Quoted}) = :array
+Quoted(quote_type, content::AbstractVector) = Quoted(_FIELDS, _own(QuoteType, quote_type), _own(Vector{Inline}, content))
 function Quoted(quote_type, content::Union{Inline, AbstractString}...)
-    Quoted(quote_type, _variadic(Inline, content))
+    Quoted(_FIELDS, _own(QuoteType, quote_type), _variadic(Inline, content))
 end
 
 "pandoc's `Space`, a `Inline`."
@@ -302,26 +325,29 @@ _encoding(::Type{LineBreak}) = :none
 mutable struct Math <: Inline
     math_type::MathType
     text::String
-    Math(math_type, text) = new(math_type, text)
+    Math(::_Fields, math_type::MathType, text::String) = new(math_type, text)
 end
 _encoding(::Type{Math}) = :array
+Math(math_type, text) = Math(_FIELDS, _own(MathType, math_type), _own(String, text))
 
 "pandoc's `RawInline`, a `Inline`."
 mutable struct RawInline <: Inline
     format::Format
     text::String
-    RawInline(format, text) = new(format, text)
+    RawInline(::_Fields, format::Format, text::String) = new(format, text)
 end
 _encoding(::Type{RawInline}) = :array
+RawInline(format, text) = RawInline(_FIELDS, _own(Format, format), _own(String, text))
 
 "pandoc's `Note`, a `Inline`."
 mutable struct Note <: Inline
     content::Vector{Block}
-    Note(content::AbstractVector) = new(content)
+    Note(::_Fields, content::Vector{Block}) = new(content)
 end
 _encoding(::Type{Note}) = :value
-function Note(content::Union{Block, AbstractString}...)
-    Note(_variadic(Block, content))
+Note(content::AbstractVector) = Note(_FIELDS, _own(Vector{Block}, content))
+function Note(content::Union{Block, Inline, AbstractString}...)
+    Note(_FIELDS, _variadic(Block, content))
 end
 
 "pandoc's `Attr`."
@@ -329,14 +355,15 @@ mutable struct Attr <: Node
     identifier::String
     classes::Vector{String}
     attributes::Vector{Tuple{String, String}}
-    Attr(identifier, classes::AbstractVector, attributes::AbstractVector{<:Tuple}) = new(identifier, classes, attributes)
+    Attr(::_Fields, identifier::String, classes::Vector{String}, attributes::Vector{Tuple{String, String}}) = new(identifier, classes, attributes)
 end
 _encoding(::Type{Attr}) = :array
 _default(::Type{Attr}, ::Val{:identifier}) = ""
 _default(::Type{Attr}, ::Val{:classes}) = String[]
 _default(::Type{Attr}, ::Val{:attributes}) = Tuple{String, String}[]
+Attr(identifier, classes::AbstractVector, attributes) = Attr(_FIELDS, _own(String, identifier), _own(Vector{String}, classes), _own(Vector{Tuple{String, String}}, attributes))
 function Attr(; identifier = "", classes = String[], attributes = Tuple{String, String}[])
-    Attr(identifier, classes, attributes)
+    Attr(_FIELDS, _own(String, identifier), _own(Vector{String}, classes), _own(Vector{Tuple{String, String}}, attributes))
 end
 
 "pandoc's `ListAttributes`."
@@ -344,43 +371,46 @@ mutable struct ListAttributes <: Node
     start::Int
     style::ListNumberStyle
     delimiter::ListNumberDelim
-    ListAttributes(start, style, delimiter) = new(start, style, delimiter)
+    ListAttributes(::_Fields, start::Int, style::ListNumberStyle, delimiter::ListNumberDelim) = new(start, style, delimiter)
 end
 _encoding(::Type{ListAttributes}) = :array
 _default(::Type{ListAttributes}, ::Val{:start}) = 1
 _default(::Type{ListAttributes}, ::Val{:style}) = DefaultStyle
 _default(::Type{ListAttributes}, ::Val{:delimiter}) = DefaultDelim
+ListAttributes(start, style, delimiter) = ListAttributes(_FIELDS, _own(Int, start), _own(ListNumberStyle, style), _own(ListNumberDelim, delimiter))
 function ListAttributes(; start = 1, style = DefaultStyle, delimiter = DefaultDelim)
-    ListAttributes(start, style, delimiter)
+    ListAttributes(_FIELDS, _own(Int, start), _own(ListNumberStyle, style), _own(ListNumberDelim, delimiter))
 end
 
 "pandoc's `Caption`."
 mutable struct Caption <: Node
     short::Union{Nothing, ShortCaption}
     content::Vector{Block}
-    Caption(short, content::AbstractVector) = new(short, content)
+    Caption(::_Fields, short::Union{Nothing, ShortCaption}, content::Vector{Block}) = new(short, content)
 end
 _encoding(::Type{Caption}) = :array
 _default(::Type{Caption}, ::Val{:short}) = nothing
 _default(::Type{Caption}, ::Val{:content}) = Block[]
-function Caption(content::Union{Block, AbstractString}...; short = nothing)
-    Caption(short, _variadic(Block, content))
+Caption(short, content::AbstractVector) = Caption(_FIELDS, _own(Union{Nothing, ShortCaption}, short), _own(Vector{Block}, content))
+function Caption(content::Union{Block, Inline, AbstractString}...; short = nothing)
+    Caption(_FIELDS, _own(Union{Nothing, ShortCaption}, short), _variadic(Block, content))
 end
 function Caption(content::AbstractVector; short = nothing)
-    Caption(short, _variadic(Block, content))
+    Caption(_FIELDS, _own(Union{Nothing, ShortCaption}, short), _variadic(Block, content))
 end
 
 "pandoc's `ColSpec`."
 mutable struct ColSpec <: Node
     alignment::Alignment
     width::ColWidthBase
-    ColSpec(alignment, width) = new(alignment, width)
+    ColSpec(::_Fields, alignment::Alignment, width::ColWidthBase) = new(alignment, width)
 end
 _encoding(::Type{ColSpec}) = :array
 _default(::Type{ColSpec}, ::Val{:alignment}) = AlignDefault
 _default(::Type{ColSpec}, ::Val{:width}) = ColWidthDefault()
+ColSpec(alignment, width) = ColSpec(_FIELDS, _own(Alignment, alignment), _own(ColWidthBase, width))
 function ColSpec(; alignment = AlignDefault, width = ColWidthDefault())
-    ColSpec(alignment, width)
+    ColSpec(_FIELDS, _own(Alignment, alignment), _own(ColWidthBase, width))
 end
 
 "pandoc's `Citation`."
@@ -391,7 +421,7 @@ mutable struct Citation <: Node
     mode::CitationMode
     note_num::Int
     hash::Int
-    Citation(id, prefix::AbstractVector, suffix::AbstractVector, mode, note_num, hash) = new(id, prefix, suffix, mode, note_num, hash)
+    Citation(::_Fields, id::String, prefix::Vector{Inline}, suffix::Vector{Inline}, mode::CitationMode, note_num::Int, hash::Int) = new(id, prefix, suffix, mode, note_num, hash)
 end
 _encoding(::Type{Citation}) = :object
 _default(::Type{Citation}, ::Val{:prefix}) = Inline[]
@@ -400,28 +430,34 @@ _default(::Type{Citation}, ::Val{:mode}) = NormalCitation
 _default(::Type{Citation}, ::Val{:note_num}) = 0
 _default(::Type{Citation}, ::Val{:hash}) = 0
 _keys(::Type{Citation}) = ("citationId", "citationPrefix", "citationSuffix", "citationMode", "citationNoteNum", "citationHash",)
+function Citation(id, mode, prefix = Inline[], suffix = Inline[], note_num = 0, hash = 0)
+    Citation(_FIELDS, _own(String, id), _own(Vector{Inline}, prefix), _own(Vector{Inline}, suffix), _own(CitationMode, mode), _own(Int, note_num), _own(Int, hash))
+end
+Base.show(io::IO, x::Citation) = _show_call(io, x, (:id, :mode, :prefix, :suffix, :note_num, :hash,), ())
 function Citation(id; prefix = Inline[], suffix = Inline[], mode = NormalCitation, note_num = 0, hash = 0)
-    Citation(id, prefix, suffix, mode, note_num, hash)
+    Citation(_FIELDS, _own(String, id), _own(Vector{Inline}, prefix), _own(Vector{Inline}, suffix), _own(CitationMode, mode), _own(Int, note_num), _own(Int, hash))
 end
 
 "pandoc's `Target`."
 mutable struct Target <: Node
     url::String
     title::String
-    Target(url, title) = new(url, title)
+    Target(::_Fields, url::String, title::String) = new(url, title)
 end
 _encoding(::Type{Target}) = :array
 _default(::Type{Target}, ::Val{:title}) = ""
+Target(url, title) = Target(_FIELDS, _own(String, url), _own(String, title))
 function Target(url; title = "")
-    Target(url, title)
+    Target(_FIELDS, _own(String, url), _own(String, title))
 end
 
 "pandoc's `ColWidth`, a `ColWidth`."
 mutable struct ColWidth <: ColWidthBase
     width::Float64
-    ColWidth(width) = new(width)
+    ColWidth(::_Fields, width::Float64) = new(width)
 end
 _encoding(::Type{ColWidth}) = :value
+ColWidth(width) = ColWidth(_FIELDS, _own(Float64, width))
 
 "pandoc's `ColWidthDefault`, a `ColWidth`."
 mutable struct ColWidthDefault <: ColWidthBase
@@ -435,7 +471,7 @@ mutable struct Cell <: Node
     row_span::RowSpan
     col_span::ColSpan
     content::Vector{Block}
-    Cell(attr::Attr, alignment, row_span, col_span, content::AbstractVector) = new(attr, alignment, row_span, col_span, content)
+    Cell(::_Fields, attr::Attr, alignment::Alignment, row_span::RowSpan, col_span::ColSpan, content::Vector{Block}) = new(attr, alignment, row_span, col_span, content)
 end
 _encoding(::Type{Cell}) = :array
 _default(::Type{Cell}, ::Val{:attr}) = Attr()
@@ -443,37 +479,40 @@ _default(::Type{Cell}, ::Val{:alignment}) = AlignDefault
 _default(::Type{Cell}, ::Val{:row_span}) = 1
 _default(::Type{Cell}, ::Val{:col_span}) = 1
 _default(::Type{Cell}, ::Val{:content}) = Block[]
-function Cell(content::Union{Block, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, alignment = AlignDefault, row_span = 1, col_span = 1)
+Cell(attr::Attr, alignment, row_span, col_span, content::AbstractVector) = Cell(_FIELDS, _own(Attr, attr), _own(Alignment, alignment), _own(RowSpan, row_span), _own(ColSpan, col_span), _own(Vector{Block}, content))
+function Cell(content::Union{Block, Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, alignment = AlignDefault, row_span = 1, col_span = 1)
     __attr = _flat(Attr, attr, :Cell, :attr; identifier, classes, attributes)
-    Cell(__attr, alignment, row_span, col_span, _variadic(Block, content))
+    Cell(_FIELDS, __attr, _own(Alignment, alignment), _own(RowSpan, row_span), _own(ColSpan, col_span), _variadic(Block, content))
 end
 function Cell(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, alignment = AlignDefault, row_span = 1, col_span = 1)
     __attr = _flat(Attr, attr, :Cell, :attr; identifier, classes, attributes)
-    Cell(__attr, alignment, row_span, col_span, _variadic(Block, content))
+    Cell(_FIELDS, __attr, _own(Alignment, alignment), _own(RowSpan, row_span), _own(ColSpan, col_span), _variadic(Block, content))
 end
 
 "pandoc's `CodeBlock`, a `Block`."
 mutable struct CodeBlock <: Block
     attr::Attr
     text::String
-    CodeBlock(attr::Attr, text) = new(attr, text)
+    CodeBlock(::_Fields, attr::Attr, text::String) = new(attr, text)
 end
 _encoding(::Type{CodeBlock}) = :array
+CodeBlock(attr::Attr, text) = CodeBlock(_FIELDS, _own(Attr, attr), _own(String, text))
 function CodeBlock(text; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :CodeBlock, :attr; identifier, classes, attributes)
-    CodeBlock(__attr, text)
+    CodeBlock(_FIELDS, __attr, _own(String, text))
 end
 
 "pandoc's `OrderedList`, a `Block`."
 mutable struct OrderedList <: Block
     list_attributes::ListAttributes
     content::Vector{Vector{Block}}
-    OrderedList(list_attributes::ListAttributes, content::AbstractVector{<:AbstractVector}) = new(list_attributes, content)
+    OrderedList(::_Fields, list_attributes::ListAttributes, content::Vector{Vector{Block}}) = new(list_attributes, content)
 end
 _encoding(::Type{OrderedList}) = :array
-function OrderedList(content::Union{AbstractVector, AbstractString}...; list_attributes::Union{Nothing, ListAttributes} = nothing, start = nothing, style = nothing, delimiter = nothing)
+OrderedList(list_attributes::ListAttributes, content::AbstractVector{<:AbstractVector}) = OrderedList(_FIELDS, _own(ListAttributes, list_attributes), _own(Vector{Vector{Block}}, content))
+function OrderedList(content::Union{AbstractVector, Block, Inline, AbstractString}...; list_attributes::Union{Nothing, ListAttributes} = nothing, start = nothing, style = nothing, delimiter = nothing)
     __list_attributes = _flat(ListAttributes, list_attributes, :OrderedList, :list_attributes; start, style, delimiter)
-    OrderedList(__list_attributes, _variadic(Vector{Block}, content))
+    OrderedList(_FIELDS, __list_attributes, _variadic(Vector{Block}, content))
 end
 
 "pandoc's `Header`, a `Block`."
@@ -481,16 +520,17 @@ mutable struct Header <: Block
     level::Int
     attr::Attr
     content::Vector{Inline}
-    Header(level, attr::Attr, content::AbstractVector) = new(level, attr, content)
+    Header(::_Fields, level::Int, attr::Attr, content::Vector{Inline}) = new(level, attr, content)
 end
 _encoding(::Type{Header}) = :array
+Header(level, attr::Attr, content::AbstractVector) = Header(_FIELDS, _own(Int, level), _own(Attr, attr), _own(Vector{Inline}, content))
 function Header(level, content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Header, :attr; identifier, classes, attributes)
-    Header(level, __attr, _variadic(Inline, content))
+    Header(_FIELDS, _own(Int, level), __attr, _variadic(Inline, content))
 end
 function Header(level, content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Header, :attr; identifier, classes, attributes)
-    Header(level, __attr, _variadic(Inline, content))
+    Header(_FIELDS, _own(Int, level), __attr, _variadic(Inline, content))
 end
 
 "pandoc's `Figure`, a `Block`."
@@ -498,55 +538,62 @@ mutable struct Figure <: Block
     attr::Attr
     caption::Caption
     content::Vector{Block}
-    Figure(attr::Attr, caption::Caption, content::AbstractVector) = new(attr, caption, content)
+    Figure(::_Fields, attr::Attr, caption::Caption, content::Vector{Block}) = new(attr, caption, content)
 end
 _encoding(::Type{Figure}) = :array
-function Figure(content::Union{Block, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, caption = Caption())
+Figure(attr::Attr, caption::Caption, content::AbstractVector) = Figure(_FIELDS, _own(Attr, attr), _own(Caption, caption), _own(Vector{Block}, content))
+function Figure(content::Union{Block, Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, caption = Caption())
     __attr = _flat(Attr, attr, :Figure, :attr; identifier, classes, attributes)
-    Figure(__attr, caption, _variadic(Block, content))
+    Figure(_FIELDS, __attr, _own(Caption, caption), _variadic(Block, content))
 end
 function Figure(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, caption = Caption())
     __attr = _flat(Attr, attr, :Figure, :attr; identifier, classes, attributes)
-    Figure(__attr, caption, _variadic(Block, content))
+    Figure(_FIELDS, __attr, _own(Caption, caption), _variadic(Block, content))
 end
 
 "pandoc's `Div`, a `Block`."
 mutable struct Div <: Block
     attr::Attr
     content::Vector{Block}
-    Div(attr::Attr, content::AbstractVector) = new(attr, content)
+    Div(::_Fields, attr::Attr, content::Vector{Block}) = new(attr, content)
 end
 _encoding(::Type{Div}) = :array
-function Div(content::Union{Block, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
+Div(attr::Attr, content::AbstractVector) = Div(_FIELDS, _own(Attr, attr), _own(Vector{Block}, content))
+function Div(content::Union{Block, Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Div, :attr; identifier, classes, attributes)
-    Div(__attr, _variadic(Block, content))
+    Div(_FIELDS, __attr, _variadic(Block, content))
 end
 function Div(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Div, :attr; identifier, classes, attributes)
-    Div(__attr, _variadic(Block, content))
+    Div(_FIELDS, __attr, _variadic(Block, content))
 end
 
 "pandoc's `Cite`, a `Inline`."
 mutable struct Cite <: Inline
     citations::Vector{Citation}
     content::Vector{Inline}
-    Cite(citations::AbstractVector, content::AbstractVector) = new(citations, content)
+    Cite(::_Fields, citations::Vector{Citation}, content::Vector{Inline}) = new(citations, content)
 end
 _encoding(::Type{Cite}) = :array
+function Cite(content, citations)
+    Cite(_FIELDS, _own(Vector{Citation}, citations), _own(Vector{Inline}, content))
+end
+Base.show(io::IO, x::Cite) = _show_call(io, x, (:content, :citations,), ())
 function Cite(; citations = Citation[], content = Inline[])
-    Cite(citations, content)
+    Cite(_FIELDS, _own(Vector{Citation}, citations), _own(Vector{Inline}, content))
 end
 
 "pandoc's `Code`, a `Inline`."
 mutable struct Code <: Inline
     attr::Attr
     text::String
-    Code(attr::Attr, text) = new(attr, text)
+    Code(::_Fields, attr::Attr, text::String) = new(attr, text)
 end
 _encoding(::Type{Code}) = :array
+Code(attr::Attr, text) = Code(_FIELDS, _own(Attr, attr), _own(String, text))
 function Code(text; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Code, :attr; identifier, classes, attributes)
-    Code(__attr, text)
+    Code(_FIELDS, __attr, _own(String, text))
 end
 
 "pandoc's `Link`, a `Inline`."
@@ -554,18 +601,19 @@ mutable struct Link <: Inline
     attr::Attr
     content::Vector{Inline}
     target::Target
-    Link(attr::Attr, content::AbstractVector, target::Target) = new(attr, content, target)
+    Link(::_Fields, attr::Attr, content::Vector{Inline}, target::Target) = new(attr, content, target)
 end
 _encoding(::Type{Link}) = :array
+Link(attr::Attr, content::AbstractVector, target::Target) = Link(_FIELDS, _own(Attr, attr), _own(Vector{Inline}, content), _own(Target, target))
 function Link(content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, target::Union{Nothing, Target} = nothing, url = nothing, title = nothing)
     __attr = _flat(Attr, attr, :Link, :attr; identifier, classes, attributes)
     __target = _flat(Target, target, :Link, :target; url, title)
-    Link(__attr, _variadic(Inline, content), __target)
+    Link(_FIELDS, __attr, _variadic(Inline, content), __target)
 end
 function Link(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, target::Union{Nothing, Target} = nothing, url = nothing, title = nothing)
     __attr = _flat(Attr, attr, :Link, :attr; identifier, classes, attributes)
     __target = _flat(Target, target, :Link, :target; url, title)
-    Link(__attr, _variadic(Inline, content), __target)
+    Link(_FIELDS, __attr, _variadic(Inline, content), __target)
 end
 
 "pandoc's `Image`, a `Inline`."
@@ -573,70 +621,74 @@ mutable struct Image <: Inline
     attr::Attr
     content::Vector{Inline}
     target::Target
-    Image(attr::Attr, content::AbstractVector, target::Target) = new(attr, content, target)
+    Image(::_Fields, attr::Attr, content::Vector{Inline}, target::Target) = new(attr, content, target)
 end
 _encoding(::Type{Image}) = :array
+Image(attr::Attr, content::AbstractVector, target::Target) = Image(_FIELDS, _own(Attr, attr), _own(Vector{Inline}, content), _own(Target, target))
 function Image(content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, target::Union{Nothing, Target} = nothing, url = nothing, title = nothing)
     __attr = _flat(Attr, attr, :Image, :attr; identifier, classes, attributes)
     __target = _flat(Target, target, :Image, :target; url, title)
-    Image(__attr, _variadic(Inline, content), __target)
+    Image(_FIELDS, __attr, _variadic(Inline, content), __target)
 end
 function Image(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, target::Union{Nothing, Target} = nothing, url = nothing, title = nothing)
     __attr = _flat(Attr, attr, :Image, :attr; identifier, classes, attributes)
     __target = _flat(Target, target, :Image, :target; url, title)
-    Image(__attr, _variadic(Inline, content), __target)
+    Image(_FIELDS, __attr, _variadic(Inline, content), __target)
 end
 
 "pandoc's `Span`, a `Inline`."
 mutable struct Span <: Inline
     attr::Attr
     content::Vector{Inline}
-    Span(attr::Attr, content::AbstractVector) = new(attr, content)
+    Span(::_Fields, attr::Attr, content::Vector{Inline}) = new(attr, content)
 end
 _encoding(::Type{Span}) = :array
+Span(attr::Attr, content::AbstractVector) = Span(_FIELDS, _own(Attr, attr), _own(Vector{Inline}, content))
 function Span(content::Union{Inline, AbstractString}...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Span, :attr; identifier, classes, attributes)
-    Span(__attr, _variadic(Inline, content))
+    Span(_FIELDS, __attr, _variadic(Inline, content))
 end
 function Span(content::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Span, :attr; identifier, classes, attributes)
-    Span(__attr, _variadic(Inline, content))
+    Span(_FIELDS, __attr, _variadic(Inline, content))
 end
 
 "pandoc's `Row`."
 mutable struct Row <: Node
     attr::Attr
     cells::Vector{Cell}
-    Row(attr::Attr, cells::AbstractVector) = new(attr, cells)
+    Row(::_Fields, attr::Attr, cells::Vector{Cell}) = new(attr, cells)
 end
 _encoding(::Type{Row}) = :array
 _default(::Type{Row}, ::Val{:attr}) = Attr()
 _default(::Type{Row}, ::Val{:cells}) = Cell[]
+Row(attr::Attr, cells::AbstractVector) = Row(_FIELDS, _own(Attr, attr), _own(Vector{Cell}, cells))
 function Row(cells::Cell...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Row, :attr; identifier, classes, attributes)
-    Row(__attr, _variadic(Cell, cells))
+    Row(_FIELDS, __attr, _variadic(Cell, cells))
 end
 function Row(cells::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :Row, :attr; identifier, classes, attributes)
-    Row(__attr, _variadic(Cell, cells))
+    Row(_FIELDS, __attr, _variadic(Cell, cells))
 end
 
 "pandoc's `TableHead`."
 mutable struct TableHead <: Node
     attr::Attr
     rows::Vector{Row}
-    TableHead(attr::Attr, rows::AbstractVector) = new(attr, rows)
+    TableHead(::_Fields, attr::Attr, rows::Vector{Row}) = new(attr, rows)
 end
 _encoding(::Type{TableHead}) = :array
 _default(::Type{TableHead}, ::Val{:attr}) = Attr()
 _default(::Type{TableHead}, ::Val{:rows}) = Row[]
+TableHead(attr::Attr, rows::AbstractVector) = TableHead(_FIELDS, _own(Attr, attr), _own(Vector{Row}, rows))
 function TableHead(rows::Row...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :TableHead, :attr; identifier, classes, attributes)
-    TableHead(__attr, _variadic(Row, rows))
+    TableHead(_FIELDS, __attr, _variadic(Row, rows))
 end
 function TableHead(rows::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :TableHead, :attr; identifier, classes, attributes)
-    TableHead(__attr, _variadic(Row, rows))
+    TableHead(_FIELDS, __attr, _variadic(Row, rows))
 end
 
 "pandoc's `TableBody`."
@@ -645,34 +697,40 @@ mutable struct TableBody <: Node
     row_head_columns::RowHeadColumns
     head::Vector{Row}
     body::Vector{Row}
-    TableBody(attr::Attr, row_head_columns, head::AbstractVector, body::AbstractVector) = new(attr, row_head_columns, head, body)
+    TableBody(::_Fields, attr::Attr, row_head_columns::RowHeadColumns, head::Vector{Row}, body::Vector{Row}) = new(attr, row_head_columns, head, body)
 end
 _encoding(::Type{TableBody}) = :array
 _default(::Type{TableBody}, ::Val{:attr}) = Attr()
 _default(::Type{TableBody}, ::Val{:row_head_columns}) = 0
 _default(::Type{TableBody}, ::Val{:head}) = Row[]
 _default(::Type{TableBody}, ::Val{:body}) = Row[]
+function TableBody(body, head = Row[], row_head_columns = 0; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
+    __attr = _flat(Attr, attr, :TableBody, :attr; identifier, classes, attributes)
+    TableBody(_FIELDS, __attr, _own(RowHeadColumns, row_head_columns), _own(Vector{Row}, head), _own(Vector{Row}, body))
+end
+Base.show(io::IO, x::TableBody) = _show_call(io, x, (:body, :head, :row_head_columns,), (:attr,))
 function TableBody(; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, row_head_columns = 0, head = Row[], body = Row[])
     __attr = _flat(Attr, attr, :TableBody, :attr; identifier, classes, attributes)
-    TableBody(__attr, row_head_columns, head, body)
+    TableBody(_FIELDS, __attr, _own(RowHeadColumns, row_head_columns), _own(Vector{Row}, head), _own(Vector{Row}, body))
 end
 
 "pandoc's `TableFoot`."
 mutable struct TableFoot <: Node
     attr::Attr
     rows::Vector{Row}
-    TableFoot(attr::Attr, rows::AbstractVector) = new(attr, rows)
+    TableFoot(::_Fields, attr::Attr, rows::Vector{Row}) = new(attr, rows)
 end
 _encoding(::Type{TableFoot}) = :array
 _default(::Type{TableFoot}, ::Val{:attr}) = Attr()
 _default(::Type{TableFoot}, ::Val{:rows}) = Row[]
+TableFoot(attr::Attr, rows::AbstractVector) = TableFoot(_FIELDS, _own(Attr, attr), _own(Vector{Row}, rows))
 function TableFoot(rows::Row...; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :TableFoot, :attr; identifier, classes, attributes)
-    TableFoot(__attr, _variadic(Row, rows))
+    TableFoot(_FIELDS, __attr, _variadic(Row, rows))
 end
 function TableFoot(rows::AbstractVector; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
     __attr = _flat(Attr, attr, :TableFoot, :attr; identifier, classes, attributes)
-    TableFoot(__attr, _variadic(Row, rows))
+    TableFoot(_FIELDS, __attr, _variadic(Row, rows))
 end
 
 "pandoc's `Table`, a `Block`."
@@ -683,12 +741,17 @@ mutable struct Table <: Block
     head::TableHead
     bodies::Vector{TableBody}
     foot::TableFoot
-    Table(attr::Attr, caption::Caption, col_specs::AbstractVector, head::TableHead, bodies::AbstractVector, foot::TableFoot) = new(attr, caption, col_specs, head, bodies, foot)
+    Table(::_Fields, attr::Attr, caption::Caption, col_specs::Vector{ColSpec}, head::TableHead, bodies::Vector{TableBody}, foot::TableFoot) = new(attr, caption, col_specs, head, bodies, foot)
 end
 _encoding(::Type{Table}) = :array
+function Table(caption, col_specs, head, bodies, foot; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing)
+    __attr = _flat(Attr, attr, :Table, :attr; identifier, classes, attributes)
+    Table(_FIELDS, __attr, _own(Caption, caption), _own(Vector{ColSpec}, col_specs), _own(TableHead, head), _own(Vector{TableBody}, bodies), _own(TableFoot, foot))
+end
+Base.show(io::IO, x::Table) = _show_call(io, x, (:caption, :col_specs, :head, :bodies, :foot,), (:attr,))
 function Table(; attr::Union{Nothing, Attr} = nothing, identifier = nothing, classes = nothing, attributes = nothing, caption = Caption(), col_specs = ColSpec[], head = TableHead(), bodies = TableBody[], foot = TableFoot())
     __attr = _flat(Attr, attr, :Table, :attr; identifier, classes, attributes)
-    Table(__attr, caption, col_specs, head, bodies, foot)
+    Table(_FIELDS, __attr, _own(Caption, caption), _own(Vector{ColSpec}, col_specs), _own(TableHead, head), _own(Vector{TableBody}, bodies), _own(TableFoot, foot))
 end
 
 # how each type is encoded, for core.jl
@@ -697,6 +760,5 @@ _constructors(::Type{MetaValue}) = (MetaMap, MetaList, MetaBool, MetaString, Met
 _constructors(::Type{Inline}) = (Str, Emph, Underline, Strong, Strikeout, Superscript, Subscript, SmallCaps, Quoted, Cite, Code, Space, SoftBreak, LineBreak, Math, RawInline, Link, Image, Note, Span,)
 _constructors(::Type{ColWidthBase}) = (ColWidth, ColWidthDefault,)
 const _SUMS = (Block, MetaValue, Inline, ColWidthBase,)
-const _ENUMS = (QuoteType, MathType, ListNumberStyle, ListNumberDelim, Alignment, CitationMode,)
 
-export PANDOC_API_VERSION, Pandoc, Block, Plain, Para, LineBlock, CodeBlock, RawBlock, BlockQuote, OrderedList, BulletList, DefinitionList, Header, HorizontalRule, Table, Figure, Div, MetaValue, MetaMap, MetaList, MetaBool, MetaString, MetaInlines, MetaBlocks, Inline, Str, Emph, Underline, Strong, Strikeout, Superscript, Subscript, SmallCaps, Quoted, Cite, Code, Space, SoftBreak, LineBreak, Math, RawInline, Link, Image, Note, Span, Attr, Format, ListAttributes, Caption, ColSpec, TableHead, TableBody, TableFoot, QuoteType, SingleQuote, DoubleQuote, Citation, MathType, DisplayMath, InlineMath, Target, ListNumberStyle, DefaultStyle, Example, Decimal, LowerRoman, UpperRoman, LowerAlpha, UpperAlpha, ListNumberDelim, DefaultDelim, OneParen, TwoParens, ShortCaption, Alignment, AlignLeft, AlignRight, AlignCenter, AlignDefault, ColWidthBase, ColWidth, ColWidthDefault, Row, RowHeadColumns, CitationMode, AuthorInText, SuppressAuthor, NormalCitation, Cell, RowSpan, ColSpan
+export PANDOC_API_VERSION, Pandoc, Block, Plain, Para, LineBlock, CodeBlock, RawBlock, BlockQuote, OrderedList, BulletList, DefinitionList, Header, HorizontalRule, Table, Figure, Div, MetaValue, MetaMap, MetaList, MetaBool, MetaString, MetaInlines, MetaBlocks, Inline, Str, Emph, Underline, Strong, Strikeout, Superscript, Subscript, SmallCaps, Quoted, Cite, Code, Space, SoftBreak, LineBreak, Math, RawInline, Link, Image, Note, Span, Attr, ListAttributes, Caption, ColSpec, TableHead, TableBody, TableFoot, SingleQuote, DoubleQuote, Citation, DisplayMath, InlineMath, Target, DefaultStyle, LowerRoman, UpperRoman, LowerAlpha, UpperAlpha, DefaultDelim, OneParen, TwoParens, AlignLeft, AlignRight, AlignCenter, AlignDefault, ColWidthBase, ColWidth, ColWidthDefault, Row, AuthorInText, SuppressAuthor, NormalCitation, Cell
