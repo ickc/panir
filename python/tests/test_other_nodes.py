@@ -54,7 +54,7 @@ def table() -> Table:
 def document() -> Pandoc:
     return Pandoc(
         table(),
-        Para(Cite([Citation("one"), Citation("two")], [Str("c")])),
+        Para(Cite([Str("c")], [Citation("one"), Citation("two")])),
         meta={"m": MetaList(MetaString("x"), MetaBool(True)), "s": MetaString("y")},
     )
 

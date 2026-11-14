@@ -24,6 +24,10 @@ if __name__ == "__main__":
 One class per pandoc constructor, a subclass of its type: `Para` and `Header`
 are `Block`s, `Str` and `Emph` are `Inline`s. Fields have pandoc-types' names
 and order, as in pandoc's Lua API: `Header(level, *content, attr=...)`.
+Where Lua's constructors take every argument in an order of their own, so
+do these: `Cite(content, citations)`, `Citation(id, mode, prefix, suffix,
+note_num, hash)`, `Table(caption, col_specs, head, bodies, foot, attr=)`,
+`TableBody(body, head, row_head_columns, attr=)`.
 
 ```python
 >>> from panir import *

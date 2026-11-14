@@ -19,7 +19,12 @@ from panir import (
     Attributes,
     Block,
     BulletList,
+    Caption,
     Cell,
+    Citation,
+    CitationMode,
+    Cite,
+    ColWidth,
     Div,
     Emph,
     Filter,
@@ -38,6 +43,11 @@ from panir import (
     Span,
     Str,
     Strong,
+    Table,
+    TableBody,
+    TableFoot,
+    TableHead,
+    stringify,
     walk,
 )
 
@@ -179,6 +189,55 @@ def test_a_flattened_products_fields_through_the_node():
         d.nothing  # noqa: B018
     with pytest.raises(ASTTypeError):
         d.classes = {"a"}
+
+
+# Constructors whose positional order is pandoc's Lua's, not pandoc-types'
+LUA_ORDER = """
+function Pandoc(d)
+  local c = pandoc.Citation("id", "AuthorInText", {pandoc.Str("pre")}, {pandoc.Str("suf")}, 3, 7)
+  local body = pandoc.TableBody(
+    {pandoc.Row({pandoc.Cell("b")})}, {pandoc.Row({pandoc.Cell("h")})}, 1, pandoc.Attr("tb"))
+  return pandoc.Pandoc({
+    pandoc.Para({pandoc.Cite({pandoc.Str("txt")}, {c})}),
+    pandoc.Table(pandoc.Caption("cap"), {{"AlignLeft", 0.5}}, pandoc.TableHead(), {body},
+      pandoc.TableFoot(), pandoc.Attr("t")),
+  })
+end
+"""
+
+
+def lua_order() -> Pandoc:
+    c = Citation("id", "AuthorInText", "pre", "suf", 3, 7)
+    body = TableBody([Row(Cell("b"))], [Row(Cell("h"))], 1, identifier="tb")
+    table = Table(
+        Caption("cap"),
+        [("AlignLeft", ColWidth(0.5))],
+        TableHead(),
+        [body],
+        TableFoot(),
+        identifier="t",
+    )
+    return Pandoc(Para(Cite("txt", [c])), table)
+
+
+def test_constructors_in_luas_order():
+    doc = lua_order()
+    cite = doc.blocks[0].content[0]
+    assert cite.citations[0].mode == CitationMode.AuthorInText
+    assert (cite.citations[0].note_num, cite.citations[0].hash) == (3, 7)
+    body = doc.blocks[1].bodies[0]
+    assert (body.row_head_columns, len(body.head), len(body.body)) == (1, 1, 1)
+    assert eval(repr(doc), vars(panir)) == doc
+    match cite:
+        case Cite(content, [Citation(id, mode)]):
+            assert (stringify(content), id, mode) == ("txt", "id", CitationMode.AuthorInText)
+        case _:
+            raise AssertionError(cite)
+
+
+@pytest.mark.skipif(PANDOC is None, reason="needs pandoc")
+def test_constructors_in_luas_order_as_lua():
+    assert lua_order() == lua(LUA_ORDER)
 
 
 # -- what a filter function may return -------------------------------------------

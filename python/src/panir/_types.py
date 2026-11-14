@@ -1375,10 +1375,10 @@ class Cite(Inline):
             "citations",
             "content",
         )
-    __match_args__ = ("citations", "content")
+    __match_args__ = ("content", "citations")
     _encoding = "array"
     _defaults = {"citations": [], "content": []}
-    _positional = ("citations", "content")
+    _positional = ("content", "citations")
 
     if TYPE_CHECKING:
         citations: _Field[NodeList[Citation, Citation], Iterable[Citation]] = _Field()
@@ -1391,8 +1391,8 @@ class Cite(Inline):
 
     def __init__(
         self,
-        citations: Iterable[Citation] = (),
         content: Iterable[Inline | str] | Inline | str = (),
+        citations: Iterable[Citation] = (),
     ) -> None:
         _init(self, (citations, content))
 
@@ -1969,13 +1969,13 @@ class TableBody(Node):
             "head",
             "body",
         )
-    __match_args__ = ("row_head_columns", "head", "body", "attr")
+    __match_args__ = ("body", "head", "row_head_columns", "attr")
     _kind = "product"
     _encoding = "array"
     _flatten = ("attr",)
     _parts = {"identifier": "attr", "classes": "attr", "attributes": "attr"}
     _defaults = {"attr": ["", [], []], "row_head_columns": 0, "head": [], "body": []}
-    _positional = ("row_head_columns", "head", "body")
+    _positional = ("body", "head", "row_head_columns")
 
     if TYPE_CHECKING:
         attr: _Field[
@@ -2091,28 +2091,6 @@ class TableBody(Node):
 
     def __init__(
         self,
-        row_head_columns: int = 0,
-        head: Iterable[
-            Row
-            | tuple[
-                Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
-                Iterable[
-                    Cell
-                    | tuple[
-                        Attr
-                        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
-                        Alignment
-                        | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
-                        int,
-                        int,
-                        Iterable[Block | Inline | str | Sequence[Inline | str]]
-                        | Block
-                        | Inline
-                        | str,
-                    ]
-                ],
-            ]
-        ] = (),
         body: Iterable[
             Row
             | tuple[
@@ -2134,6 +2112,28 @@ class TableBody(Node):
                 ],
             ]
         ] = (),
+        head: Iterable[
+            Row
+            | tuple[
+                Attr | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                Iterable[
+                    Cell
+                    | tuple[
+                        Attr
+                        | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]],
+                        Alignment
+                        | Literal["AlignLeft", "AlignRight", "AlignCenter", "AlignDefault"],
+                        int,
+                        int,
+                        Iterable[Block | Inline | str | Sequence[Inline | str]]
+                        | Block
+                        | Inline
+                        | str,
+                    ]
+                ],
+            ]
+        ] = (),
+        row_head_columns: int = 0,
         *,
         attr: Attr
         | tuple[str, Iterable[str], Iterable[tuple[str, str]] | Mapping[str, str]]
@@ -2261,7 +2261,7 @@ class Citation(Node):
             "note_num",
             "hash",
         )
-    __match_args__ = ("id", "prefix", "suffix", "mode", "note_num", "hash")
+    __match_args__ = ("id", "mode", "prefix", "suffix", "note_num", "hash")
     _kind = "product"
     _encoding = "object"
     _keys = {
@@ -2279,7 +2279,7 @@ class Citation(Node):
         "note_num": 0,
         "hash": 0,
     }
-    _positional = ("id", "prefix", "suffix", "mode", "note_num", "hash")
+    _positional = ("id", "mode", "prefix", "suffix", "note_num", "hash")
 
     if TYPE_CHECKING:
         id: _Field[str, str] = _Field()
@@ -2305,10 +2305,10 @@ class Citation(Node):
     def __init__(
         self,
         id: str,
-        prefix: Iterable[Inline | str] | Inline | str = (),
-        suffix: Iterable[Inline | str] | Inline | str = (),
         mode: CitationMode
         | Literal["AuthorInText", "SuppressAuthor", "NormalCitation"] = CitationMode.NormalCitation,
+        prefix: Iterable[Inline | str] | Inline | str = (),
+        suffix: Iterable[Inline | str] | Inline | str = (),
         note_num: int = 0,
         hash: int = 0,
     ) -> None:

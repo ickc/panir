@@ -26,6 +26,17 @@ OUT = ROOT / "python/src/panir/_types.py"
 
 PRIM = {"string": "str", "int": "int", "double": "float", "bool": "bool"}
 
+# pandoc's Lua constructors whose positional arguments are in an order of
+# their own, not pandoc-types' (as the other generators' LUA_ORDER):
+# `pandoc.Cite(content, citations)`, `pandoc.TableBody(body, head,
+# row_head_columns, attr)`, ... A flattened field (attr) stays keyword-only.
+LUA_ORDER = {
+    "Cite": ["content", "citations"],
+    "Table": ["caption", "col_specs", "head", "bodies", "foot"],
+    "TableBody": ["body", "head", "row_head_columns"],
+    "Citation": ["id", "mode", "prefix", "suffix", "note_num", "hash"],
+}
+
 
 def py_literal(value) -> str:
     """JSON as a Python literal."""
@@ -363,7 +374,8 @@ class Gen:
         return self.in_list(r) if "list" in r else self.in_one(r)
 
     def init(self, c: dict, fnames: list[str]) -> list[str]:
-        """``__init__`` and ``_positional``, in pandoc-types' field order.
+        """``__init__`` and ``_positional``, in pandoc-types' field order, or
+        pandoc's Lua's (``LUA_ORDER``).
 
         Fields are positional, then the variadic field (if any) as *args,
         then keyword-only: a field with a default before *args, and any field
@@ -373,17 +385,21 @@ class Gen:
         """
         fields = c["fields"]
         variadic = c.get("variadic")
+        values = list(fnames)  # (the fields' values in field order)
+        params_order = list(zip(fnames, fields))
+        if c["name"] in LUA_ORDER:
+            rank = {n: k for k, n in enumerate(LUA_ORDER[c["name"]])}
+            assert set(rank) <= set(fnames), c["name"]
+            params_order.sort(key=lambda nf: rank.get(nf[0], len(rank)))  # (stable)
         self.positional: list[str] = []
         params: list[str] = []
         star: str | None = None
         kwonly: list[str] = []
-        values: list[str] = []
         flats: list[str] = []
         positional = True
         after_default = False
-        for n, f in zip(fnames, fields):
+        for n, f in params_order:
             ptype = self.set_type(f["type"])
-            values.append(n)
             if f["name"] == variadic:
                 star = f"*{n}: {self.in_one(self.resolve(f['type'])['list'])}"
                 positional = False
@@ -440,7 +456,6 @@ class Gen:
             out += [f"        {s}," for s in sig]
             out.append("    ) -> None:")
         out += [f"        {line}" for line in flats]
-        # (the fields' values in field order)
         tup = f"({', '.join(values)}{',' if len(values) == 1 else ''})"
         out.append(f"        _init(self, {tup})")
         return out
