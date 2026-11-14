@@ -297,7 +297,8 @@ _write(io::IO, x::Union{Int, Bool}) = print(io, x)
 _write(io::IO, ::Nothing) = print(io, "null")
 _write(io::IO, x::Float64) =
     isfinite(x) ? print(io, x) : print(io, isnan(x) ? "null" : x > 0 ? "\"+inf\"" : "\"-inf\"")
-_write(io::IO, x::Enum) = print(io, "{\"t\":\"", x, "\"}")
+# (a write each: `print(io, a, b, c)` makes a tuple of them, for every node)
+_write(io::IO, x::Enum) = (write(io, "{\"t\":\""); print(io, x); write(io, "\"}"); nothing)
 
 function _write(io::IO, x::String)
     isvalid(x) || throw(ArgumentError("a string that isn't valid UTF-8: $(repr(x))"))
@@ -350,7 +351,7 @@ function _write(io::IO, x::T) where {T <: Node}
     enc = _encoding(T)
     tagged = supertype(T) in _SUMS
     if tagged
-        print(io, "{\"t\":\"", nameof(T), '"')
+        write(io, "{\"t\":\""); write(io, nameof(T)); write(io, '"')
         enc === :none && return (write(io, '}'); nothing)
         write(io, ",\"c\":")
     end
