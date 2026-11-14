@@ -94,6 +94,11 @@ impl std::error::Error for Error {}
 /// is four). A deeper one is an error, not a crash: a reader calls itself for
 /// each level, and the stack is not endless.
 ///
+/// A filter's walk goes as deep (counting the lists of inlines and blocks it
+/// is in), and no deeper: a walk without end (a top-down function whose
+/// result holds what it matched) is a [`FilterError`]. Real documents nest
+/// up to 121 levels (a manual page's lists, through pandoc's man reader).
+///
 /// It was 128 levels of JSON, serde_json's own limit: 42 nested divs, which a
 /// web page read from HTML can have.
 pub const MAX_DEPTH: usize = 256;

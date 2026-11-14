@@ -47,7 +47,7 @@ fn the_error_says_where_in_every_order() {
             let e = apply(&mut doc(), &mut FailOn(text, order), None).unwrap_err();
             assert_eq!(
                 (e.path.as_str(), e.function, e.node),
-                (path, "inline", "Str"),
+                (path, Some("inline"), "Str"),
                 "{order:?}"
             );
             assert_eq!(e.error.to_string(), format!("no {text}, please"));
@@ -128,7 +128,7 @@ fn every_function_can_fail() {
         assert_eq!(
             (e.function, e.node, e.path.as_str()),
             (
-                "block",
+                Some("block"),
                 "Plain",
                 "blocks[0].head.rows[0].cells[0].content[0]"
             )
@@ -137,7 +137,7 @@ fn every_function_can_fail() {
         assert_eq!(
             (e.function, e.node, e.path.as_str()),
             (
-                "inlines",
+                Some("inlines"),
                 "Inlines",
                 "meta['x-y'].content.z.content[0].content"
             )
@@ -145,12 +145,12 @@ fn every_function_can_fail() {
         let e = failed("blocks");
         assert_eq!(
             (e.function, e.node, e.path.as_str()),
-            ("blocks", "Blocks", "blocks")
+            (Some("blocks"), "Blocks", "blocks")
         );
         let e = failed("meta");
         assert_eq!(
             (e.function, e.node, e.path.as_str()),
-            ("meta", "Meta", "meta")
+            (Some("meta"), "Meta", "meta")
         );
         assert_eq!(
             e.to_string(),
@@ -159,7 +159,7 @@ fn every_function_can_fail() {
         let e = failed("pandoc");
         assert_eq!(
             (e.function, e.node, e.path.as_str()),
-            ("pandoc", "Pandoc", "")
+            (Some("pandoc"), "Pandoc", "")
         );
         assert_eq!(
             e.to_string(),

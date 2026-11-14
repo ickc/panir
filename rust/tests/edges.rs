@@ -1,6 +1,24 @@
 //! The edges: what a review and fuzzing against pandoc found (fuzz/).
 
-use panir::{Block, ColSpec, ColWidth, MAX_DEPTH, Pandoc, Table, from_str, to_string};
+use panir::{
+    Block, ColSpec, ColWidth, Ctx, Filter, Inline, MAX_DEPTH, Order, Pandoc, Table, apply,
+    from_str, to_string,
+};
+
+/// A function for every node and list, which changes nothing.
+struct Every(Order);
+
+impl Filter for Every {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn block(&mut self, _: &mut Block, _: &mut Ctx) -> Option<Vec<Block>> {
+        None
+    }
+    fn inline(&mut self, _: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        None
+    }
+}
 
 const HEAD: &str = r#"{"pandoc-api-version":[1,23,1,2],"meta":{},"blocks":["#;
 
@@ -131,9 +149,13 @@ fn too_deep_is_an_error() {
                 .stack_size(1 << 20)
                 .spawn(move || match from_str(&doc) {
                     Ok(read) => {
-                        // what was read can be written, copied, compared, dropped
+                        // what was read can be written, copied, compared,
+                        // walked, dropped
                         assert_eq!(to_string(&read).len(), doc.len());
                         assert!(read.clone() == read);
+                        for order in [Order::Typewise, Order::Topdown, Order::Bottomup] {
+                            apply(&mut read.clone(), &mut Every(order), None).unwrap();
+                        }
                     }
                     Err(e) => assert!(e.message.starts_with("nested "), "{e}"),
                 })
@@ -163,7 +185,6 @@ fn another_version_says_so() {
 
 #[test]
 fn many_replacements_in_a_long_list_take_no_longer() {
-    use panir::{Ctx, Filter, Inline, Order, apply};
     // every other block deleted, the others doubled; every space deleted
     struct Thin(usize, Order);
     impl Filter for Thin {
@@ -213,4 +234,134 @@ fn many_replacements_in_a_long_list_take_no_longer() {
     assert!(results[0] == results[1] && results[1] == results[2]);
     // (in place, each of these took seconds)
     assert!(start.elapsed().as_secs() < 20, "{:?}", start.elapsed());
+}
+
+/// Top-down, each Str becomes a span holding it, which is walked in turn:
+/// as metavars with a field naming itself.
+struct Runaway;
+
+impl Filter for Runaway {
+    fn order(&self) -> Order {
+        Order::Topdown
+    }
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        matches!(x, Inline::Str(_)).then(|| {
+            vec![
+                panir::Span {
+                    attr: Default::default(),
+                    content: vec![x.clone()],
+                }
+                .into(),
+            ]
+        })
+    }
+}
+
+#[test]
+fn a_walk_without_end_is_an_error() {
+    let mut doc = Pandoc::new(vec![Block::Para(panir::inlines("loop"))]);
+    // (on a thread of the least stack Rust gives one, unoptimized)
+    let e = std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(move || apply(&mut doc, &mut Runaway, None).unwrap_err())
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!((e.function, e.node), (None, "Inlines"));
+    let path = format!("blocks[0].content{}", "[0].content".repeat(MAX_DEPTH - 1));
+    assert_eq!(e.path, path);
+    assert_eq!(
+        e.to_string(),
+        format!(
+            "nested more than 256 levels deep (a document that deep, or a top-down filter's \
+             function whose result holds what it matched, walked without end)\n  walking the \
+             Inlines at {path}"
+        )
+    );
+    // the next walk starts from the top again
+    apply(&mut divs(MAX_DEPTH - 1), &mut Every(Order::Topdown), None).unwrap();
+}
+
+/// Each Str's function walks a span holding it with the filter itself (a
+/// walk started from a function, again and again).
+struct Reentering;
+
+impl Filter for Reentering {
+    fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+        if !matches!(x, Inline::Str(_)) {
+            return None;
+        }
+        let mut span = vec![Inline::Span(Box::new(panir::Span {
+            attr: Default::default(),
+            content: vec![x.clone()],
+        }))];
+        match apply(&mut span, self, None) {
+            Ok(()) => Some(span),
+            Err(e) => ctx.fail(e),
+        }
+    }
+}
+
+#[test]
+fn walks_started_by_functions_count_from_where_they_are() {
+    let mut doc = Pandoc::new(vec![Block::Para(panir::inlines("loop"))]);
+    let e = std::thread::Builder::new()
+        .stack_size(4 << 20)
+        .spawn(move || apply(&mut doc, &mut Reentering, None).unwrap_err())
+        .unwrap()
+        .join()
+        .unwrap();
+    // the outermost function's error holds the inner ones, down to the walk
+    // too deep
+    assert_eq!(
+        (e.function, e.path.as_str()),
+        (Some("inline"), "blocks[0].content[0]")
+    );
+    assert!(
+        e.to_string()
+            .starts_with("nested more than 256 levels deep"),
+        "{e}"
+    );
+    // and a panic in one leaves the depth as it was
+    let panicked = std::panic::catch_unwind(|| {
+        struct Panics;
+        impl Filter for Panics {
+            fn inline(&mut self, _: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+                panic!("here")
+            }
+        }
+        let mut deep = Pandoc::new(vec![Block::Para(panir::inlines("x"))]);
+        apply(&mut deep, &mut Panics, None)
+    });
+    assert!(panicked.is_err());
+    apply(&mut divs(MAX_DEPTH - 1), &mut Every(Order::Topdown), None).unwrap();
+}
+
+/// `depth` divs in one another, around a paragraph, and the walk's limit.
+fn divs(depth: usize) -> Pandoc {
+    let mut block = Block::Para(panir::inlines("x"));
+    for _ in 1..depth {
+        block = panir::Div {
+            attr: Default::default(),
+            content: vec![block],
+        }
+        .into();
+    }
+    Pandoc::new(vec![block])
+}
+
+#[test]
+fn a_document_as_deep_as_one_read_is_walked_deeper_not() {
+    // MAX_DEPTH levels (the Str the last), the most reading takes
+    // (optimized: unoptimized, its stack runs out first)
+    let mut doc = divs(MAX_DEPTH - 1);
+    if !cfg!(debug_assertions) {
+        assert!(from_str(&to_string(&doc)).is_ok());
+        assert!(from_str(&to_string(&divs(MAX_DEPTH))).is_err());
+    }
+    for order in [Order::Typewise, Order::Topdown, Order::Bottomup] {
+        apply(&mut doc, &mut Every(order), None).unwrap();
+        let e = apply(&mut divs(MAX_DEPTH), &mut Every(order), None).unwrap_err();
+        assert_eq!((e.function, e.node), (None, "Inlines"));
+    }
 }

@@ -27,7 +27,22 @@ use std::error::Error;
 use std::fmt;
 
 use crate::path::{Locate, Path, Target};
-use crate::{Block, Inline, Meta, Pandoc, VisitMut, walk_block, walk_inline};
+use crate::{Block, Inline, MAX_DEPTH, Meta, Pandoc, VisitMut, walk_block, walk_inline};
+
+thread_local! {
+    /// How many lists deep the filter walks on this thread are: a walk started
+    /// by a function (`apply` on a fragment) goes on from the one it is in.
+    static DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The depth as it was, again, when a walk ends (or a panic leaves it).
+struct Restore(usize);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        DEPTH.set(self.0);
+    }
+}
 
 /// The order a filter's functions are called in: Lua's `traverse`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -188,8 +203,9 @@ pub struct FilterError {
     /// empty list).
     pub path: String,
     /// The [`Filter`] method that failed: `"inline"`, `"block"`, `"inlines"`,
-    /// `"blocks"`, `"meta"` or `"pandoc"`.
-    pub function: &'static str,
+    /// `"blocks"`, `"meta"` or `"pandoc"`; `None` for the walk itself, which
+    /// stops at [`MAX_DEPTH`](crate::MAX_DEPTH) levels.
+    pub function: Option<&'static str>,
     /// What it was called on: a constructor's name (`"Str"`), or `"Inlines"`,
     /// `"Blocks"`, `"Meta"`, `"Pandoc"`.
     pub node: &'static str,
@@ -199,11 +215,14 @@ pub struct FilterError {
 
 impl fmt::Display for FilterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}\n  in filter function {}, on the {}",
-            self.error, self.function, self.node
-        )?;
+        match self.function {
+            Some(function) => write!(
+                f,
+                "{}\n  in filter function {function}, on the {}",
+                self.error, self.node
+            )?,
+            None => write!(f, "{}\n  walking the {}", self.error, self.node)?,
+        }
         if !self.path.is_empty() {
             write!(f, " at {}", self.path)?;
         }
@@ -355,7 +374,7 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
     /// Stop the walk: `function` failed on `node`.
     fn fail(
         &mut self,
-        function: &'static str,
+        function: Option<&'static str>,
         node: &'static str,
         error: Box<dyn Error + Send + Sync>,
         target: Option<Target>,
@@ -376,17 +395,18 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
         let mut ctx = Ctx::new(self.conversion, self.meta);
         list(self.f, xs, &mut ctx);
         if let Some(e) = ctx.error {
-            self.fail(T::LIST_FUNCTION, T::LIST, e, Target::list(xs));
+            self.fail(Some(T::LIST_FUNCTION), T::LIST, e, Target::list(xs));
         }
         ctx.skip
     }
 
-    /// The nodes of a list: each may be replaced, deleted or spliced; then
-    /// (or first, top-down) the list.
+    /// The nodes of a list, a level deeper than the list holding it (or
+    /// than the walk that called the function that started this one): no
+    /// deeper than [`MAX_DEPTH`].
     fn list<T: Walked>(
         &mut self,
         xs: &mut Vec<T>,
-        (on_elem, on_list): (bool, bool),
+        calls: (bool, bool),
         elem: ElemFn<F, T>,
         list: ListFn<F, T>,
         children: fn(&mut Self, &mut T),
@@ -394,6 +414,31 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
         if self.failure.is_some() {
             return;
         }
+        // (its nodes a level deeper: as reading counts, an empty list isn't)
+        let depth = DEPTH.get() + 1;
+        if depth > MAX_DEPTH && !xs.is_empty() {
+            let e = format!(
+                "nested more than {MAX_DEPTH} levels deep (a document that deep, or a top-down \
+                 filter's function whose result holds what it matched, walked without end)"
+            );
+            self.fail(None, T::LIST, e.into(), Target::list(xs));
+            return;
+        }
+        DEPTH.set(depth);
+        self.nodes(xs, calls, elem, list, children);
+        DEPTH.set(depth - 1);
+    }
+
+    /// The nodes of a list: each may be replaced, deleted or spliced; then
+    /// (or first, top-down) the list.
+    fn nodes<T: Walked>(
+        &mut self,
+        xs: &mut Vec<T>,
+        (on_elem, on_list): (bool, bool),
+        elem: ElemFn<F, T>,
+        list: ListFn<F, T>,
+        children: fn(&mut Self, &mut T),
+    ) {
         let topdown = self.topdown;
         if topdown && on_list && (self.on_list(xs, list) || self.failure.is_some()) {
             return;
@@ -429,7 +474,7 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
             };
             if let Some(e) = ctx.error {
                 // (what it returned is not used: the node stays)
-                self.fail(T::FUNCTION, xs[i].name(), e, None);
+                self.fail(Some(T::FUNCTION), xs[i].name(), e, None);
                 failed = Some(i);
                 break;
             }
@@ -553,7 +598,7 @@ fn whole<T>(
             } else {
                 String::new()
             },
-            function,
+            function: Some(function),
             node,
             error,
         },
@@ -759,5 +804,6 @@ pub fn apply_with<T: Walkable, F: Filter + ?Sized>(
     f: &mut F,
     conversion: &Conversion,
 ) -> Result<(), FilterError> {
+    let _restore = Restore(DEPTH.get());
     x.apply_filter(f, conversion)
 }

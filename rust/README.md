@@ -208,7 +208,13 @@ What a port of a Lua filter trips over:
   the path of JSON it can't read. It
   reads a document down to `MAX_DEPTH` (256) levels of blocks and inlines in
   each other, and as far as 640 kB of stack allow (a level takes five times
-  the stack unoptimized); a deeper one is an error, not a crash.
+  the stack unoptimized); a deeper one is an error, not a crash. A filter
+  walks as deep, counting the walks its functions start (`apply` on a
+  fragment) from where they are: deeper, as a top-down function whose
+  result holds what it matched makes it (each result walked, without
+  end), is a `FilterError` (`function` `None`), with the path. A function
+  that calls itself without end is Rust's stack overflow (the process
+  aborts): panir can't see it.
 - A `ColWidth` that isn't finite is read and written as pandoc does (`null`,
   `"+inf"`, `"-inf"`); a finite one byte for byte.
 
