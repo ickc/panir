@@ -190,7 +190,11 @@ function (::_Tagged{C})(j) where {C}
     enc = _encoding(C)
     enc === :none && return C()
     haskey(j, "c") || throw(_Bad("$C with contents", j, "$C without"))
-    _decode_fields(C, enc, j["c"])
+    c = j["c"]
+    # (as in `_at`)
+    c isa Vector{Any} ? _decode_fields(C, enc, c) :
+    c isa String ? _decode_fields(C, enc, c) :
+    _decode_fields(C, enc, c)
 end
 
 function _decode_fields(::Type{T}, enc, c) where {T}
