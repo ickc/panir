@@ -343,50 +343,72 @@ function _many(w::_Walker, list::Vector{T}, parent, field, path) where {T <: Nod
     w.topdown ? list : first(_whole(w, list, parent, field, path))
 end
 
-function _value(w::_Walker, @nospecialize(x), parent, field, path)
-    if x isa Node
-        push!(w.stack, (parent, field, nothing, nothing, path))
-        try
-            return _one(w, x)
-        finally
-            pop!(w.stack)
-        end
-    elseif x isa Vector{<:Node}
-        return _many(w, x, parent, field, path)
-    elseif x isa Vector
-        for (i, y) in enumerate(x)
-            z = _value(w, y, parent, field, _Path(path, i - 1))
-            z === y || (x[i] = z)
-        end
-    elseif x isa Dict
-        for k in sort!(collect(keys(x)))  # in key order, as pandoc's Map
-            haskey(x, k) || continue  # a method removed it
-            y = x[k]
-            if y isa Node  # the map is its container, the key its index
-                push!(w.stack, (parent, field, x, k, _Path(path, k)))
-                z = try
-                    _one(w, y)
-                finally
-                    pop!(w.stack)
-                end
-            else
-                z = _value(w, y, parent, field, _Path(path, k))
-            end
-            z === y || (x[k] = z)
-        end
-    elseif x isa Tuple
-        ys = Any[_value(w, y, parent, field, _Path(path, i - 1)) for (i, y) in enumerate(x)]
-        all(ys[i] === x[i] for i in eachindex(ys)) || return typeof(x)(Tuple(ys))
+# A field's value, or what is in one: a node, a list of nodes, or what
+# holds them (a method each: a call decided on the value's type, which is
+# fast, where `x isa Vector{<:Node}` was a subtyping on every one).
+function _value(w::_Walker, x::Node, parent, field, path)
+    push!(w.stack, (parent, field, nothing, nothing, path))
+    try
+        return _one(w, x)
+    finally
+        pop!(w.stack)
+    end
+end
+
+_value(w::_Walker, x::Vector{<:Node}, parent, field, path) = _many(w, x, parent, field, path)
+
+function _value(w::_Walker, x::Vector, parent, field, path)
+    for (i, y) in enumerate(x)
+        _holds_nodes(y) || continue
+        z = _value(w, y, parent, field, _Path(path, i - 1))
+        z === y || (x[i] = z)
     end
     x
 end
+
+function _value(w::_Walker, x::Dict, parent, field, path)
+    for k in sort!(collect(keys(x)))  # in key order, as pandoc's Map
+        haskey(x, k) || continue  # a method removed it
+        y = x[k]
+        if y isa Node  # the map is its container, the key its index
+            push!(w.stack, (parent, field, x, k, _Path(path, k)))
+            z = try
+                _one(w, y)
+            finally
+                pop!(w.stack)
+            end
+        else
+            _holds_nodes(y) || continue
+            z = _value(w, y, parent, field, _Path(path, k))
+        end
+        z === y || (x[k] = z)
+    end
+    x
+end
+
+function _value(w::_Walker, x::Tuple, parent, field, path)
+    ys = Any[_holds_nodes(y) ? _value(w, y, parent, field, _Path(path, i - 1)) : y for (i, y) in enumerate(x)]
+    all(ys[i] === x[i] for i in eachindex(ys)) || return typeof(x)(Tuple(ys))
+    x
+end
+
+# Whether a value may hold a node, by its type: the walk doesn't go into
+# one that can't (an Attr's strings, a Target).
+_holds_nodes(x) = _holds(typeof(x))
+_holds(::Type{<:Node}) = true
+_holds(::Type{Vector{T}}) where {T} = _holds(T)
+_holds(::Type{Dict{K, V}}) where {K, V} = _holds(V)
+_holds(::Type{T}) where {T <: Tuple} = _holds_any(fieldtypes(T)...)
+_holds_any() = false  # (not `any`: this way it is decided as it compiles)
+_holds_any(T, rest...) = _holds(T) || _holds_any(rest...)
+_holds(::Type) = false
 
 function _children(w::_Walker, x::T; skip::Union{Nothing, Symbol} = nothing,
                    after::Union{Nothing, Symbol} = nothing, then = nothing) where {T <: Node}
     for f in fieldnames(T)
         f === skip && continue
         v = getfield(x, f)
-        if v isa Union{Node, Vector, Dict, Tuple}
+        if _holds_nodes(v)
             z = _value(w, v, x, f, _Path(isempty(w.stack) ? nothing : w.stack[end][5], f))
             z === v || setfield!(x, f, z)
         end
