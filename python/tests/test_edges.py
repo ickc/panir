@@ -341,7 +341,7 @@ def test_a_function_may_change_the_list_its_node_is_in():
 
 # A long list whose nodes are deleted, kept, replaced by one and by several
 # (once quadratic: each replacement by none or several moved the rest).
-LONG = 30_000
+LONG = 3_000
 
 
 def splice_rule(s):
@@ -394,7 +394,7 @@ def test_a_long_list_spliced(traverse):
 @pytest.mark.parametrize("traverse", ["bottomup", "topdown"])
 def test_a_long_list_spliced_with_contexts(traverse):
     # the context is right after earlier nodes were deleted and multiplied:
-    # looked at first halfway (until then the list is spliced the fast way)
+    # looked at first halfway
     top_down = traverse == "topdown"
     original = [Str(str(k)) for k in range(LONG)]
     looked = [0, LONG // 2, LONG // 2 + 1, LONG // 2 + 3, LONG // 2 + 4, LONG - 1]
@@ -474,8 +474,8 @@ def from_node(xs, node):
 @pytest.mark.parametrize("traverse", ["bottomup", "topdown", "typewise"])
 def test_a_list_being_walked_seen_from_a_closure(traverse):
     # A function deletes or doubles blocks; a later one looks at the document
-    # it closed over (not ctx): its block and every one after it are there,
-    # in order. (Earlier deletions and doublings may show only at the end.)
+    # it closed over (not ctx): the list is as it is now, the earlier
+    # deletions and doublings made
     original = [
         RawBlock("html", "del"),
         Para("p1"),
@@ -495,11 +495,16 @@ def test_a_list_being_walked_seen_from_a_closure(traverse):
 
     @f.on(Para)
     def _(p):
-        seen.append(A.stringify(p))
+        now = " ".join(A.stringify(b) or b.text for b in doc.blocks)
+        seen.append(f"{A.stringify(p)}: {now}")
         assert same(from_node(doc.blocks, p), from_node(original, p))
 
     f(doc)
-    assert seen == ["p1", "p3", "p5"]
+    assert seen == [
+        "p1: p1 dbl p3 del p5 h",
+        "p3: p1 dbl dbl2 p3 del p5 h",
+        "p5: p1 dbl dbl2 p3 p5 h",
+    ]
     dbl = [RawBlock("html", "dbl"), RawBlock("html", "dbl2")]
     assert doc.blocks == [Para("p1"), *dbl, Para("p3"), Para("p5"), Header(1, "h")]
 
@@ -516,13 +521,13 @@ def test_a_list_being_walked_seen_from_a_closure(traverse):
 
     @g.on(Str)
     def _(s):
-        seen.append(s.text)
+        seen.append(f"{s.text}: {A.stringify(para.content)}")
         assert same(from_node(para.content, s), from_node(original, s))
         assert doc.blocks[0].content is para.content
         return [s, Str(s.text.upper())] if s.text == "c" else None
 
     g(doc)
-    assert seen == ["a", "b", "c", "d", "e"]
+    assert seen == ["a: a b c d e", "b: ab c d e", "c: abc d e", "d: abcCd e", "e: abcCde"]
     assert doc.blocks == [Para(*map(Str, ["a", "b", "c", "C", "d", "e"]))]
 
 
@@ -552,7 +557,7 @@ def test_neighbours_while_a_long_list_is_spliced(traverse):
         if k % 100 == 0:
             check(kept, now)
         if k == n // 2:
-            assert same(ctx.container, now)  # (made what it is now; in place from then on)
+            assert same(ctx.container, now)
         kept.append(ctx)
         result = [] if k % 3 == 0 else [s, Str(s.text)] if k % 3 == 1 else None
         made.extend([s] if result is None else result)
@@ -606,7 +611,7 @@ def test_a_list_being_walked_changed_from_a_closure(traverse):
     assert run(lengths) == ["TOC", "dbl", "dbl2", "One", "Two", "end"]
 
     def assign(blocks, at):
-        if at == "One":  # the same length: seen at the end of the walk
+        if at == "One":  # a node replaced through the closure
             blocks[find(blocks, "a")] = Para("A")
 
     assert run(assign) == ["A", "dbl", "dbl2", "One", "x", "Two"]

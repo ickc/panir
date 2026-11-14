@@ -221,7 +221,6 @@ class Filter:
             raise ValueError(f"traverse: expected one of {_TRAVERSES}, got {self.traverse!r}")
         conv = conversion if conversion is not None else Conversion(format)
         top_down = self.traverse == "topdown"
-        splicing: list = []  # (every pass's: see _Walker.splicing)
         whole = isinstance(doc, Pandoc)
         if whole:
             label = ""
@@ -244,7 +243,6 @@ class Filter:
                 doc if whole else None,
                 conv,
                 {} if lists is None else {c: h for c, h in self._lists.items() if lists(c)},
-                splicing,
                 label,
             )
 

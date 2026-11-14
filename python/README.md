@@ -113,11 +113,8 @@ deletes it). A second parameter, if the function has one (without a
 default), is the node's `Context`: its `parent`, the `container` it is in
 and its `index` there, its `next`/`prev` siblings, `path`, the `doc`, and
 the output `format`. They are right after earlier nodes of the list were
-deleted or spliced, and a list reached through a context is as it is now.
-(A list being walked holds its node and every one after it, however it is
-reached; reached otherwise, as through the document a function closed
-over, the nodes deleted or spliced in it so far may show only once its
-walk is done, but a change made to it that way is made to it as it is.)
+deleted or spliced: a node replaced by none or several is spliced in
+place, so a list is as it is now however it is reached.
 
 What a function returns converts as pandoc's Lua converts it: for an
 inline, a string is its words (`return "two words"`), and a list's
