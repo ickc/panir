@@ -793,7 +793,9 @@ def walk(
     handler = (action, True)
     find = (lambda cls: handler) if wants is None else (lambda cls: handler if wants(cls) else None)
     if isinstance(node, Node):
-        w = _Walker(find, top_down, node if doc is None else doc, conv)
+        # (paths from the document, or else from the node, named)
+        root = "" if doc is not None or node._encoding == "root" else type(node).__name__
+        w = _Walker(find, top_down, node if doc is None else doc, conv, root=root)
         return w.one(node, type(node).__name__)
     if isinstance(node, NodeList) and isinstance(node._spec.item, _ClassSpec):
         lst, spec = node, node._spec
