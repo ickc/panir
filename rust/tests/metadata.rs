@@ -64,9 +64,17 @@ fn lua_truth() {
         MetaValue::MetaMap(BTreeMap::new()),
     ] {
         assert!(truthy(Some(&v)), "{v:?}");
+        assert!(truthy(&v), "{v:?}"); // a value in hand, as an option
     }
     assert!(!truthy(Some(&false.into())));
+    assert!(!truthy(&MetaValue::from(false)));
     assert!(!truthy(None));
+    // in a closure over values (an Option's filter gives a &&MetaValue)
+    let mut meta = panir::Meta::new();
+    meta.insert("off".into(), false.into());
+    meta.insert("on".into(), "".into());
+    assert_eq!(meta.values().filter(|v| truthy(*v)).count(), 1);
+    assert_eq!(meta.get("on").filter(|v| truthy(*v)), Some(&"".into()));
 }
 
 #[test]
@@ -109,4 +117,7 @@ fn one_value_or_a_list() {
     assert!(items(Some(&empty)).is_empty());
     assert_eq!(items(Some(&false.into())), [false.into()]);
     assert!(items(None).is_empty());
+    // a value in hand, as an option
+    assert_eq!(items(&list), items(Some(&list)));
+    assert_eq!(items(&one), [MetaValue::from("a")]);
 }

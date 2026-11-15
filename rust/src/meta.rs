@@ -6,7 +6,8 @@ use crate::{Block, Inline, Meta, MetaValue, Text};
 
 /// Whether a metadata value is true as Lua sees it (`if meta.x then`,
 /// `meta.x or default`): there, and not `false`. An empty string, list or
-/// map is true, as the text `false` is.
+/// map is true, as the text `false` is. It takes what `meta.get("x")` gives,
+/// or a value in hand.
 ///
 /// ```
 /// use panir::{MetaValue, truthy};
@@ -17,9 +18,10 @@ use crate::{Block, Inline, Meta, MetaValue, Text};
 /// assert!(!truthy(meta.get("draft")));
 /// assert!(!truthy(meta.get("missing")));
 /// assert!(truthy(meta.get("title")));
+/// assert!(meta.values().any(|v| truthy(v)));
 /// ```
-pub fn truthy(value: Option<&MetaValue>) -> bool {
-    !matches!(value, None | Some(MetaValue::MetaBool(false)))
+pub fn truthy<'a>(value: impl Into<Option<&'a MetaValue>>) -> bool {
+    !matches!(value.into(), None | Some(MetaValue::MetaBool(false)))
 }
 
 /// The value at a path of keys, each but the last in a map (`MetaMap`):
@@ -50,19 +52,20 @@ pub fn lookup<'a>(meta: &'a Meta, path: &[&str]) -> Option<&'a MetaValue> {
 
 /// One value or a list of them, as a list: a `MetaList`'s items, nothing for
 /// a missing value, any other value alone (a filter's `ensure_list`, the
-/// shapes `header-includes` takes).
+/// shapes `header-includes` takes). It takes what `meta.get("x")` gives, or
+/// a value in hand.
 ///
 /// ```
 /// use panir::{MetaValue, items};
 ///
 /// let one = MetaValue::from("a");
 /// let list: MetaValue = ["a", "b"].into_iter().collect();
-/// assert_eq!(items(Some(&one)).len(), 1);
-/// assert_eq!(items(Some(&list)).len(), 2);
+/// assert_eq!(items(&one).len(), 1);
+/// assert_eq!(items(&list).len(), 2);
 /// assert!(items(None).is_empty());
 /// ```
-pub fn items(value: Option<&MetaValue>) -> &[MetaValue] {
-    match value {
+pub fn items<'a>(value: impl Into<Option<&'a MetaValue>>) -> &'a [MetaValue] {
+    match value.into() {
         None => &[],
         Some(MetaValue::MetaList(xs)) => xs,
         Some(v) => std::slice::from_ref(v),

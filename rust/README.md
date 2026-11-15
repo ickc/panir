@@ -307,16 +307,17 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
 
 - **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
   missing field and for `false` only; an empty string, list or map is
-  true, as is the text `no`: `truthy(meta.get("x"))`.
+  true, as is the text `no`: `truthy(meta.get("x"))`, or `truthy(v)` of a
+  value in hand.
 - **A nested option**, Lua's `((meta.a or {}).b or {}).c`: `lookup(&meta,
   &["a", "b", "c"])`, `None` where a key is missing or a value on the way
   is not a map (where Lua would fail, on `true`, or find a method, on a
   string or a list). It starts from the metadata or a `MetaMap`'s content
   (a `Meta` too).
 - **One value or a list of them** (a filter's `ensure_list`, the shapes
-  `header-includes` takes): `items(meta.get("x"))`, a `MetaList`'s items,
-  nothing for a missing value, any other value alone: a slice, borrowed
-  from the document.
+  `header-includes` takes): `items(meta.get("x"))` (or `items(v)`), a
+  `MetaList`'s items, nothing for a missing value, any other value alone:
+  a slice, borrowed from the document.
 - **Writing metadata** (Lua's `meta.x = v`): `meta.insert("x".into(),
   v.into())` converts a plain value as Lua does (below, in "Types");
   reading needs no conversion: a `MetaMap`'s content is a `BTreeMap`, a
