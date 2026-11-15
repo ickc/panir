@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
-  applyFilter, copy, Div, Emph, fromJSON, fromPlain, getAttribute, given, Header, HorizontalRule, items, lookup,
+  applyFilter, checkUnique, copy, Div, Emph, fromJSON, fromPlain, getAttribute, given, Header, HorizontalRule, items, lookup,
   MetaBool, MetaInlines, MetaList, MetaString, Pandoc as makePandoc, Para, RawBlock, RawInline, removeAttribute,
   setAttribute, Str, stringify, Strong, toJSON, truthy, Underline,
 } from "../src/index.ts";
@@ -150,7 +150,7 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
     Pandoc: (doc) => {
       const title = doc.meta.title;
       assert.ok(title?.t === "MetaInlines");
-      return makePandoc([Header(1, title.content), Para("made anew")], { meta: doc.meta });
+      return makePandoc([Header(1, copy(title.content)), Para("made anew")], { meta: doc.meta });
     },
     Str: (s) => Str(s.text.toUpperCase()),
   }],
@@ -338,7 +338,9 @@ for (const { name, input, output, also } of lines) {
       assert.throws(() => applyFilter(doc, filters, FORMAT));
       return null;
     }
-    return toJSON(applyFilter(doc, filters, FORMAT));
+    const out = applyFilter(doc, filters, FORMAT);
+    checkUnique(out); // (Lua's elements are values: no node in two places)
+    return toJSON(out);
   };
   test(`as pandoc's Lua: ${name}`, () => {
     assert.ok(scenario, `no TypeScript filter for corpus/filters/${name}.lua`);

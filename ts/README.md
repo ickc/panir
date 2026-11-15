@@ -198,13 +198,24 @@ assert.throws(() => applyFilter(Pandoc(Para("a")), wrong), {
 An error thrown in a function gets the same note (`in filter function
 ...`).
 
-As in Lua, what a function returns are values: `[el, el]` puts two nodes
-in the document, the second a copy. Elsewhere a node belongs in one place:
-to put it in a second, copy it (`copy(el)`), or whatever changes one later
-changes both. That is the filter's author's to get right, as anything a
-program does; for tests and debugging, `checkUnique(doc)` throws an error
-naming a node it finds in two places, and both (by identity: equal nodes
-are fine; an array in two places by what is in it).
+As in Lua, what one call returns are values: `[el, el]` puts two nodes in
+the document, the second a copy. Not across calls: a node returned by two
+calls is in two places (Lua's `local br = pandoc.RawBlock(...)`, returned
+for every marker, is a copy each time; here it is one node). Everywhere
+but within one return a node belongs in one place: to put it in a second,
+copy it (`copy(br)`), or whatever changes one later changes both. That is
+the filter's author's to get right, as anything a program does; for tests
+and debugging, `checkUnique(doc)` throws an error naming a node it finds
+in two places, and both (by identity: equal nodes are fine; an array in
+two places by what is in it).
+
+```ts
+import { checkUnique, copy, HorizontalRule, RawBlock } from "panir";
+
+const br = RawBlock("html", "<hr/>"); // made once
+const breaks: Filter = { HorizontalRule: () => copy(br) }; // a copy for each rule
+checkUnique(applyFilter(Pandoc([HorizontalRule(), HorizontalRule()]), breaks)); // (without the copy, it throws)
+```
 
 As in Lua, `Inlines` and `Blocks` get every list of them, and `Meta` the
 metadata; each returns a replacement, or nothing (converted as Lua does: a

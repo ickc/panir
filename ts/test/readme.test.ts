@@ -78,6 +78,14 @@ assert.throws(() => applyFilter(Pandoc(Para("a")), wrong), {
 // #endregion
 
 // #region README
+import { checkUnique, copy, HorizontalRule, RawBlock } from "../src/index.ts";
+
+const br = RawBlock("html", "<hr/>"); // made once
+const breaks: Filter = { HorizontalRule: () => copy(br) }; // a copy for each rule
+checkUnique(applyFilter(Pandoc([HorizontalRule(), HorizontalRule()]), breaks)); // (without the copy, it throws)
+// #endregion
+
+// #region README
 const shout: Filter = {
   Str: (s, ctx) => {
     if (ctx.format === "html" && ctx.next?.t !== "Space") return Strong(s.text.toUpperCase());

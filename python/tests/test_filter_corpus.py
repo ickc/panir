@@ -293,7 +293,7 @@ def newdoc() -> list[Filter]:
     def anew(doc):
         title = doc.meta["title"]
         assert isinstance(title, MetaInlines)
-        return Pandoc(Header(1, *title.content), Para("made anew"), meta=doc.meta)
+        return Pandoc(Header(1, *copy.deepcopy(title.content)), Para("made anew"), meta=doc.meta)
 
     @f.on(Str)
     def up(s):
@@ -616,3 +616,4 @@ def test_as_pandocs_lua(line, traverse):
         return
     doc = A.run(Pandoc.from_json(line["input"]), filters, FORMAT)
     assert doc.to_json() == line["output"]
+    A.check_unique(doc)  # (Lua's elements are values: no node in two places)

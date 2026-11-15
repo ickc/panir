@@ -121,7 +121,7 @@ end
 function scenario_newdoc()
     function f(d::Pandoc)
         title = d.meta["title"]::MetaInlines
-        Pandoc(Header(1, title.content), Para("made anew"); meta = d.meta)
+        Pandoc(Header(1, deepcopy(title.content)), Para("made anew"); meta = d.meta)
     end
     f(s::Str) = Str(uppercase(s.text))
     Filters([(f, :topdown)])
@@ -309,11 +309,15 @@ const SCENARIOS = Dict(
             @test_throws Exception run(SCENARIOS[l["name"]](), l["input"])
             continue
         end
-        @test norm(tojson(run(SCENARIOS[l["name"]](), l["input"]))) == norm(l["output"])
+        out = run(SCENARIOS[l["name"]](), l["input"])
+        @test norm(tojson(out)) == norm(l["output"])
+        @test check_unique(out) === nothing  # (Lua's elements are values: no node in two places)
         @testset "$(l["name"]), $traverse" for traverse in l["also"]
             filters = SCENARIOS[l["name"]]()
             @test all(t === :typewise for (_, t) in filters)  # stateless ones set no order
-            @test norm(tojson(run([(f, Symbol(traverse)) for (f, _) in filters], l["input"]))) == norm(l["output"])
+            out = run([(f, Symbol(traverse)) for (f, _) in filters], l["input"])
+            @test norm(tojson(out)) == norm(l["output"])
+            @test check_unique(out) === nothing
         end
     end
 end

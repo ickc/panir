@@ -117,13 +117,22 @@ blocks[0].content[0]: expected Inline, a vector of them, a string, or nothing, g
   returned by wrong(s::Str) @ Main upper.jl:4
 ```
 
-As in Lua, what a method returns are values: `[el, el]` puts two nodes in
-the document, the second a copy. Elsewhere a node belongs in one place: to
-put it in a second, `deepcopy` it, or whatever changes one later changes
+As in Lua, what one call returns are values: `[el, el]` puts two nodes in
+the document, the second a copy. Not across calls: a node returned by two
+calls is in two places (Lua's `local br = pandoc.RawBlock(...)`, returned
+for every marker, is a copy each time; here it is one node). Everywhere
+but within one return a node belongs in one place: to put it in a second,
+`deepcopy` it (`deepcopy(BR)`), or whatever changes one later changes
 both. That is the filter's author's to get right, as anything a program
 does; for tests and debugging, `check_unique(doc)` throws an
 `ArgumentError` naming a node it finds in two places, and both (by
 identity: equal nodes are fine; a vector in two places by what is in it).
+
+```julia
+const BR = RawBlock("html", "<hr/>")  # made once
+page(::HorizontalRule) = deepcopy(BR)  # a copy for each rule
+check_unique(walk!(page, Pandoc(HorizontalRule(), HorizontalRule())))  # (without the copy, it throws)
+```
 
 As in pandoc's Lua filters, a method for `Vector{Inline}` or
 `Vector{Block}` gets every list of them, and one for `Panir.Meta` the

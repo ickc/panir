@@ -145,14 +145,33 @@ ASTTypeError: Para.content[0]: expected a node, a list of nodes or None, got int
 with the note `returned by filter function wrong, for the Str at
 blocks[0].content[0]`; an exception raised in a function gets the same.
 
-As in Lua, what a function returns are values: `return [el, el]` puts two
-nodes in the document, the second a copy. Elsewhere a node belongs in one
-place: to put it in a second, copy it (`copy.deepcopy(el)`), or whatever
-changes one later changes both. That is the filter's author's to get
-right, as anything a program does; for tests and debugging,
+As in Lua, what one call returns are values: `return [el, el]` puts two
+nodes in the document, the second a copy. Not across calls: a node
+returned by two calls is in two places (Lua's `local br =
+pandoc.RawBlock(...)`, returned for every marker, is a copy each time;
+here it is one node). Everywhere but within one return a node belongs in
+one place: to put it in a second, copy it (`return copy.deepcopy(BR)`),
+or whatever changes one later changes both. That is the filter's author's
+to get right, as anything a program does; for tests and debugging,
 `check_unique(doc)` raises a `ValueError` naming a node it finds in two
 places, and both (by identity: equal nodes are fine; a list in two places
 by what is in it).
+
+```python
+import copy
+
+BR = RawBlock("html", "<hr/>")  # made once
+breaks = Filter()
+
+
+@breaks.on(HorizontalRule)
+def page(rule):
+    return copy.deepcopy(BR)  # a copy for each rule
+
+
+doc = breaks(Pandoc(HorizontalRule(), HorizontalRule()))
+check_unique(doc)  # (without the copy: ValueError, the RawBlock at blocks[0] is also at blocks[1])
+```
 
 ```python
 @f.on(Str)
