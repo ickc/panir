@@ -70,8 +70,8 @@ pub enum Order {
 
 /// The pandoc conversion a filter runs in, as panir's Python `Conversion`:
 /// the output format's name (what pandoc passes a JSON filter), and, when
-/// known, the input and output formats with extensions, the reader's
-/// options and the conversion's options (defaults-file keys).
+/// known, the input and output formats with extensions, the reader's and
+/// the writer's options and the conversion's options (defaults-file keys).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Conversion {
     /// The output format's name, e.g. `html5`.
@@ -81,6 +81,10 @@ pub struct Conversion {
     pub output_format: Option<String>,
     /// The reader's options (pandoc's `PANDOC_READER_OPTIONS`).
     pub reader_options: Option<serde_json::Value>,
+    /// The writer's options (Lua's `PANDOC_WRITER_OPTIONS`), keyed as
+    /// pandoc's JSON keys the reader's (Lua's `number_sections` is
+    /// `"number-sections"`), with Lua's values (`"top-level-chapter"`).
+    pub writer_options: Option<serde_json::Value>,
     /// The conversion's options, in defaults-file keys.
     pub options: Option<serde_json::Value>,
 }
@@ -89,7 +93,8 @@ impl Conversion {
     /// The conversion of a JSON filter pandoc runs: the output format is its
     /// first argument, the rest in the environment (`PANDOC_READER_OPTIONS`,
     /// and `PANDOC_INPUT_FORMAT` and `PANDOC_OUTPUT_FORMAT` where set, as
-    /// libpandoc does; proposed to pandoc in jgm/pandoc#11016).
+    /// libpandoc does; proposed to pandoc in jgm/pandoc#11016; and
+    /// `PANDOC_WRITER_OPTIONS` where set, which neither sets yet).
     pub fn from_env() -> Self {
         // (args() panics on an argument that isn't Unicode)
         let format = std::env::args_os()
@@ -106,6 +111,8 @@ impl Conversion {
             input_format: get("PANDOC_INPUT_FORMAT"),
             output_format: get("PANDOC_OUTPUT_FORMAT"),
             reader_options: get("PANDOC_READER_OPTIONS")
+                .and_then(|v| serde_json::from_str(&v).ok()),
+            writer_options: get("PANDOC_WRITER_OPTIONS")
                 .and_then(|v| serde_json::from_str(&v).ok()),
             options: None,
         }

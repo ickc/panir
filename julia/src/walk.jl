@@ -1,33 +1,38 @@
 # Walking a document, and filters as functions with a method per node type.
 
 """
-    Conversion(; format, input_format, output_format, reader_options, options)
+    Conversion(; format, input_format, output_format, reader_options, writer_options, options)
 
 The pandoc conversion a filter runs in, as panir's Python `Conversion`: the
 output format's name (`format`, what pandoc passes a JSON filter), and,
 when known, the input and output formats with extensions, the reader's
-options and the conversion's options (defaults-file keys). A filter method
-finds it in `ctx.conversion`. `Conversion(args, env)` reads it as a JSON
-filter under pandoc gets it: the output format as the first argument,
-`\$PANDOC_READER_OPTIONS`, and `\$PANDOC_INPUT_FORMAT` and
-`\$PANDOC_OUTPUT_FORMAT` where set (libpandoc sets them; proposed to
-pandoc in jgm/pandoc#11016).
+options, the writer's (Lua's `PANDOC_WRITER_OPTIONS`, keyed as pandoc's
+JSON keys the reader's: Lua's `number_sections` is `"number-sections"`,
+with Lua's values, `"top-level-chapter"`) and the conversion's options
+(defaults-file keys). A filter method finds it in `ctx.conversion`.
+`Conversion(args, env)` reads it as a JSON filter under pandoc gets it:
+the output format as the first argument, `\$PANDOC_READER_OPTIONS`, and
+`\$PANDOC_INPUT_FORMAT` and `\$PANDOC_OUTPUT_FORMAT` where set (libpandoc
+sets them; proposed to pandoc in jgm/pandoc#11016), and
+`\$PANDOC_WRITER_OPTIONS` where set (which neither sets yet).
 """
 Base.@kwdef struct Conversion
     format::Union{Nothing, String} = nothing
     input_format::Union{Nothing, String} = nothing
     output_format::Union{Nothing, String} = nothing
     reader_options::Union{Nothing, AbstractDict} = nothing
+    writer_options::Union{Nothing, AbstractDict} = nothing
     options::Union{Nothing, AbstractDict} = nothing
 end
 
 function Conversion(args::AbstractVector{<:AbstractString}, env::AbstractDict)
     nonempty(k) = (v = get(env, k, ""); isempty(v) ? nothing : String(v))
-    reader = nonempty("PANDOC_READER_OPTIONS")
+    json(k) = (v = nonempty(k); v === nothing ? nothing : JSON.parse(v))
     Conversion(; format = isempty(args) ? nothing : String(args[1]),
                input_format = nonempty("PANDOC_INPUT_FORMAT"),
                output_format = nonempty("PANDOC_OUTPUT_FORMAT"),
-               reader_options = reader === nothing ? nothing : JSON.parse(reader))
+               reader_options = json("PANDOC_READER_OPTIONS"),
+               writer_options = json("PANDOC_WRITER_OPTIONS"))
 end
 
 _conversion(c::Conversion) = c

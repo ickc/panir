@@ -318,6 +318,19 @@ What a port of a Lua filter trips over:
   pandoc's JSON (`"track-changes"`, `"tab-stop"`, where Lua's fields are
   `track_changes`, `tab_stop`, and pandoc 2's `trackChanges` is gone),
   with the same values (`"all-changes"`); `None` where pandoc passed none.
+- `PANDOC_WRITER_OPTIONS`: `ctx.conversion.writer_options`, keyed as
+  pandoc's JSON keys the reader's (Lua's `number_sections` is
+  `"number-sections"`, `top_level_division` `"top-level-division"`,
+  `number_offset` `"number-offset"`), with Lua's values
+  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). It is read
+  from `$PANDOC_WRITER_OPTIONS`, which nothing sets yet (proposed to
+  pandoc and libpandoc): pandoc 3.14 gives the writer's options to Lua
+  filters only, so a JSON filter under plain pandoc has none (`None`),
+  whatever `-N` or `--top-level-division` say. Where a host runs the
+  filter in process and knows the conversion (libpandoc),
+  `ctx.conversion.options` has them in defaults-file keys and values
+  (`"number-sections": true`, `"top-level-division": "chapter"`,
+  `"variables"`).
 - `pandoc.utils.to_roman_numeral(n)`: `to_roman_numeral(n)`, the same (1
   to 3999; `""` for 0, `"?"` for anything else; not an integer fails).
 - pandoc's Lua has no function for a metadata value (its values are
@@ -431,6 +444,8 @@ MetaInlines(Str('Ada'), Space(), Str('L.'))
 >>> options = Conversion("latex", reader_options={"track-changes": "all-changes"}).reader_options or {}
 >>> options["track-changes"]
 'all-changes'
+>>> Conversion("latex", writer_options={"number-sections": True}).writer_options
+{'number-sections': True}
 >>> import re
 >>> re.sub("SIZE", lambda m: r"\1 5%", "width: SIZE")
 'width: \\1 5%'

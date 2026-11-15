@@ -376,6 +376,19 @@ What a port of a Lua filter trips over:
   `track_changes`, `tab_stop`, and pandoc 2's `trackChanges` is gone),
   with the same values (`"all-changes"`); `undefined` where pandoc passed
   none.
+- `PANDOC_WRITER_OPTIONS`: `ctx.conversion.writerOptions`, keyed as
+  pandoc's JSON keys the reader's (Lua's `number_sections` is
+  `"number-sections"`, `top_level_division` `"top-level-division"`,
+  `number_offset` `"number-offset"`), with Lua's values
+  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). It is read
+  from `$PANDOC_WRITER_OPTIONS`, which nothing sets yet (proposed to
+  pandoc and libpandoc): pandoc 3.14 gives the writer's options to Lua
+  filters only, so a JSON filter under plain pandoc has none
+  (`undefined`), whatever `-N` or `--top-level-division` say. Where a host
+  runs the filter in process and knows the conversion (libpandoc),
+  `ctx.conversion.options` has them in defaults-file keys and values
+  (`"number-sections": true`, `"top-level-division": "chapter"`,
+  `"variables"`).
 - `pandoc.utils.to_roman_numeral(n)`: `toRomanNumeral(n)`, the same (1
   to 3999; `""` for 0, `"?"` for anything else; not an integer fails).
 - pandoc's Lua has no function for a metadata value (its values are
@@ -506,6 +519,8 @@ assert.deepEqual(blocksOf(meta.name), [Plain([Str("Ada")]), Plain([Space()]), Pl
 assert.deepEqual([toRomanNumeral(2026), toRomanNumeral(0), toRomanNumeral(4000)], ["MMXXVI", "", "?"]);
 const options = new Conversion({ readerOptions: { "track-changes": "all-changes" } }).readerOptions;
 assert.equal(options?.["track-changes"], "all-changes");
+const writer = new Conversion({ writerOptions: { "number-sections": true } }).writerOptions;
+assert.equal(writer?.["number-sections"], true);
 assert.equal("width: SIZE".replace("SIZE", () => "$&5%"), "width: $&5%");
 const bytes = new TextEncoder().encode("«»");
 assert.deepEqual(["«»".length, bytes.length, new TextDecoder().decode(bytes.subarray(0, 1))], [2, 4, "\ufffd"]);

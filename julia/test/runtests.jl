@@ -100,6 +100,10 @@ doc() = Pandoc(
                                      "PANDOC_INPUT_FORMAT" => "markdown+smart", "PANDOC_OUTPUT_FORMAT" => ""))
     @test (env.format, env.input_format, env.output_format, env.reader_options["columns"]) ==
           ("html5", "markdown+smart", nothing, 72)
+    @test env.writer_options === nothing  # (pandoc gives a JSON filter none)
+    # as proposed for pandoc and libpandoc: Lua's PANDOC_WRITER_OPTIONS, keyed as the reader's
+    @test Conversion(String[], Dict("PANDOC_WRITER_OPTIONS" => "{\"number-sections\":true}")).writer_options ==
+          Dict("number-sections" => true)
 end
 
 @testset "walk!" begin

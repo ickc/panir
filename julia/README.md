@@ -278,6 +278,19 @@ What a port of a Lua filter trips over:
   fields are `track_changes`, `tab_stop`, and pandoc 2's `trackChanges` is
   gone), with the same values (`"all-changes"`); `nothing` where pandoc
   passed none.
+- `PANDOC_WRITER_OPTIONS`: `ctx.conversion.writer_options`, keyed as
+  pandoc's JSON keys the reader's (Lua's `number_sections` is
+  `"number-sections"`, `top_level_division` `"top-level-division"`,
+  `number_offset` `"number-offset"`), with Lua's values
+  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). It is read
+  from `$PANDOC_WRITER_OPTIONS`, which nothing sets yet (proposed to
+  pandoc and libpandoc): pandoc 3.14 gives the writer's options to Lua
+  filters only, so a JSON filter under plain pandoc has none (`nothing`),
+  whatever `-N` or `--top-level-division` say. Where a host runs the
+  filter in process and knows the conversion (libpandoc),
+  `ctx.conversion.options` has them in defaults-file keys and values
+  (`"number-sections": true`, `"top-level-division": "chapter"`,
+  `"variables"`).
 - `pandoc.utils.to_roman_numeral(n)`: `to_roman_numeral(n)`, the same (1
   to 3999; `""` for 0, `"?"` for anything else; not an integer fails).
 - pandoc's Lua has no function for a metadata value (its values are
@@ -376,6 +389,7 @@ meta["name"] = [Str("Ada"), Space(), Str("L.")]  # MetaInlines(Str("Ada"), Space
 inlines_of(meta["tags"]), blocks_of(meta["name"])  # ([Str("a")], [Plain(Str("Ada")), Plain(Space()), Plain(Str("L."))])
 to_roman_numeral(2026), to_roman_numeral(0), to_roman_numeral(4000)  # ("MMXXVI", "", "?")
 Conversion(; reader_options = Dict("track-changes" => "all-changes")).reader_options["track-changes"]  # "all-changes"
+Conversion(; writer_options = Dict("number-sections" => true)).writer_options["number-sections"]  # true
 replace("width: SIZE", "SIZE" => "\\1 5%")  # "width: \\1 5%"
 length("«»"), ncodeunits("«»"), codeunit("«»", 1)  # (2, 4, 0xc2)
 ```

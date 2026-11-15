@@ -123,6 +123,8 @@ assert.deepEqual(blocksOf(meta.name), [Plain([Str("Ada")]), Plain([Space()]), Pl
 assert.deepEqual([toRomanNumeral(2026), toRomanNumeral(0), toRomanNumeral(4000)], ["MMXXVI", "", "?"]);
 const options = new Conversion({ readerOptions: { "track-changes": "all-changes" } }).readerOptions;
 assert.equal(options?.["track-changes"], "all-changes");
+const writer = new Conversion({ writerOptions: { "number-sections": true } }).writerOptions;
+assert.equal(writer?.["number-sections"], true);
 assert.equal("width: SIZE".replace("SIZE", () => "$&5%"), "width: $&5%");
 const bytes = new TextEncoder().encode("«»");
 assert.deepEqual(["«»".length, bytes.length, new TextDecoder().decode(bytes.subarray(0, 1))], [2, 4, "\ufffd"]);

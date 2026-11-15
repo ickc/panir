@@ -343,10 +343,27 @@ What a port of a Lua filter trips over:
   });
   let options = conversion.reader_options.as_ref();
   assert_eq!(options.and_then(|o| o["track-changes"].as_str()), Some("all-changes"));
+  let writer = panir::Conversion::from_parts(None, |k| {
+      (k == "PANDOC_WRITER_OPTIONS").then(|| r#"{"number-sections": true}"#.into())
+  });
+  assert_eq!(writer.writer_options.map(|o| o["number-sections"] == true), Some(true));
   let s = "«»";
   assert_eq!((s.chars().count(), s.len()), (2, 4));
   assert_eq!(String::from_utf8_lossy(&s.as_bytes()[0..1]), "\u{fffd}");
   ```
+- `PANDOC_WRITER_OPTIONS`: `ctx.conversion().writer_options`, keyed as
+  pandoc's JSON keys the reader's (Lua's `number_sections` is
+  `"number-sections"`, `top_level_division` `"top-level-division"`,
+  `number_offset` `"number-offset"`), with Lua's values
+  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). It is read
+  from `$PANDOC_WRITER_OPTIONS`, which nothing sets yet (proposed to
+  pandoc and libpandoc): pandoc 3.14 gives the writer's options to Lua
+  filters only, so a JSON filter under plain pandoc has none (`None`),
+  whatever `-N` or `--top-level-division` say. Where a host runs the
+  filter in process and knows the conversion (libpandoc),
+  `ctx.conversion().options` has them in defaults-file keys and values
+  (`"number-sections": true`, `"top-level-division": "chapter"`,
+  `"variables"`).
 - `pandoc.utils.to_roman_numeral(n)`: `to_roman_numeral(n)`, the same (1
   to 3999; `""` for 0, `"?"` for anything else).
 - pandoc's Lua has no function for a metadata value (its values are

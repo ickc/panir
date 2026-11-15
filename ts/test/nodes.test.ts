@@ -161,6 +161,10 @@ test("the conversion", () => {
   });
   assert.deepEqual([env.format, env.inputFormat, env.outputFormat, env.readerOptions?.["columns"]],
                    ["html5", "markdown+smart", undefined, 72]);
+  assert.equal(env.writerOptions, undefined); // (pandoc gives a JSON filter none)
+  // as proposed for pandoc and libpandoc: Lua's PANDOC_WRITER_OPTIONS, keyed as the reader's
+  const writer = Conversion.fromEnvironment(["latex"], { PANDOC_WRITER_OPTIONS: '{"number-sections":true}' });
+  assert.deepEqual(writer.writerOptions, { "number-sections": true });
 });
 
 test("runFilter tells the filter the conversion, under pandoc", (t) => {
