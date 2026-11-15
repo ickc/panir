@@ -400,6 +400,12 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
 `pandoc.utils.type(v) == "Inlines"` is `v.t === "MetaInlines"`, which
 narrows `v` (a `switch (v.t)` too).
 
+A field may be missing, and the type says so: `meta.x` (as a `MetaMap`'s
+`content.x`) is a `MetaValue | undefined`, to test (`meta.x?.t`), or read
+with `given`, `lookup` or `items`, which take one. A field is removed with
+`delete meta.x`; a value `undefined` is an error where the document is
+checked (`serialize`, constructors).
+
 - **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
   missing field and for `false` only; an empty string, list or map is
   true, as is the text `no`. A node is an object, always true in

@@ -10,7 +10,7 @@ export interface Pandoc {
   blocks: Block[];
 }
 
-export type Meta = Record<string, MetaValue>;
+export type Meta = Record<string, MetaValue | undefined>;
 
 export type Block =
   | Plain
@@ -120,7 +120,7 @@ export type MetaValue =
 
 export interface MetaMap {
   t: "MetaMap";
-  content: Record<string, MetaValue>;
+  content: Record<string, MetaValue | undefined>;
 }
 
 export interface MetaList {
@@ -416,7 +416,7 @@ export type MetaValueInit =
   | Inline
   | Block
   | readonly MetaValueInit[]
-  | { readonly [key: string]: MetaValueInit };
+  | { readonly [key: string]: MetaValueInit | undefined };
 
 /** An Attr given whole (`attr`), or by its fields. */
 export type AttrOptions =
@@ -601,7 +601,7 @@ export interface FilterTypes {
 }
 
 /** pandoc's `Pandoc`. */
-export function Pandoc(blocks?: Blocks, opts: { meta?: { readonly [key: string]: MetaValueInit } } = {}): Pandoc {
+export function Pandoc(blocks?: Blocks, opts: { meta?: { readonly [key: string]: MetaValueInit | undefined } } = {}): Pandoc {
   return make<Pandoc>("Pandoc", { blocks }, opts);
 }
 
@@ -676,7 +676,7 @@ export function Div(content?: Blocks, opts: AttrOptions = {}): Div {
 }
 
 /** pandoc's `MetaMap`. */
-export function MetaMap(content?: { readonly [key: string]: MetaValueInit }): MetaMap {
+export function MetaMap(content?: { readonly [key: string]: MetaValueInit | undefined }): MetaMap {
   return make<MetaMap>("MetaMap", { content }, {});
 }
 

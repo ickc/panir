@@ -113,7 +113,9 @@ class Gen:
         if "maybe" in ty:
             return f"{self.ts(ty['maybe'])} | null"
         if "map" in ty:
-            return f"Record<string, {self.ts(ty['map'][1])}>"
+            # a missing key is undefined, and the type says so: `meta.x` is
+            # `MetaValue | undefined` (as noUncheckedIndexedAccess would)
+            return f"Record<string, {self.ts(ty['map'][1])} | undefined>"
         if "tuple" in ty:
             return f"[{', '.join(self.ts(t) for t in ty['tuple'])}]"
         raise ValueError(ty)
@@ -140,7 +142,9 @@ class Gen:
         if "maybe" in r:
             return f"{self.param(r['maybe'])} | null"
         if "map" in r:
-            return f"{{ readonly [key: string]: {self.param(r['map'][1])} }}"
+            # (a map read from the AST, whose values may be undefined, is
+            # taken as it is: an undefined value is refused when checked)
+            return f"{{ readonly [key: string]: {self.param(r['map'][1])} | undefined }}"
         if "tuple" in r:
             return f"readonly [{', '.join(self.param(t) for t in r['tuple'])}]"
         if r.get("ref") == "MetaValue":
@@ -480,7 +484,7 @@ export type MetaValueInit =
   | Inline
   | Block
   | readonly MetaValueInit[]
-  | { readonly [key: string]: MetaValueInit };
+  | { readonly [key: string]: MetaValueInit | undefined };
 
 """
 

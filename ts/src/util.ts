@@ -280,15 +280,17 @@ export function toPlain(value: MetaBool): boolean;
 export function toPlain(value: MetaInlines): Inline[];
 export function toPlain(value: MetaBlocks): Block[];
 export function toPlain(value: MetaList): PlainValue[];
-export function toPlain(value: MetaMap | Meta): { [key: string]: PlainValue };
+export function toPlain(value: MetaMap | Meta): { [key: string]: PlainValue | undefined };
 export function toPlain(value: MetaValue | Meta): PlainValue;
 export function toPlain(value: MetaValue | Meta): PlainValue {
   return deep("toPlain", () => plain(value) as PlainValue);
 }
 
 /** Metadata as a plain value, as pandoc's Lua gives it (`toPlain`'s); what
- * converts back (`fromPlain`, and constructors where metadata goes). */
-export type PlainValue = string | boolean | Inline[] | Block[] | PlainValue[] | { [key: string]: PlainValue };
+ * converts back (`fromPlain`, and constructors where metadata goes). A
+ * map's key may be missing, as the metadata's: its value is typed
+ * `PlainValue | undefined`. */
+export type PlainValue = string | boolean | Inline[] | Block[] | PlainValue[] | { [key: string]: PlainValue | undefined };
 
 function plain(value: unknown): unknown {
   const v = value as MetaValue;
