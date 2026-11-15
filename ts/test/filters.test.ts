@@ -185,6 +185,19 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
     }];
   },
 
+  helperfails: () => {
+    const size = (config: MetaValue | undefined) => {
+      if (config?.t !== "MetaMap") throw new Error(`indent: a map of options, not ${config?.t}`);
+      return config.content.size;
+    };
+    return [{
+      Meta: (meta) => {
+        const s = size(meta.indent);
+        if (s !== undefined) meta.size = s;
+      },
+    }];
+  },
+
   replaced: () => {
     const seen: string[] = [];
     return [{

@@ -169,6 +169,17 @@ function scenario_fails()
     Filters([(f, :typewise)])
 end
 
+function scenario_helperfails()
+    size(config::MetaMap) = get(config.content, "size", nothing)
+    size(config) = error("indent: a map of options, not $(repr(config))")
+    function f(meta::Panir.Meta)
+        s = size(get(meta, "indent", nothing))
+        s === nothing || (meta["size"] = s)
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
 function scenario_replaced()
     seen = String[]
     f(x::Union{Emph, Div}) = (push!(seen, string(nameof(typeof(x)))); x.content)
@@ -265,7 +276,7 @@ const SCENARIOS = Dict(
     "once" => scenario_once, "lists" => scenario_lists, "meta" => scenario_meta,
     "newdoc" => scenario_newdoc, "twice" => scenario_twice, "metacount" => scenario_metacount,
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
-    "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete,
+    "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete, "helperfails" => scenario_helperfails,
     "truthy" => scenario_truthy, "lookup" => scenario_lookup, "items" => scenario_items, "chain" => scenario_chain,
 )
 

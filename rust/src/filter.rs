@@ -203,6 +203,42 @@ impl<'a> Ctx<'a> {
         None
     }
 
+    /// A helper's `Result` as the walk takes it: the value, or, for an
+    /// error, [`fail`](Ctx::fail) with it and `None`, for `?`: `let x =
+    /// ctx.ok(parse(text))?;`, or `ctx.ok(self.configure(meta))` as the
+    /// last expression of `meta`.
+    ///
+    /// ```
+    /// use panir::{Ctx, Filter, Meta, MetaValue};
+    ///
+    /// fn level(meta: &Meta) -> Result<u8, String> {
+    ///     let text = meta.get("level").map(panir::stringify).unwrap_or("1".into());
+    ///     text.parse().map_err(|_| format!("level: not a number: {text}"))
+    /// }
+    ///
+    /// struct Configure(u8);
+    /// impl Filter for Configure {
+    ///     fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx) -> Option<()> {
+    ///         self.0 = ctx.ok(level(meta))?;
+    ///         Some(())
+    ///     }
+    /// }
+    ///
+    /// let mut doc = panir::Pandoc::new(vec![]);
+    /// doc.meta.insert("level".into(), MetaValue::from("two"));
+    /// let e = panir::apply(&mut doc, &mut Configure(0), None).unwrap_err();
+    /// assert_eq!(e.to_string(), "level: not a number: two\n  in filter function meta, on the Meta at meta");
+    /// ```
+    pub fn ok<T, E: Into<Box<dyn Error + Send + Sync>>>(
+        &mut self,
+        result: Result<T, E>,
+    ) -> Option<T> {
+        match result {
+            Ok(x) => Some(x),
+            Err(e) => self.fail(e),
+        }
+    }
+
     /// Apply a filter to a fragment from inside a function, as Lua's
     /// `el:walk{...}` there: [`apply_with`] with this walk's conversion,
     /// as deep as this walk is (no deeper than [`MAX_DEPTH`](crate::MAX_DEPTH)

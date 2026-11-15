@@ -449,6 +449,26 @@ impl Filter for Fails {
     }
 }
 
+/// A helper reading an option under `indent` fails on what isn't a map,
+/// and `ctx.ok` fails the walk with its error.
+struct HelperFails;
+
+fn size(config: Option<&MetaValue>) -> Result<Option<MetaValue>, String> {
+    match config {
+        Some(MetaValue::MetaMap(m)) => Ok(m.get("size").cloned()),
+        other => Err(format!("indent: a map of options, not {other:?}")),
+    }
+}
+
+impl Filter for HelperFails {
+    fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx) -> Option<()> {
+        if let Some(size) = ctx.ok(size(meta.get("indent")))? {
+            meta.insert("size".into(), size);
+        }
+        Some(())
+    }
+}
+
 /// Top-down: what a function returns is not given to a function again.
 #[derive(Default)]
 struct Replaced {
@@ -703,6 +723,7 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "twice" => Box::new(Twice(order)),
         "attributes" => Box::new(Attributes(order)),
         "fails" => Box::new(Fails(0)),
+        "helperfails" => Box::new(HelperFails),
         "metadelete" => Box::new(MetaDelete(order)),
         "truthy" => Box::new(Truthy(order)),
         "lookup" => Box::new(Lookup(order)),

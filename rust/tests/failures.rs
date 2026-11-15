@@ -333,3 +333,51 @@ fn every_function_takes_question_marks_the_same_way() {
         "an empty paragraph\n  in filter function pandoc, on the Pandoc"
     );
 }
+
+#[test]
+fn a_helpers_result_through_ctx_ok() {
+    /// A number in a Str, as a helper with `?` inside parses it.
+    fn number(s: &str) -> Result<i64, std::num::ParseIntError> {
+        let n: i64 = s.parse()?;
+        Ok(n * 2)
+    }
+    fn check(meta: &Meta) -> Result<(), String> {
+        match meta.get("bad") {
+            Some(_) => Err("a bad field".into()),
+            None => Ok(()),
+        }
+    }
+    struct Double(Vec<i64>);
+    impl Filter for Double {
+        fn inline(&mut self, x: &mut Inline, ctx: &mut Ctx) -> Option<Vec<Inline>> {
+            let Inline::Str(s) = x else { return None };
+            let n = ctx.ok(number(s))?;
+            self.0.push(n);
+            Some(vec![Inline::Str(n.to_string().into())])
+        }
+        fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx) -> Option<()> {
+            ctx.ok(check(meta)) // (a Result<(), _> as the last expression)
+        }
+    }
+    let mut doc = Pandoc::new(vec![Block::Para(panir::inlines("1 2"))]);
+    let mut f = Double(vec![]);
+    apply(&mut doc, &mut f, None).unwrap();
+    assert_eq!((f.0, panir::stringify(&doc)), (vec![2, 4], "2 4".into()));
+    // the error, any type of one, at the node; what came before stays
+    let mut doc = Pandoc::new(vec![Block::Para(panir::inlines("1 x 3"))]);
+    let mut f = Double(vec![]);
+    let e = apply(&mut doc, &mut f, None).unwrap_err();
+    assert_eq!(f.0, [2]);
+    assert_eq!(
+        e.to_string(),
+        "invalid digit found in string\n  in filter function inline, on the Str at blocks[0].content[2]"
+    );
+    assert!(e.error.downcast_ref::<std::num::ParseIntError>().is_some());
+    let mut doc = Pandoc::new(vec![]);
+    doc.meta.insert("bad".into(), true.into());
+    let e = apply(&mut doc, &mut Double(vec![]), None).unwrap_err();
+    assert_eq!(
+        e.to_string(),
+        "a bad field\n  in filter function meta, on the Meta at meta"
+    );
+}

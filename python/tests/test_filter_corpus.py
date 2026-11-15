@@ -377,6 +377,21 @@ def fails() -> list[Filter]:
     return [f]
 
 
+def helperfails() -> list[Filter]:
+    f = Filter()
+
+    def size(config):
+        if not isinstance(config, MetaMap):
+            raise TypeError(f"indent: a map of options, not {config!r}")
+        return config.content.get("size")
+
+    @f.on_meta
+    def configure(meta):
+        meta["size"] = size(meta.get("indent"))
+
+    return [f]
+
+
 def replaced() -> list[Filter]:
     seen: list[str] = []
     f = Filter(traverse="topdown")
@@ -544,7 +559,7 @@ def chain() -> list[Filter]:
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
-    + (once, lists, meta, newdoc, twice, metacount, attributes, fails)
+    + (once, lists, meta, newdoc, twice, metacount, attributes, fails, helperfails)
     + (replaced, metavalues, metadelete, truthy, lookup, items, chain)
 }
 

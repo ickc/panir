@@ -124,7 +124,11 @@ them; `fail` returns `None`: the walk stops when the function returns,
 and `apply` returns a `FilterError` with the error, the method that
 failed, the node's constructor and its path (in the other languages' form:
 `blocks[2].content[0]`), shown as they show theirs. `panir::filter` prints
-it and exits with status 1, as pandoc expects of a JSON filter.
+it and exits with status 1, as pandoc expects of a JSON filter. A helper
+returning a `Result` (with `?` inside) gives the walk its error through
+`ctx.ok(result)`: the value, or `None` having failed with the error, for
+`?` (`let x = ctx.ok(helper(...))?;`), or as the function's last
+expression (`ctx.ok(self.configure(meta))`, a `Result<(), _>`).
 
 ```rust
 use panir::{Block, Ctx, Filter, Inline, Pandoc};
@@ -147,10 +151,33 @@ assert_eq!(
     e.to_string(),
     "no emphasis, please\n  in filter function inline, on the Emph at blocks[0].content[1]"
 );
+
+/// A level of 1 to 6, from a header's attribute.
+fn level(text: &str) -> Result<i64, String> {
+    let n: i64 = text.parse().map_err(|_| format!("level {text}: not a number"))?;
+    if (1..=6).contains(&n) { Ok(n) } else { Err(format!("level {n}: not 1 to 6")) }
+}
+
+struct Levels;
+
+impl Filter for Levels {
+    fn block(&mut self, x: &mut Block, ctx: &mut Ctx) -> Option<Vec<Block>> {
+        let Block::Header(h) = x else { return None };
+        let Some(text) = h.attr.remove("level") else { return None };
+        h.level = ctx.ok(level(&text))?;
+        None
+    }
+}
+
+let mut doc: Pandoc = panir::from_str(
+    r#"{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"Header","c":[1,["",[],[["level","9"]]],[]]}]}"#,
+).unwrap();
+let e = panir::apply(&mut doc, &mut Levels, None).unwrap_err();
+assert_eq!(e.to_string(), "level 9: not 1 to 6\n  in filter function block, on the Header at blocks[0]");
 ```
 
-The context (`Ctx`) has the conversion, `skip_children`, `fail`, `apply`,
-`in_list` and the metadata (`ctx.meta()`; while a metadata value is
+The context (`Ctx`) has the conversion, `skip_children`, `fail`, `ok`,
+`apply`, `in_list` and the metadata (`ctx.meta()`; while a metadata value is
 walked, the other fields, as the value can't be lent while it changes;
 `None` in a fragment), and no more: not the node's parent, siblings or
 path, which panir's Python and TypeScript contexts have (pandoc's Lua functions have no context). A function has its node as
@@ -195,7 +222,8 @@ What a port of a Lua filter trips over:
   as attributes (`{id = "x", class = "a b"}`) gives the identifier and
   classes: `Attr::new("x", &["a", "b"], &[])` (a pair named `class` is an
   attribute named `class`).
-- `error(...)`: `return ctx.fail(...)`, and `el:walk{...}` in a function:
+- `error(...)`: `return ctx.fail(...)`; in a helper, `Err(...)`, given to
+  the walk by `ctx.ok(helper(...))?`; and `el:walk{...}` in a function:
   `ctx.apply(&mut el, &mut filter)?`, in every function (each returns an
   `Option`).
 - `return el, false` (top-down): `ctx.skip_children()`.
