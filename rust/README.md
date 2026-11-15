@@ -282,6 +282,35 @@ What a port of a Lua filter trips over:
   expressions: `%` escapes (`%.`), `-` is a lazy `*`, `%a` is a letter
   (ASCII), `%s` ASCII whitespace, and there is no `|`; a port translates
   each, or escapes a literal string (`regex::escape`).
+- In `gsub`'s replacement too, `%` is special: `%1` is a capture, `%%` a
+  percent sign, and any other `%` an error (checked with pandoc 3.14), so
+  a replacement taken from the document (a size of `5%`) fails there.
+  The `regex` crate's `replace_all(s, text)` expands `$1` and `$name` in a
+  replacement: `NoExpand(text)` puts `text` in as it is.
+- Lua's strings are bytes: `#s`, `s:len()`, `s:sub(i, j)` and `s:byte(i)`
+  count bytes of UTF-8 (`#"é"` is 2; `s:sub(1, 1)` of it is half a
+  character, which pandoc reads back as U+FFFD), and `upper` and `lower`
+  change ASCII letters only; `utf8.len(s)` counts characters. `s.len()`
+  counts bytes too, but `&s[i..j]` panics inside a character, and
+  `s.chars().count()` is `utf8.len`; where an original depends on bytes,
+  `s.as_bytes()[i - 1..j]`, and `String::from_utf8_lossy`, which makes
+  U+FFFD of half a character, as pandoc does.
+- `PANDOC_READER_OPTIONS`: `ctx.conversion().reader_options`, a
+  `serde_json::Value` keyed as pandoc's JSON (`"track-changes"`,
+  `"tab-stop"`, where Lua's fields are `track_changes`, `tab_stop`, and
+  pandoc 2's `trackChanges` is gone), with the same values
+  (`"all-changes"`); `None` where pandoc passed none.
+
+  ```rust
+  let conversion = panir::Conversion::from_parts(Some("latex".into()), |k| {
+      (k == "PANDOC_READER_OPTIONS").then(|| r#"{"track-changes": "all-changes"}"#.into())
+  });
+  let options = conversion.reader_options.as_ref();
+  assert_eq!(options.and_then(|o| o["track-changes"].as_str()), Some("all-changes"));
+  let s = "«»";
+  assert_eq!((s.chars().count(), s.len()), (2, 4));
+  assert_eq!(String::from_utf8_lossy(&s.as_bytes()[0..1]), "\u{fffd}");
+  ```
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `meta_value` is called on each one.
@@ -331,6 +360,19 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
   a table put in two places is two values after (scholarly-metadata merges
   one institute into another). Here a value has one owner: a second place
   takes a `.clone()`, or an index into where it is.
+- **`return nil` from the `Meta` function** (or no `return`) loses in Lua
+  what it changed in the metadata, in place, nested values too, as for
+  any function (above; the `Pandoc` function's the same): the metadata
+  counts only if returned (checked with pandoc 3.14). Here what a function
+  changes stays: an original that changes the metadata, then returns
+  nothing in some case (first-line-indent's, unless it sets `indent`) is
+  ported by changing it only in the case that returns it.
+- **A metadata value's `.t` is `nil`** since pandoc 2.17 (its values are
+  plain Lua values; on `true` or `false`, Lua fails): an original testing
+  `meta.x.t == "MetaList"` takes its other branch whatever the value.
+  Here the test is `matches!(v, MetaValue::MetaList(_))` (pandoc 3's
+  `pandoc.utils.type(v) == "List"`); a port of what the original does now
+  takes the other branch too.
 
 ```rust
 use panir::{MetaValue, Pandoc, given, into_items, items, lookup, stringify, truthy};

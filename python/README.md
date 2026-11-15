@@ -302,6 +302,22 @@ What a port of a Lua filter trips over:
   expressions: `%` escapes (`%.`), `-` is a lazy `*`, `%a` is a letter
   (ASCII), `%s` ASCII whitespace, and there is no `|`; a port translates
   each, or escapes a literal string (`re.escape`).
+- In `gsub`'s replacement too, `%` is special: `%1` is a capture, `%%` a
+  percent sign, and any other `%` an error (checked with pandoc 3.14), so
+  a replacement taken from the document (a size of `5%`) fails there.
+  `re.sub` has escapes of its own in a replacement string (`\1`, `\g<0>`):
+  `re.sub(p, lambda m: text, s)` puts `text` in as it is.
+- Lua's strings are bytes: `#s`, `s:len()`, `s:sub(i, j)` and `s:byte(i)`
+  count bytes of UTF-8 (`#"é"` is 2; `s:sub(1, 1)` of it is half a
+  character, which pandoc reads back as U+FFFD), and `upper` and `lower`
+  change ASCII letters only; `utf8.len(s)` counts characters. Python's
+  `len(s)` and `s[i:j]` count characters (code points); where an original
+  depends on bytes, `s.encode()` has them (`len(s.encode())`,
+  `s.encode()[i - 1:j].decode(errors="replace")`).
+- `PANDOC_READER_OPTIONS`: `ctx.conversion.reader_options`, keyed as
+  pandoc's JSON (`"track-changes"`, `"tab-stop"`, where Lua's fields are
+  `track_changes`, `tab_stop`, and pandoc 2's `trackChanges` is gone),
+  with the same values (`"all-changes"`); `None` where pandoc passed none.
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `@f.on(MetaValue)` (or `MetaList`, ...) is called
@@ -350,6 +366,19 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
   a table put in two places is two values after (scholarly-metadata merges
   one institute into another). Here a node in two places is one node: copy
   it (`copy.deepcopy`), as any node.
+- **`return nil` from the `Meta` function** (or no `return`) loses in Lua
+  what it changed in the metadata, in place, nested values too, as for
+  any function (above; the `Pandoc` function's the same): the metadata
+  counts only if returned (checked with pandoc 3.14). Here what a function
+  changes stays: an original that changes the metadata, then returns
+  nothing in some case (first-line-indent's, unless it sets `indent`) is
+  ported by changing it only in the case that returns it.
+- **A metadata value's `.t` is `nil`** since pandoc 2.17 (its values are
+  plain Lua values; on `true` or `false`, Lua fails): an original testing
+  `meta.x.t == "MetaList"` takes its other branch whatever the value.
+  Here the test is `isinstance(v, MetaList)` (pandoc 3's
+  `pandoc.utils.type(v) == "List"`); a port of what the original does now
+  takes the other branch too.
 
 ```python
 >>> meta = Pandoc(meta={"draft": False, "title": "", "toc": {"depth": "2"}, "tags": "a"}).meta
@@ -366,6 +395,14 @@ MetaString('final')
 MetaInlines(Str('Ada'), Space(), Str('L.'))
 >>> to_python(meta["toc"]), to_python(meta["name"])[0]
 ({'depth': '2'}, Str('Ada'))
+>>> options = Conversion("latex", reader_options={"track-changes": "all-changes"}).reader_options or {}
+>>> options["track-changes"]
+'all-changes'
+>>> import re
+>>> re.sub("SIZE", lambda m: r"\1 5%", "width: SIZE")
+'width: \\1 5%'
+>>> len("«»"), len("«»".encode()), "«»".encode()[0:1].decode(errors="replace") == "\ufffd"
+(2, 4, True)
 ```
 
 ### Fragments
