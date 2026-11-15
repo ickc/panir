@@ -375,6 +375,15 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
   Each of a value's items as one block (Lua's `pandoc.MetaBlocks{block,
   meta.x}`, as filters write `header-includes`) is
   `blocks_of(MetaList(*items(v)))`.
+- **Lua's `pairs(v)`** over a metadata value: a map's entries,
+  `v.content.items()`; a list's, inlines' or blocks' items by index from
+  1, `enumerate(v.content, 1)`; on text, a boolean or `nil` Lua fails
+  (`bad argument #1 to 'for iterator'`; checked with pandoc 3.14). Lua
+  gives a map's entries in no order, another on each run, so an original
+  whose output depends on it isn't deterministic, and a port can't
+  reproduce it; here a map is a `dict`, in the order pandoc's JSON has
+  its keys (sorted, by code point), keys added later after them, in the
+  order added (`sorted(v.content.items())` for pandoc's order always).
 - **Writing metadata** (Lua's `meta.x = v`): setting a field converts a
   plain value as Lua does (`from_python`): a string is a `MetaString`, a
   bool a `MetaBool`, a number a `MetaString` of it, an inline or a list of

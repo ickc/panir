@@ -408,6 +408,15 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
   Each of a value's items as one block (Lua's `pandoc.MetaBlocks{block,
   meta.x}`, as filters write `header-includes`) is
   `blocks_of(&into_items(v).into())`.
+- **Lua's `pairs(v)`** over a metadata value: a map's entries, `for (k,
+  x) in m` of a `MetaMap(m)`; a list's, inlines' or blocks' items by
+  index from 1, `(1..).zip(xs)`; on text, a boolean or `nil` Lua fails
+  (`bad argument #1 to 'for iterator'`; checked with pandoc 3.14). Lua
+  gives a map's entries in no order, another on each run, so an original
+  whose output depends on it isn't deterministic, and a port can't
+  reproduce it; here a map is a `BTreeMap`, its keys in order (by byte,
+  which is by code point), as pandoc's JSON has them, keys added later
+  too.
 - **Writing metadata** (Lua's `meta.x = v`): `meta.insert("x".into(),
   v.into())` converts a plain value as Lua does (below, in "Types");
   reading needs no conversion: a `MetaMap`'s content is a `BTreeMap`, a

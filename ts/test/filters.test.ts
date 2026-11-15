@@ -11,7 +11,7 @@ import {
   Underline,
 } from "../src/index.ts";
 import type {
-  AnyFilter, Block, Filter, MetaBool as MetaBoolNode, MetaInlines as MetaInlinesNode, MetaList as MetaListNode,
+  AnyFilter, Block, Filter, Inline, MetaBool as MetaBoolNode, MetaInlines as MetaInlinesNode, MetaList as MetaListNode,
   MetaString as MetaStringNode, MetaValue, Pandoc, Str as StrNode, WalkedContext,
 } from "../src/index.ts";
 
@@ -43,6 +43,19 @@ function noting(): [WalkedFilter, string[]] {
 const listing = (seen: string[]): Filter => ({
   Pandoc: (doc) => { doc.blocks.push(Para(seen.join(" "))); },
 });
+
+/** Lua's `pairs` over a metadata value, as the README says to write it. */
+function pairs(v: MetaValue | undefined): [string | number, MetaValue | Inline | Block | undefined][] {
+  switch (v?.t) {
+    case "MetaMap":
+      return Object.entries(v.content);
+    case "MetaList":
+    case "MetaInlines":
+    case "MetaBlocks":
+      return v.content.map((x, i) => [i + 1, x]);
+  }
+  throw new TypeError(`Lua's pairs fails on ${v?.t}`);
+}
 
 /** Each scenario as TypeScript filters, run one after the other. */
 const SCENARIOS: Record<string, () => AnyFilter[]> = {
@@ -332,6 +345,22 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
     Pandoc: (doc) => {
       const numbers = [0, 1, 4, 9, 14, 40, 90, 400, 1994, 2026, 3999, 4000, 1000000, -1];
       doc.blocks.push(Para(numbers.map((n) => `${n}=${toRomanNumeral(n)}`).join(" ")));
+    },
+  }],
+
+  pairs: () => [{
+    Pandoc: (doc) => {
+      const keys = ["map", "list", "inlines", "blocks", "emptymap", "emptylist", "on", "null", "missing"];
+      for (const k of keys) {
+        let text: string;
+        try {
+          const found = pairs(doc.meta[k]).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+          text = found.map(([key, x]) => `${key}=${stringify(x)}`).join(",");
+        } catch {
+          text = "fails";
+        }
+        doc.blocks.push(Para(`${k}: ${text}`));
+      }
     },
   }],
 

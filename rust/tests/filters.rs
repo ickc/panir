@@ -797,6 +797,56 @@ impl Filter for Roman {
     }
 }
 
+/// Lua's `pairs` over a metadata value, as the README says to write it:
+/// each key (or index from 1) with its value's text; `None` where Lua fails.
+fn pairs(v: Option<&MetaValue>) -> Option<Vec<(String, String)>> {
+    let indexed = |texts: Vec<String>| (1..).map(|i: usize| i.to_string()).zip(texts).collect();
+    match v? {
+        MetaValue::MetaMap(m) => Some(
+            m.iter()
+                .map(|(k, x)| (k.to_string(), panir::stringify(x)))
+                .collect(),
+        ),
+        MetaValue::MetaList(xs) => Some(indexed(xs.iter().map(panir::stringify).collect())),
+        MetaValue::MetaInlines(xs) => Some(indexed(xs.iter().map(panir::stringify).collect())),
+        MetaValue::MetaBlocks(xs) => Some(indexed(xs.iter().map(panir::stringify).collect())),
+        MetaValue::MetaString(_) | MetaValue::MetaBool(_) => None,
+    }
+}
+
+/// Each field's entries by Lua's `pairs`, sorted, or "fails".
+struct Pairs(Order);
+
+impl Filter for Pairs {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let keys = [
+            "map",
+            "list",
+            "inlines",
+            "blocks",
+            "emptymap",
+            "emptylist",
+            "on",
+            "null",
+            "missing",
+        ];
+        for k in keys {
+            let text = pairs(doc.meta.get(k)).map_or("fails".into(), |mut found| {
+                found.sort();
+                let entries: Vec<String> =
+                    found.iter().map(|(key, x)| format!("{key}={x}")).collect();
+                entries.join(",")
+            });
+            doc.blocks
+                .push(Block::Para(panir::inlines(&format!("{k}: {text}"))));
+        }
+        Some(())
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -827,6 +877,7 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "items" => Box::new(Items(order)),
         "inlinesof" => Box::new(InlinesOf(order)),
         "roman" => Box::new(Roman(order)),
+        "pairs" => Box::new(Pairs(order)),
         "prepend" => Box::new(Prepend(order, Inline::raw("tex", "\\raw{}"))),
         "chain" => {
             // (a Lua file's list of filters: one apply after the other)

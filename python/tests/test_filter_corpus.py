@@ -617,13 +617,42 @@ def roman() -> list[Filter]:
     return [f]
 
 
+def pairs(v: A.MetaValue | None) -> list[tuple[object, A.MetaValue | Inline | Block]]:
+    """Lua's ``pairs`` over a metadata value, as Python's README says to write it."""
+    match v:
+        case MetaMap(content):
+            return list(content.items())
+        case MetaList(content) | MetaInlines(content) | MetaBlocks(content):
+            return list(enumerate(content, 1))
+    raise TypeError(f"Lua's pairs fails on {type(v).__name__}")
+
+
+PAIRS_KEYS = ("map", "list", "inlines", "blocks", "emptymap", "emptylist", "on", "null", "missing")
+
+
+def pairs_() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def entries(doc):
+        for k in PAIRS_KEYS:
+            try:
+                found = sorted(pairs(doc.meta.get(k)), key=lambda kv: kv[0])
+                text = ",".join(f"{key}={A.stringify(v)}" for key, v in found)
+            except TypeError:
+                text = "fails"
+            doc.blocks.append(Para(f"{k}: {text}"))
+
+    return [f]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
     + (once, lists, meta, newdoc, twice, metacount, attributes, fails, helperfails)
     + (replaced, metavalues, metadelete, truthy, lookup, items, chain, prepend)
     + (inlinesof, roman)
-}
+} | {"pairs": pairs_}
 
 
 def test_every_scenario_has_python_filters():

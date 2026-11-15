@@ -305,6 +305,24 @@ function scenario_roman()
     Filters([(f, :typewise)])
 end
 
+function scenario_pairs()
+    keys = ["map", "list", "inlines", "blocks", "emptymap", "emptylist", "on", "null", "missing"]
+    function f(d::Pandoc)
+        for k in keys
+            text = try
+                # Lua's pairs, as the README says to write it: a map's or a list's content
+                found = sort!(collect(pairs(d.meta[k].content)); by = first)
+                join(("$key=$(stringify(x))" for (key, x) in found), ",")
+            catch
+                "fails"
+            end
+            push!(d.blocks, Para("$k: $text"))
+        end
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
@@ -315,6 +333,7 @@ const SCENARIOS = Dict(
     "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete, "helperfails" => scenario_helperfails,
     "truthy" => scenario_truthy, "lookup" => scenario_lookup, "items" => scenario_items, "chain" => scenario_chain,
     "prepend" => scenario_prepend, "inlinesof" => scenario_inlinesof, "roman" => scenario_roman,
+    "pairs" => scenario_pairs,
 )
 
 @testset "filters as pandoc's Lua" begin

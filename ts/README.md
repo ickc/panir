@@ -444,6 +444,18 @@ checked (`serialize`, constructors).
   Each of a value's items as one block (Lua's `pandoc.MetaBlocks{block,
   meta.x}`, as filters write `header-includes`) is
   `blocksOf(MetaList(items(v)))`.
+- **Lua's `pairs(v)`** over a metadata value: a map's entries,
+  `Object.entries(v.content)` (their values typed perhaps `undefined`,
+  above); a list's, inlines' or blocks' items by index from 1,
+  `v.content.map((x, i) => [i + 1, x])`; on text, a boolean or `nil` Lua
+  fails (`bad argument #1 to 'for iterator'`; checked with pandoc 3.14).
+  Lua gives a map's entries in no order, another on each run, so an
+  original whose output depends on it isn't deterministic, and a port
+  can't reproduce it; here a map is an object, whose keys come in
+  JavaScript's order: those that are array indices (`"9"`, `"10"`) first,
+  in numeric order, then the others in the order pandoc's JSON has them
+  (sorted, by code point), keys added later after them (sort the entries
+  for pandoc's order always).
 - **Writing metadata** (Lua's `meta.x = v`): the metadata is a plain
   object, whose fields don't convert what is put there: `fromPlain(v)`
   converts a plain value as Lua does (a string is a `MetaString`, a

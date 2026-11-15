@@ -335,6 +335,15 @@ for it (`f(v::MetaInlines) = ...`).
   Each of a value's items as one block (Lua's `pandoc.MetaBlocks{block,
   meta.x}`, as filters write `header-includes`) is
   `blocks_of(MetaList(items(v)))`.
+- **Lua's `pairs(v)`** over a metadata value: `pairs(v.content)`, a
+  map's entries, or a list's, inlines' or blocks' items by index from 1,
+  as Lua's; on text, a boolean or `nil` Lua fails (`bad argument #1 to
+  'for iterator'`; checked with pandoc 3.14), as `v.content` does here.
+  Lua gives a map's entries in no order, another on each run, so an
+  original whose output depends on it isn't deterministic, and a port
+  can't reproduce it; here a map is a `Dict`, in no order either:
+  `sort!(collect(pairs(m)); by = first)` has pandoc's JSON's (its keys
+  sorted, by code point).
 - **Writing metadata** (Lua's `meta.x = v`): setting a field converts a
   plain value as Lua does (above, in "The AST"); reading needs no
   conversion: a `MetaMap`'s content is a `Dict`, a `MetaList`'s a
