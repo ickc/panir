@@ -356,6 +356,22 @@ assert!(items(meta.get("missing")).is_empty());
   `pandoc.Attr`, takes `&str`s: `Attr::new("", &["note"], &[("lang",
   "en")])`; `Target::new(url, title)`, a link's or an image's, in the
   order of Lua's `pandoc.Link(content, target, title)`.
+- `Block::raw(format, text)` and `Inline::raw(format, text)`, the nodes
+  filters make most, in the order of Lua's `pandoc.RawBlock` and
+  `pandoc.RawInline`, take a `&str`, a `String` or a `Text`. Other nodes
+  are a variant (`Block::Para(inlines)`, `Inline::Str(text)`, or a string
+  `.into()`) or a struct with its fields' names (`Span { attr, content
+  }.into()`).
+
+  ```rust
+  use panir::{Block, Inline, MetaValue, Pandoc};
+
+  let mut doc = Pandoc::new(vec![Block::raw("html", "<hr/>")]);
+  let id = "intro";
+  doc.blocks.push(Block::Para(vec![Inline::raw("tex", format!("\\label{{{id}}}"))]));
+  let css: MetaValue = Block::raw("html", "<style>p { margin: 0 }</style>").into(); // MetaBlocks
+  doc.meta.insert("header-includes".into(), css);
+  ```
 - An `Attr`'s attributes are pairs, in order, a key perhaps in two; by
   key, as Lua's `el.attributes[key]`: `attr.get("k")` is the value of the
   first pair with the key, `attr.set("k", v)` gives that pair the value,

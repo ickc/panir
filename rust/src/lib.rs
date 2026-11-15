@@ -864,7 +864,43 @@ impl From<String> for Block {
     }
 }
 
+impl Inline {
+    /// A `RawInline`, in the order of pandoc's Lua `pandoc.RawInline(format,
+    /// text)`.
+    ///
+    /// ```
+    /// use panir::Inline;
+    ///
+    /// let mark = Inline::raw("tex", format!("\\label{{{}}}", "intro"));
+    /// assert!(matches!(&mark, Inline::RawInline(r) if r.text == "\\label{intro}"));
+    /// ```
+    pub fn raw(format: impl Into<Format>, text: impl Into<Text>) -> Self {
+        RawInline {
+            format: format.into(),
+            text: text.into(),
+        }
+        .into()
+    }
+}
+
 impl Block {
+    /// A `RawBlock`, in the order of pandoc's Lua `pandoc.RawBlock(format,
+    /// text)`; as metadata, `.into()` it (`MetaBlocks` of it).
+    ///
+    /// ```
+    /// use panir::{Block, MetaValue};
+    ///
+    /// let css: MetaValue = Block::raw("html", "<style>p { margin: 0 }</style>").into();
+    /// assert_eq!(css.tag(), "MetaBlocks");
+    /// ```
+    pub fn raw(format: impl Into<Format>, text: impl Into<Text>) -> Self {
+        RawBlock {
+            format: format.into(),
+            text: text.into(),
+        }
+        .into()
+    }
+
     /// The inlines a block holds as its content (`Plain`, `Para`, `Header`),
     /// as Lua's `block.content` of those.
     pub fn inlines(&self) -> Option<&Vec<Inline>> {
