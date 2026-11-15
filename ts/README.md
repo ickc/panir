@@ -396,7 +396,9 @@ narrows `v` (a `switch (v.t)` too).
   another list a `MetaList`, an object a `MetaMap`), as the constructors
   do. `toPlain(v)` reads metadata as Lua gives it: strings, booleans,
   arrays, objects, and inlines and blocks as arrays of them (copies, as
-  Lua's are values); `stringify(v)` its text.
+  Lua's are values), typed as a `PlainValue` (of the kind given: an object
+  of them for the metadata or a `MetaMap`; otherwise narrowed by `typeof`
+  and `Array.isArray`), which `fromPlain` takes; `stringify(v)` its text.
 - **Lua's tables are references** until pandoc converts the metadata back:
   a table put in two places is two values after (scholarly-metadata merges
   one institute into another). Here a node in two places is one node: copy
@@ -415,6 +417,7 @@ assert.deepEqual([items(meta.tags), items(meta.missing)], [[MetaString("a")], []
 meta.name = fromPlain([Str("Ada"), Space(), Str("L.")]);
 assert.deepEqual(meta.name, MetaInlines([Str("Ada"), Space(), Str("L.")]));
 assert.deepEqual(toPlain(meta.toc!), { depth: "2" });
+assert.equal(toPlain(meta).tags, "a");
 ```
 
 ### Fragments

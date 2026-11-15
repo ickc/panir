@@ -25,6 +25,7 @@ export {
   blocks, copy, equal, fromPlain, getAttribute, hasAttribute, inlines, removeAttribute, setAttribute, stringify, toPlain,
   given, items, lookup, truthy,
 } from "./util.ts";
+export type { PlainValue } from "./util.ts";
 
 /** A document from pandoc's JSON text, checked (`ASTDecodeError`; a `SyntaxError` if it isn't JSON). */
 export function parse(text: string): Pandoc {

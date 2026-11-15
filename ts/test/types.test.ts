@@ -6,10 +6,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  applyFilter, ASTTypeError, Emph, given, Header, lookup, MetaList, MetaMap, MetaString, Pandoc as makePandoc, Para,
-  parse, serialize, Str, truthy, walk,
+  applyFilter, ASTTypeError, Emph, fromPlain, given, Header, lookup, MetaBlocks, MetaBool, MetaInlines, MetaList,
+  MetaMap, MetaString, Pandoc as makePandoc, Para, parse, serialize, Str, toPlain, truthy, walk,
 } from "../src/index.ts";
-import type { Block, Filter, Inline, MetaValue, Pandoc, Row } from "../src/index.ts";
+import type { Block, Filter, Inline, MetaValue, Pandoc, PlainValue, Row } from "../src/index.ts";
 import type { runFilter } from "../src/node.ts";
 
 const doc = (): Pandoc => parse(serialize({
@@ -132,4 +132,24 @@ test("Lua's truth: given narrows to the value; truthy, not a type guard, doesn't
   }
   const off = lookup(meta, "toc", "off");
   if (!truthy(off)) assert.equal(off?.t, "MetaBool"); // (a value, though false)
+});
+
+test("toPlain's result is typed: by the kind given, else any plain value", () => {
+  const text: string = toPlain(MetaString("a"));
+  const flag: boolean = toPlain(MetaBool(true));
+  const inlines: Inline[] = toPlain(MetaInlines([Str("x")]));
+  const blocks: Block[] = toPlain(MetaBlocks([Para("x")]));
+  const list: PlainValue[] = toPlain(MetaList(["a"]));
+  const meta = makePandoc([], { meta: { toc: { depth: "2" }, draft: false } }).meta;
+  const map: { [key: string]: PlainValue } = toPlain(meta);
+  assert.deepEqual([text, flag, inlines, blocks, list, map.draft], ["a", true, [Str("x")], [Para("x")], ["a"], false]);
+  const v: MetaValue = meta.toc!;
+  const plain = toPlain(v); // any of them: narrowed by a test, with no cast
+  if (typeof plain === "object" && !Array.isArray(plain)) assert.deepEqual(plain.depth, "2");
+  // @ts-expect-error: not a string, unless narrowed
+  const wrong: string = toPlain(v);
+  assert.ok(wrong);
+  // and back: what toPlain gives is what fromPlain and the constructors take
+  assert.deepEqual(fromPlain(toPlain(v)), v);
+  assert.deepEqual(MetaMap({ again: toPlain(v) }).content.again, v);
 });

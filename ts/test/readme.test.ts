@@ -107,6 +107,7 @@ assert.deepEqual([items(meta.tags), items(meta.missing)], [[MetaString("a")], []
 meta.name = fromPlain([Str("Ada"), Space(), Str("L.")]);
 assert.deepEqual(meta.name, MetaInlines([Str("Ada"), Space(), Str("L.")]));
 assert.deepEqual(toPlain(meta.toc!), { depth: "2" });
+assert.equal(toPlain(meta).tags, "a");
 // #endregion
 
 // #region README
