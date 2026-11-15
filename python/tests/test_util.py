@@ -161,13 +161,14 @@ def test_to_python():
     assert to_python(doc.meta) == {
         "z": "zs",
         "b": True,
-        "m": {"y": "my", "a": "ma", "f": False, "l": ["l1", "l2"]},
-        "i": "in ",
-        "k": "bl",
+        "m": {"y": "my", "a": [Str("ma")], "f": False, "l": ["l1", [Para("l2")]]},
+        "i": [Str("in"), Note(Para("note")), RawInline("html", "<br/>")],
+        "k": [Para("bl")],
     }
-    assert to_python(MetaBlocks(Para("a"), Para("b"))) == "ab"
     with pytest.raises(TypeError, match="not metadata"):
         to_python(Str("x"))  # type: ignore[arg-type]
+    # back again, but for an empty list of inlines (a MetaList)
+    assert Pandoc(meta=to_python(doc.meta)).meta == doc.meta
 
 
 def test_filter_metadata_function_sees_metadata():
@@ -176,3 +177,44 @@ def test_filter_metadata_function_sees_metadata():
     f.on_meta(lambda m: seen.append(sorted(m)))
     f(every_kind_of_metadata())
     assert seen == [["b", "i", "k", "m", "z"]]
+
+
+def test_lua_truth():
+    """A metadata value is false only if it is MetaBool(False), as Lua's
+    `if meta.x then`: an empty string, list or map is true."""
+    true = [MetaBool(True), MetaString(""), MetaString("false"), MetaInlines(), MetaBlocks()]
+    true += [MetaList(), MetaMap({})]
+    assert all(bool(v) for v in true)
+    assert not MetaBool(False)
+    meta = Pandoc(meta={"off": False, "empty": ""}).meta
+    assert not meta.get("off") and not meta.get("missing")
+    assert (meta.get("off") or MetaString("d")) == MetaString("d")  # Lua's `meta.off or "d"`
+    assert (meta.get("empty") or MetaString("d")) == MetaString("")
+
+
+def test_lookup():
+    """A nested option, through maps: None where a key is missing or a value
+    on the way is not a map."""
+    toc = {"depth": "2", "style": {"name": "x"}}
+    meta = Pandoc(meta={"toc": toc, "flag": True, "l": ["a"]}).meta
+    assert panir.lookup(meta, "toc", "depth") == MetaString("2")
+    assert panir.lookup(meta, "toc", "style", "name") == MetaString("x")
+    assert panir.lookup(meta["toc"], "depth") == MetaString("2")  # from a MetaMap
+    assert panir.lookup(meta, "toc") is meta["toc"]
+    missing = [("toc", "missing"), ("missing", "depth"), ("flag", "x"), ("l", "a")]
+    for path in [*missing, ("toc", "depth", "x")]:
+        assert panir.lookup(meta, *path) is None
+    assert panir.lookup(None, "x") is None
+
+
+def test_items():
+    """One value or a list of them, as a list."""
+    meta = Pandoc(meta={"one": "a", "l": ["a", "b"], "e": [], "off": False}).meta
+    assert panir.items(meta.get("one")) == [MetaString("a")]
+    assert panir.items(meta.get("l")) == [MetaString("a"), MetaString("b")]
+    assert panir.items(meta.get("e")) == []
+    assert panir.items(meta.get("off")) == [MetaBool(False)]
+    assert panir.items(meta.get("missing")) == []
+    listed = panir.items(meta["l"])
+    listed.pop()  # a new list: the document's is as it was
+    assert len(meta["l"].content) == 2 and listed[0] is meta["l"].content[0]  # type: ignore[attr-defined]

@@ -59,8 +59,9 @@ impl Filter for Notes {
         }
         None
     }
-    fn meta(&mut self, _: &mut Meta, _: &mut Ctx) {
+    fn meta(&mut self, _: &mut Meta, _: &mut Ctx) -> Option<()> {
         self.seen.push("Meta".into());
+        Some(())
     }
 }
 

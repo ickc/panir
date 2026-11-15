@@ -172,8 +172,8 @@ impl<'a> Ctx<'a> {
 
     /// Fail: the walk stops when the function returns (what it returns is
     /// not used), and [`apply`] returns the error, with where it happened
-    /// ([`FilterError`]). Returns `None`, for `return ctx.fail(...)`; in a
-    /// function returning nothing, `ctx.fail::<()>(...)`. An error that is a
+    /// ([`FilterError`]). Returns `None`, for `return ctx.fail(...)` in any
+    /// function. An error that is a
     /// `FilterError` (of a walk the function started: [`Ctx::apply`]) is
     /// returned as it is, saying where it happened in that walk.
     ///
@@ -382,9 +382,12 @@ impl Walked for MetaValue {
 
 /// A filter's functions. Each has a default that does nothing.
 ///
-/// `inline` and `block` return `None` to keep the node (changed in place or
-/// not), or nodes to splice in its place (`vec![]` deletes it); `inlines`,
-/// `blocks`, `meta` and `pandoc` change their value in place.
+/// Every function returns an `Option`, so that `?` reads the same in all of
+/// them: `ctx.apply(x, &mut f)?`, `return ctx.fail(e)`, or `meta.get("x")?`
+/// to stop early. `inline` and `block` return `None` to keep the node
+/// (changed in place or not), or nodes to splice in its place (`vec![]`
+/// deletes it); `inlines`, `blocks`, `meta` and `pandoc` change their value
+/// in place, and `Some(())` and `None` alike say they are done.
 ///
 /// `meta_value`, which pandoc's Lua doesn't have (its metadata values are
 /// plain Lua values), is called on each metadata value, as panir's other
@@ -436,21 +439,25 @@ pub trait Filter {
         let _ = (x, ctx);
         None
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) -> Option<()> {
         let _ = (xs, ctx);
+        Some(())
     }
-    fn blocks(&mut self, xs: &mut Vec<Block>, ctx: &mut Ctx) {
+    fn blocks(&mut self, xs: &mut Vec<Block>, ctx: &mut Ctx) -> Option<()> {
         let _ = (xs, ctx);
+        Some(())
     }
     fn meta_value(&mut self, x: &mut MetaValue, ctx: &mut Ctx) -> Option<Vec<MetaValue>> {
         let _ = (x, ctx);
         None
     }
-    fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx) {
+    fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx) -> Option<()> {
         let _ = (meta, ctx);
+        Some(())
     }
-    fn pandoc(&mut self, doc: &mut Pandoc, ctx: &mut Ctx) {
+    fn pandoc(&mut self, doc: &mut Pandoc, ctx: &mut Ctx) -> Option<()> {
         let _ = (doc, ctx);
+        Some(())
     }
 }
 
@@ -479,7 +486,7 @@ struct Driver<'f, 'a, F: Filter + ?Sized> {
 
 /// A filter's function on one node, and on a list of them.
 type ElemFn<F, T> = fn(&mut F, &mut T, &mut Ctx) -> Option<Vec<T>>;
-type ListFn<F, T> = fn(&mut F, &mut Vec<T>, &mut Ctx);
+type ListFn<F, T> = fn(&mut F, &mut Vec<T>, &mut Ctx) -> Option<()>;
 
 impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
     fn new(
@@ -513,7 +520,7 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
     /// The function on a list, its error noted; whether to skip its nodes.
     fn on_list<T: Walked>(&mut self, xs: &mut Vec<T>, list: ListFn<F, T>) -> bool {
         let mut ctx = Ctx::new(self.conversion, self.meta);
-        list(self.f, xs, &mut ctx);
+        let _ = list(self.f, xs, &mut ctx); // (None too: an early return)
         if let Some(e) = ctx.error {
             self.fail(Some(T::LIST_FUNCTION), T::LIST, e, Target::list(xs));
         }
@@ -650,7 +657,9 @@ impl<'f, 'a, F: Filter + ?Sized> Driver<'f, 'a, F> {
 }
 
 /// The function on a list of metadata values: none.
-fn no_list<F: ?Sized, T>(_: &mut F, _: &mut Vec<T>, _: &mut Ctx) {}
+fn no_list<F: ?Sized, T>(_: &mut F, _: &mut Vec<T>, _: &mut Ctx) -> Option<()> {
+    Some(())
+}
 
 impl<F: Filter + ?Sized> VisitMut for Driver<'_, '_, F> {
     fn visit_inlines(&mut self, xs: &mut Vec<Inline>) {
@@ -779,10 +788,10 @@ fn whole<T>(
     node: &'static str,
     x: &mut T,
     conversion: &Conversion,
-    call: impl FnOnce(&mut T, &mut Ctx),
+    call: impl FnOnce(&mut T, &mut Ctx) -> Option<()>,
 ) -> (Option<Failure>, bool) {
     let mut ctx = Ctx::new(conversion, None);
-    call(x, &mut ctx);
+    let _ = call(x, &mut ctx); // (None too: an early return)
     let path = if node == "Meta" { "meta" } else { "" };
     let failure = ctx
         .error

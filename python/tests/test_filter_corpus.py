@@ -468,11 +468,84 @@ def metadelete() -> list[Filter]:
     return [f]
 
 
+TRUTHY_KEYS = ("yes", "no", "text", "empty", "null", "noword", "zero", "list", "map", "block")
+
+
+def truthy() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def truth(doc):
+        words = [f"{k}={'true' if doc.meta.get(k) else 'false'}" for k in (*TRUTHY_KEYS, "missing")]
+        words.append(f"no-or={A.stringify(doc.meta.get('no') or MetaString('d'))}")
+        words.append(f"text-or={A.stringify(doc.meta.get('text') or MetaString('d'))}")
+        doc.blocks.append(Para(" ".join(words)))
+
+    return [f]
+
+
+LOOKUP_PATHS = [
+    ("toc",),
+    ("toc", "depth"),
+    ("toc", "style", "name"),
+    ("toc", "missing"),
+    ("missing", "depth"),
+    ("flag", "depth"),
+    ("list", "a"),
+    ("text", "map"),
+    ("toc", "depth", "x"),
+    ("toc", "style", "name", "x"),
+]
+
+
+def lookup() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def paths(doc):
+        words = []
+        for path in LOOKUP_PATHS:
+            v = A.lookup(doc.meta, *path)
+            words.append(f"{'.'.join(path)}={'none' if v is None else A.stringify(v)}")
+        doc.blocks.append(Para(" ".join(words)))
+
+    return [f]
+
+
+def items() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def lists(doc):
+        words = []
+        for k in ("one", "list", "empty", "map", "nested", "off", "inlines", "missing"):
+            texts = [A.stringify(x) for x in A.items(doc.meta.get(k))]
+            words.append(f"{k}={len(texts)}:{','.join(texts)}")
+        doc.blocks.append(Para(" ".join(words)))
+
+    return [f]
+
+
+def chain() -> list[Filter]:
+    mark = ["?"]
+    configure, add = Filter(), Filter()
+
+    @configure.on_meta
+    def read(m):
+        mark[0] = A.stringify(m.get("mark") or MetaString("!"))
+
+    @add.on(Str)
+    def marked(s):
+        return Str(s.text + mark[0])
+
+    return [configure, add]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
     + (once, lists, meta, newdoc, twice, metacount, attributes, fails)
-    + (replaced, metavalues, metadelete)
+    + (replaced, metavalues, metadelete, truthy, lookup, items, chain)
 }
 
 

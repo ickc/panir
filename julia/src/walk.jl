@@ -526,6 +526,26 @@ end
 const _WALKER = :panir_walker
 
 """
+    walk!(filters::AbstractVector, doc; traverse = :typewise, format = nothing)
+
+Several filters in turn, each a whole walk, as pandoc runs a Lua filter
+file returning a list of filters: each a function, walked in `traverse`,
+or `f => traverse` with its own order. Returns the document (or the
+fragment) as the last left it.
+
+```julia
+walk!([configure, mark => :topdown], doc)
+```
+"""
+function walk!(filters::AbstractVector, x::Union{Node, Vector{Inline}, Vector{Block}};
+               traverse::Symbol = :typewise, format = nothing)
+    for f in filters
+        x = f isa Pair ? walk!(f.first, x; traverse = f.second, format) : walk!(f, x; traverse, format)
+    end
+    x
+end
+
+"""
     check_unique(x)
 
 Check that no node is in two places of `x` (a document, a node, or a
@@ -656,10 +676,13 @@ end
 
 """
     run_filter(f; traverse = :typewise)
+    run_filter([f, g => :topdown]; traverse = :typewise)
 
-Run `f` (as in `walk!`) as a pandoc JSON filter: a document on stdin, to
-stdout. `ctx.conversion` is what pandoc says of the conversion: the output
-format (its first argument, also `ctx.format`), and its environment.
+Run `f` (as in `walk!`), or several filters in turn (as a Lua filter file
+returning a list of them), as a pandoc JSON filter: a document on stdin,
+to stdout. `ctx.conversion` is what pandoc says of the conversion: the
+output format (its first argument, also `ctx.format`), and its
+environment.
 """
 function run_filter(f; traverse::Symbol = :typewise)
     hand_over(f, traverse) && return nothing

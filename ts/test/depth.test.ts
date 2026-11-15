@@ -44,7 +44,9 @@ for (const [kind, n] of [["div", 300], ["table", 260]] as const) {
       assert.equal(strs, 2);
     }
     assert.equal(stringify(doc), "XX");
-    assert.deepEqual(toPlain(doc.meta), { k: "X" });
+    // (its blocks, copied)
+    const plain = toPlain(doc.meta) as { k: Block[] };
+    assert.ok(equal(plain.k, (doc.meta.k as { content: Block[] }).content) && plain.k[0] !== doc.blocks[0]);
     let nodes = 0;
     walk(doc, () => { nodes++; });
     assert.ok(nodes > 2 * n);

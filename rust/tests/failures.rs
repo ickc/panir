@@ -98,25 +98,29 @@ impl Filter for FailIn {
             _ => None,
         }
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) -> Option<()> {
         if self.0 == "inlines" && xs.first() == Some(&"k".into()) {
-            ctx.fail::<()>("inlines");
+            return ctx.fail("inlines");
         }
+        Some(())
     }
-    fn blocks(&mut self, xs: &mut Vec<Block>, ctx: &mut Ctx) {
+    fn blocks(&mut self, xs: &mut Vec<Block>, ctx: &mut Ctx) -> Option<()> {
         if self.0 == "blocks" && matches!(xs.first(), Some(Block::Table(_))) {
-            ctx.fail::<()>("blocks");
+            return ctx.fail("blocks");
         }
+        Some(())
     }
-    fn meta(&mut self, _: &mut Meta, ctx: &mut Ctx) {
+    fn meta(&mut self, _: &mut Meta, ctx: &mut Ctx) -> Option<()> {
         if self.0 == "meta" {
-            ctx.fail::<()>("meta");
+            return ctx.fail("meta");
         }
+        Some(())
     }
-    fn pandoc(&mut self, _: &mut Pandoc, ctx: &mut Ctx) {
+    fn pandoc(&mut self, _: &mut Pandoc, ctx: &mut Ctx) -> Option<()> {
         if self.0 == "pandoc" {
-            ctx.fail::<()>("pandoc");
+            return ctx.fail("pandoc");
         }
+        Some(())
     }
 }
 
@@ -176,10 +180,11 @@ fn every_function_can_fail() {
     // an empty list has no place of its own: no path
     struct Empty;
     impl Filter for Empty {
-        fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) {
+        fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) -> Option<()> {
             if xs.is_empty() {
-                ctx.fail::<()>("empty");
+                return ctx.fail("empty");
             }
+            Some(())
         }
     }
     let e = apply(&mut vec![Block::Para(vec![])], &mut Empty, None).unwrap_err();
@@ -266,10 +271,11 @@ fn a_walk_from_a_function_has_its_conversion_and_its_error() {
 fn a_walk_from_a_meta_or_pandoc_function_says_its_own_path() {
     struct InMeta;
     impl Filter for InMeta {
-        fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx) {
+        fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx) -> Option<()> {
             if let Some(panir::MetaValue::MetaInlines(xs)) = meta.get_mut("title") {
-                ctx.apply(xs, &mut Caps);
+                ctx.apply(xs, &mut Caps)?;
             }
+            Some(())
         }
     }
     let mut doc = Pandoc::new(vec![]);
@@ -285,10 +291,45 @@ fn a_walk_from_a_meta_or_pandoc_function_says_its_own_path() {
     // a Meta function's own error is at `meta`, as before
     struct Fails;
     impl Filter for Fails {
-        fn meta(&mut self, _: &mut Meta, ctx: &mut Ctx) {
-            ctx.fail::<()>("no");
+        fn meta(&mut self, _: &mut Meta, ctx: &mut Ctx) -> Option<()> {
+            ctx.fail("no")
         }
     }
     let e = apply(&mut doc, &mut Fails, None).unwrap_err();
     assert_eq!((e.function, e.path.as_str()), (Some("meta"), "meta"));
+}
+
+#[test]
+fn every_function_takes_question_marks_the_same_way() {
+    // `?` on an `Option` in `meta` or `pandoc` returns early, keeping what
+    // was done: `None` is no failure
+    struct Early(Vec<&'static str>);
+    impl Filter for Early {
+        fn meta(&mut self, meta: &mut Meta, _: &mut Ctx) -> Option<()> {
+            self.0.push("meta");
+            meta.get("missing")?;
+            self.0.push("never");
+            Some(())
+        }
+        fn pandoc(&mut self, doc: &mut Pandoc, ctx: &mut Ctx) -> Option<()> {
+            self.0.push("pandoc");
+            ctx.apply(&mut doc.blocks, &mut Caps)?;
+            let first = doc.blocks.first()?;
+            if first.inlines()?.is_empty() {
+                return ctx.fail("an empty paragraph");
+            }
+            Some(())
+        }
+    }
+    let mut doc = Pandoc::new(vec![Block::Para(panir::inlines("a b"))]);
+    let mut f = Early(vec![]);
+    apply(&mut doc, &mut f, None).unwrap();
+    assert_eq!(f.0, ["meta", "pandoc"]);
+    assert_eq!(panir::stringify(&doc), "A:- B:-");
+    let mut doc = Pandoc::new(vec![Block::Para(vec![])]);
+    let e = apply(&mut doc, &mut Early(vec![]), None).unwrap_err();
+    assert_eq!(
+        e.to_string(),
+        "an empty paragraph\n  in filter function pandoc, on the Pandoc"
+    );
 }

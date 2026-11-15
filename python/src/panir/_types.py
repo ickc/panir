@@ -1046,6 +1046,11 @@ class MetaValue(Node):
     __slots__ = ()
     _kind = "sum"
 
+    def __bool__(self) -> bool:
+        """True, as in pandoc's Lua: a metadata value is false only if it is
+        ``MetaBool(False)``."""
+        return True
+
 
 class MetaMap(MetaValue):
     """pandoc's ``MetaMap``, a MetaValue."""
@@ -1101,6 +1106,11 @@ class MetaBool(MetaValue):
 
     def __init__(self, value: bool) -> None:
         _init(self, (value,))
+
+    def __bool__(self) -> bool:
+        """Its value, as Lua's truth: ``if meta.get("x"):`` is Lua's ``if meta.x
+        then``."""
+        return self.value
 
 
 class MetaString(MetaValue):
@@ -2527,9 +2537,7 @@ ColSpan: TypeAlias = int
 
 # What converts to metadata (a MetaValue, or a plain Python value: see
 # from_python), for constructors' parameters and fields' setters.
-_MetaValueIn: TypeAlias = (
-    "MetaValue | str | bool | int | float | Mapping[str, _MetaValueIn] | Sequence[_MetaValueIn]"
-)
+_MetaValueIn: TypeAlias = "MetaValue | Inline | Block | str | bool | int | float | Mapping[str, _MetaValueIn] | Sequence[_MetaValueIn]"
 
 # How Filter.on types a filter's functions, for type checkers only: a
 # function for a class of node takes it (and optionally a Context) and

@@ -30,17 +30,21 @@ impl Filter for Noting {
         self.1.push(name.into());
         None
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) -> Option<()> {
         self.1.push(format!("Inlines{}", xs.len()));
+        Some(())
     }
-    fn blocks(&mut self, xs: &mut Vec<Block>, _: &mut Ctx) {
+    fn blocks(&mut self, xs: &mut Vec<Block>, _: &mut Ctx) -> Option<()> {
         self.1.push(format!("Blocks{}", xs.len()));
+        Some(())
     }
-    fn meta(&mut self, _: &mut Meta, _: &mut Ctx) {
+    fn meta(&mut self, _: &mut Meta, _: &mut Ctx) -> Option<()> {
         self.1.push("Meta".into());
+        Some(())
     }
-    fn pandoc(&mut self, _: &mut Pandoc, _: &mut Ctx) {
+    fn pandoc(&mut self, _: &mut Pandoc, _: &mut Ctx) -> Option<()> {
         self.1.push("Pandoc".into());
+        Some(())
     }
 }
 
@@ -139,8 +143,9 @@ fn skipping_children_is_for_top_down_only() {
             ctx.skip_children();
             None
         }
-        fn blocks(&mut self, _: &mut Vec<Block>, ctx: &mut Ctx) {
+        fn blocks(&mut self, _: &mut Vec<Block>, ctx: &mut Ctx) -> Option<()> {
             ctx.skip_children();
+            Some(())
         }
     }
     let n = |order| {

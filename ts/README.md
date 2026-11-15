@@ -37,9 +37,10 @@ await runFilter({
 
 Plain objects with named fields, discriminated by `t`, so `switch (x.t)`
 narrows them, and `structuredClone` or `postMessage` carries them to a
-worker. Field names are pandoc-types', in camelCase, as in pandoc's Lua
-API; products have no `t` (`Attr`, `Cell`, `Citation`, ...); enum-like
-types are string unions (`"InlineMath"`).
+worker. Field names are pandoc-types', in camelCase (most are pandoc's Lua
+API's: "Coming from Lua" lists those that are not); products have no `t`
+(`Attr`, `Cell`, `Citation`, ...); enum-like types are string unions
+(`"InlineMath"`).
 
 ```ts
 const h = Header(1, "Intro", { identifier: "intro", attributes: { lang: "en" } });
@@ -304,6 +305,19 @@ What a port of a Lua filter trips over:
   the body. Here a node in a second place is a copy you make (`copy(x)`),
   or one node in two places.
 - `el.t`, `el.tag`: `el.t`.
+- **Field names** are pandoc's Lua API's (`content`, `text`, `attr`,
+  `level`, `citations`, `listAttributes`, ...), but for pandoc-types'
+  names here, in camelCase: `quoteType` (Lua's `quotetype`), `mathType`
+  (`mathtype`), a table's `colSpecs` (`colspecs`, pairs in Lua, `ColSpec`s
+  of `alignment` and `width` here), `rowHeadColumns` (`row_head_columns`),
+  a cell's `rowSpan` and `colSpan` (`row_span`, `col_span`), a citation's
+  `noteNum` (`note_num`), a caption's `content` (`long`), a cell's
+  `content` (`contents`), an image's `content` (`caption`); and a link's
+  or image's `target` is `{ url, title }` (in Lua `target`, an image's
+  `src`, is the URL, and `title` the element's). An element's attributes,
+  target and list attributes are fields of their own here: Lua's
+  `el.identifier` is `el.attr.identifier`, `link.title`
+  `link.target.title`, `ol.start` `ol.listAttributes.start`.
 - `el.attributes.k`, `= v`, `= nil`: `getAttribute(el.attr, "k")`,
   `setAttribute(el.attr, "k", v)`, `removeAttribute(el.attr, "k")`; the
   first pair with the key, as in Lua. A Lua table as attributes (`{id =
@@ -313,13 +327,88 @@ What a port of a Lua filter trips over:
 - `error(...)`: throw; the error gets a note naming the function and the
   place.
 - `return el, false` (top-down): `ctx.skipChildren()`.
+- In pandoc's Lua (top-down), `return el, false` from the `Pandoc` or
+  `Meta` function skips nothing: the metadata and the blocks are walked
+  all the same (checked with pandoc 3.14). Here `ctx.skipChildren()` there
+  skips them, as for any node.
+- A Lua file returning a list of filters (`return {configure, quotes}`):
+  `runFilter([configure, quotes])` (or `applyFilter(doc, [...])`), each a
+  whole walk, in turn.
 - Arrays count from 0, Lua's lists from 1 (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
   functions after: `ctx.doc.meta`.
+- `FORMAT`: `ctx.format`, the output format pandoc passed; `undefined`
+  where none is known (`applyFilter` without one; `runFilter` run by hand,
+  without pandoc's argument), where Lua's `FORMAT` is always a string:
+  `ctx.format ?? ""`.
+- Lua's string patterns (`s:match`, `gsub`, `find`) are not regular
+  expressions: `%` escapes (`%.`), `-` is a lazy `*`, `%a` is a letter
+  (ASCII), `%s` ASCII whitespace, and there is no `|`; a port translates
+  each, or escapes a literal string (`s.replace(/[\\^$.*+?()[\]{}|/]/g,
+  "\\$&")`).
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `MetaValue` (or `MetaList`, ...) is called on each
   one.
+
+#### Metadata
+
+pandoc's Lua gives a filter the metadata as plain Lua values; here each
+value is a node, a `MetaValue`, holding what Lua gives in a field
+(checked with pandoc 3.14):
+
+| in the document | in Lua (`pandoc.utils.type`) | here |
+|---|---|---|
+| `x: some text`; also `x: ""`, `x: 1`, `x: no` | `Inlines` | `MetaInlines`: `content`, `Inline[]` |
+| `x: \|` and indented lines (blocks) | `Blocks` | `MetaBlocks`: `content`, `Block[]` |
+| `-M x=text` on the command line; YAML's null, `x:` | `string` | `MetaString`: `text` |
+| `x: true`, `x: false`; `-M x=true` | `boolean` | `MetaBool`: `value` |
+| `x: [a, b]` | `List` | `MetaList`: `content`, `MetaValue[]` |
+| `x: {k: v}` | `table` | `MetaMap`: `content`, an object of values |
+| no field | `nil` | `undefined` (`meta.x`) |
+
+`pandoc.utils.type(v) == "Inlines"` is `v.t === "MetaInlines"`, which
+narrows `v` (a `switch (v.t)` too).
+
+- **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
+  missing field and for `false` only; an empty string, list or map is
+  true, as is the text `no`. A node is an object, always true in
+  JavaScript, `MetaBool(false)` too: `if (meta.x)` is true for `x: false`.
+  `truthy(meta.x)` is Lua's.
+- **A nested option**, Lua's `((meta.a or {}).b or {}).c`: `lookup(meta,
+  "a", "b", "c")`, `undefined` where a key is missing or a value on the
+  way is not a map (where Lua would fail, on `true`, or find a method, on
+  a string or a list). It starts from the metadata or a `MetaMap`, and
+  reads a map's own keys only.
+- **One value or a list of them** (a filter's `ensure_list`, the shapes
+  `header-includes` takes): `items(meta.x)`, a `MetaList`'s items, nothing
+  for a missing value, any other value alone; a new array, of the
+  document's values.
+- **Writing metadata** (Lua's `meta.x = v`): the metadata is a plain
+  object, whose fields don't convert what is put there: `fromPlain(v)`
+  converts a plain value as Lua does (a string is a `MetaString`, a
+  boolean a `MetaBool`, a number a `MetaString` of it, an inline or a list
+  of inlines `MetaInlines`, a block or a list of blocks `MetaBlocks`,
+  another list a `MetaList`, an object a `MetaMap`), as the constructors
+  do. `toPlain(v)` reads metadata as Lua gives it: strings, booleans,
+  arrays, objects, and inlines and blocks as arrays of them (copies, as
+  Lua's are values); `stringify(v)` its text.
+- **Lua's tables are references** until pandoc converts the metadata back:
+  a table put in two places is two values after (scholarly-metadata merges
+  one institute into another). Here a node in two places is one node: copy
+  it (`copy`), as any node.
+
+```ts
+import { fromPlain, items, lookup, toPlain, truthy } from "panir";
+
+const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" }, tags: "a" } }).meta;
+assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
+assert.deepEqual([lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")], [MetaString("2"), undefined]);
+assert.deepEqual([items(meta.tags), items(meta.missing)], [[MetaString("a")], []]);
+meta.name = fromPlain([Str("Ada"), Space(), Str("L.")]);
+assert.deepEqual(meta.name, MetaInlines([Str("Ada"), Space(), Str("L.")]));
+assert.deepEqual(toPlain(meta.toc!), { depth: "2" });
+```
 
 ### Fragments
 

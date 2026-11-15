@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { Div, Emph, Header, Pandoc, Para, Str, Strong } from "../src/index.ts";
+import { Div, Emph, Header, MetaInlines, MetaString, Pandoc, Para, Space, Str, Strong } from "../src/index.ts";
 import type { Filter } from "../src/index.ts";
 
 const json = readFileSync(new URL("../../corpus/pandoc.jsonl", import.meta.url), "utf8").split("\n")[0]!;
@@ -92,6 +92,18 @@ const skipNotes: Filter<"topdown"> = {
 };
 const order = Math.random() < 0.5 ? "typewise" : "bottomup";
 applyFilter(doc, { traverse: order, Code: (c) => Str(c.text) });
+// #endregion
+
+// #region README
+import { fromPlain, items, lookup, toPlain, truthy } from "../src/index.ts";
+
+const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" }, tags: "a" } }).meta;
+assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
+assert.deepEqual([lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")], [MetaString("2"), undefined]);
+assert.deepEqual([items(meta.tags), items(meta.missing)], [[MetaString("a")], []]);
+meta.name = fromPlain([Str("Ada"), Space(), Str("L.")]);
+assert.deepEqual(meta.name, MetaInlines([Str("Ada"), Space(), Str("L.")]));
+assert.deepEqual(toPlain(meta.toc!), { depth: "2" });
 // #endregion
 
 // #region README

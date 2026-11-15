@@ -5,12 +5,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
-  applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, MetaBool, MetaInlines, MetaList,
-  MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, stringify, Strong, toJSON, Underline,
+  applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, items, lookup, MetaBool, MetaInlines, MetaList,
+  MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, stringify, Strong, toJSON, truthy,
+  Underline,
 } from "../src/index.ts";
 import type {
   AnyFilter, Block, Filter, MetaBool as MetaBoolNode, MetaInlines as MetaInlinesNode, MetaList as MetaListNode,
-  MetaString as MetaStringNode, Pandoc, Str as StrNode, WalkedContext,
+  MetaString as MetaStringNode, MetaValue, Pandoc, Str as StrNode, WalkedContext,
 } from "../src/index.ts";
 
 const FORMAT = "json";
@@ -231,6 +232,49 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
   metadelete: () => [{
     MetaBool: () => [],
   }],
+
+  truthy: () => [{
+    Pandoc: (doc) => {
+      const keys = ["yes", "no", "text", "empty", "null", "noword", "zero", "list", "map", "block", "missing"];
+      const words = keys.map((k) => `${k}=${truthy(doc.meta[k])}`);
+      const or = (v: MetaValue | undefined) => (truthy(v) ? v : MetaString("d"));
+      words.push(`no-or=${stringify(or(doc.meta.no))}`, `text-or=${stringify(or(doc.meta.text))}`);
+      doc.blocks.push(Para(words.join(" ")));
+    },
+  }],
+
+  lookup: () => [{
+    Pandoc: (doc) => {
+      const paths = [
+        ["toc"], ["toc", "depth"], ["toc", "style", "name"], ["toc", "missing"], ["missing", "depth"],
+        ["flag", "depth"], ["list", "a"], ["text", "map"], ["toc", "depth", "x"], ["toc", "style", "name", "x"],
+      ] as const;
+      const words = paths.map(([key, ...keys]) => {
+        const v = lookup(doc.meta, key, ...keys);
+        return `${[key, ...keys].join(".")}=${v === undefined ? "none" : stringify(v)}`;
+      });
+      doc.blocks.push(Para(words.join(" ")));
+    },
+  }],
+
+  items: () => [{
+    Pandoc: (doc) => {
+      const keys = ["one", "list", "empty", "map", "nested", "off", "inlines", "missing"];
+      const words = keys.map((k) => {
+        const texts = items(doc.meta[k]).map((x) => stringify(x));
+        return `${k}=${texts.length}:${texts.join(",")}`;
+      });
+      doc.blocks.push(Para(words.join(" ")));
+    },
+  }],
+
+  chain: () => {
+    let mark = "?";
+    return [
+      { Meta: (m) => { mark = stringify(truthy(m.mark) ? m.mark : "!"); } },
+      { Str: (s) => Str(s.text + mark) },
+    ];
+  },
 
   attributes: () => [{
     Span: (s) => {

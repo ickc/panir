@@ -3,7 +3,7 @@
 
 use panir::{
     Attr, Block, Ctx, Div, Filter, FilterError, Header, Inline, Meta, MetaValue, Order, Pandoc,
-    apply, from_str, to_string,
+    apply, from_str, items, lookup, to_string, truthy,
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -137,12 +137,13 @@ impl Filter for Lists {
     fn order(&self) -> Order {
         self.0
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) -> Option<()> {
         let n = xs.len();
         xs.retain(|x| !matches!(x, Inline::Space));
         xs.push(Inline::Str(format!("<{n}>").into()));
+        Some(())
     }
-    fn blocks(&mut self, xs: &mut Vec<Block>, _: &mut Ctx) {
+    fn blocks(&mut self, xs: &mut Vec<Block>, _: &mut Ctx) -> Option<()> {
         *xs = take(xs)
             .into_iter()
             .flat_map(|b| {
@@ -150,6 +151,7 @@ impl Filter for Lists {
                 std::iter::once(b).chain(rule)
             })
             .collect();
+        Some(())
     }
 }
 
@@ -159,7 +161,7 @@ impl Filter for MetaScenario {
     fn order(&self) -> Order {
         self.0
     }
-    fn meta(&mut self, m: &mut Meta, ctx: &mut Ctx) {
+    fn meta(&mut self, m: &mut Meta, ctx: &mut Ctx) -> Option<()> {
         m.insert("draft".into(), MetaValue::MetaBool(true));
         m.insert(
             "format".into(),
@@ -173,13 +175,15 @@ impl Filter for MetaScenario {
             ]),
         );
         m.remove("count");
+        Some(())
     }
-    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) {
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
         let draft = matches!(doc.meta.get("draft"), Some(MetaValue::MetaBool(true)));
         doc.blocks.insert(
             0,
             Block::Para(vec![str_(if draft { "draft" } else { "final" })]),
         );
+        Some(())
     }
 }
 
@@ -210,8 +214,9 @@ impl Filter for Twice {
 struct AddKey;
 
 impl Filter for AddKey {
-    fn meta(&mut self, m: &mut Meta, _: &mut Ctx) {
+    fn meta(&mut self, m: &mut Meta, _: &mut Ctx) -> Option<()> {
         m.insert("added".into(), MetaValue::MetaInlines(vec![str_("new")]));
+        Some(())
     }
 }
 
@@ -227,17 +232,19 @@ impl Filter for Count {
             _ => None,
         }
     }
-    fn meta(&mut self, m: &mut Meta, _: &mut Ctx) {
+    fn meta(&mut self, m: &mut Meta, _: &mut Ctx) -> Option<()> {
         self.0 += 1;
         m.insert(
             "calls".into(),
             MetaValue::MetaString(self.0.to_string().into()),
         );
+        Some(())
     }
-    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) {
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
         self.0 += 1;
         let calls = panir::inlines(&format!("calls: {}", self.0));
         doc.blocks.push(Block::Para(calls));
+        Some(())
     }
 }
 
@@ -294,17 +301,21 @@ impl Filter for Noting {
         self.seen.push(note.into());
         None
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) -> Option<()> {
         self.seen.push(format!("Inlines{}", xs.len()));
+        Some(())
     }
-    fn blocks(&mut self, xs: &mut Vec<Block>, _: &mut Ctx) {
+    fn blocks(&mut self, xs: &mut Vec<Block>, _: &mut Ctx) -> Option<()> {
         self.seen.push(format!("Blocks{}", xs.len()));
+        Some(())
     }
-    fn meta(&mut self, _: &mut Meta, _: &mut Ctx) {
+    fn meta(&mut self, _: &mut Meta, _: &mut Ctx) -> Option<()> {
         self.seen.push("Meta".into());
+        Some(())
     }
-    fn pandoc(&mut self, _: &mut Pandoc, _: &mut Ctx) {
+    fn pandoc(&mut self, _: &mut Pandoc, _: &mut Ctx) -> Option<()> {
         self.seen.push("Pandoc".into());
+        Some(())
     }
 }
 
@@ -355,7 +366,7 @@ impl Filter for NewDoc {
     fn order(&self) -> Order {
         Order::Topdown
     }
-    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) {
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
         let Some(MetaValue::MetaInlines(title)) = doc.meta.get("title") else {
             panic!("no title");
         };
@@ -370,6 +381,7 @@ impl Filter for NewDoc {
         ]);
         new.meta = take(&mut doc.meta);
         *doc = new;
+        Some(())
     }
     fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
         match x {
@@ -385,12 +397,13 @@ impl Filter for TopLists {
     fn order(&self) -> Order {
         Order::Topdown
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, ctx: &mut Ctx) -> Option<()> {
         if xs.len() == 1 {
             ctx.skip_children();
         } else {
             xs.reverse();
         }
+        Some(())
     }
     fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
         match x {
@@ -483,7 +496,7 @@ impl Filter for Replaced {
         self.seen.push("Div".into());
         Some(take(&mut d.content))
     }
-    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) {
+    fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) -> Option<()> {
         if matches!(xs.first(), Some(Inline::Str(s)) if s == "list") {
             self.seen.push("Inlines".into());
             *xs = vec![
@@ -491,6 +504,7 @@ impl Filter for Replaced {
                 Inline::Strong(vec![Inline::Emph(vec![str_("g")])]),
             ];
         }
+        Some(())
     }
 }
 
@@ -548,6 +562,124 @@ impl Filter for MetaDelete {
     }
 }
 
+/// Lua's truth of each field, in a paragraph.
+struct Truthy(Order);
+
+impl Filter for Truthy {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let keys = [
+            "yes", "no", "text", "empty", "null", "noword", "zero", "list", "map", "block",
+            "missing",
+        ];
+        let mut words: Vec<String> = keys
+            .iter()
+            .map(|k| format!("{k}={}", truthy(doc.meta.get(*k))))
+            .collect();
+        let or = |v: Option<&MetaValue>| match v {
+            Some(v) if truthy(Some(v)) => panir::stringify(v),
+            _ => "d".into(),
+        };
+        words.push(format!("no-or={}", or(doc.meta.get("no"))));
+        words.push(format!("text-or={}", or(doc.meta.get("text"))));
+        doc.blocks
+            .push(Block::Para(panir::inlines(&words.join(" "))));
+        Some(())
+    }
+}
+
+/// What each path of keys finds, in a paragraph.
+struct Lookup(Order);
+
+impl Filter for Lookup {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let paths: [&[&str]; 10] = [
+            &["toc"],
+            &["toc", "depth"],
+            &["toc", "style", "name"],
+            &["toc", "missing"],
+            &["missing", "depth"],
+            &["flag", "depth"],
+            &["list", "a"],
+            &["text", "map"],
+            &["toc", "depth", "x"],
+            &["toc", "style", "name", "x"],
+        ];
+        let words: Vec<String> = paths
+            .iter()
+            .map(|path| {
+                let found = lookup(&doc.meta, path).map_or("none".into(), panir::stringify);
+                format!("{}={found}", path.join("."))
+            })
+            .collect();
+        doc.blocks
+            .push(Block::Para(panir::inlines(&words.join(" "))));
+        Some(())
+    }
+}
+
+/// How many values each field has as a list, and their text, in a paragraph.
+struct Items(Order);
+
+impl Filter for Items {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let keys = [
+            "one", "list", "empty", "map", "nested", "off", "inlines", "missing",
+        ];
+        let words: Vec<String> = keys
+            .iter()
+            .map(|k| {
+                let texts: Vec<String> = items(doc.meta.get(*k))
+                    .iter()
+                    .map(panir::stringify)
+                    .collect();
+                format!("{k}={}:{}", texts.len(), texts.join(","))
+            })
+            .collect();
+        doc.blocks
+            .push(Block::Para(panir::inlines(&words.join(" "))));
+        Some(())
+    }
+}
+
+/// Reads the mark from the metadata, for `Mark`.
+struct Configure(Order, String);
+
+impl Filter for Configure {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn meta(&mut self, meta: &mut Meta, _: &mut Ctx) -> Option<()> {
+        self.1 = match meta.get("mark") {
+            v @ Some(_) if truthy(v) => panir::stringify(v?),
+            _ => "!".into(),
+        };
+        Some(())
+    }
+}
+
+/// Marks every Str.
+struct Mark(Order, String);
+
+impl Filter for Mark {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        let Inline::Str(s) = x else { return None };
+        s.push_str(&self.1);
+        None
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -572,6 +704,17 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "attributes" => Box::new(Attributes(order)),
         "fails" => Box::new(Fails(0)),
         "metadelete" => Box::new(MetaDelete(order)),
+        "truthy" => Box::new(Truthy(order)),
+        "lookup" => Box::new(Lookup(order)),
+        "items" => Box::new(Items(order)),
+        "chain" => {
+            // (a Lua file's list of filters: one apply after the other)
+            let mut configure = Configure(order, "?".into());
+            return Some(
+                apply(doc, &mut configure, FORMAT)
+                    .and_then(|()| apply(doc, &mut Mark(order, configure.1), FORMAT)),
+            );
+        }
         "metacount" => {
             return Some(
                 apply(doc, &mut AddKey, FORMAT).and_then(|()| apply(doc, &mut Count(0), FORMAT)),

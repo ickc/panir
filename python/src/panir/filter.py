@@ -45,13 +45,14 @@ from .conversion import Conversion
 if TYPE_CHECKING:
     from ._types import _MetaValueIn, _typed_on
 
-__all__ = ["Filter", "run"]
+__all__ = ["Filter", "main", "run"]
 
 # Set by a program that runs filter scripts in its own process (pandocpy,
-# libpandoc): a script's ``f.main()`` then hands ``f`` to it, instead of
-# reading stdin and writing stdout, so that it runs on the program's own
-# document objects. Per thread (a context variable), so that scripts may run
-# in several threads at once.
+# libpandoc): a script's ``f.main()`` (or ``main([f, g])``) then hands each
+# filter to it, in order, instead of reading stdin and writing stdout, so
+# that they run on the program's own document objects, one after the other.
+# Per thread (a context variable), so that scripts may run in several
+# threads at once.
 handoff: ContextVar[Callable[[Filter], None] | None] = ContextVar(
     "panir_filter_handoff", default=None
 )
@@ -347,29 +348,39 @@ class Filter:
         return _fast.dumps(out)
 
     def main(self, argv: list[str] | None = None) -> None:
-        """Run as a pandoc JSON filter: a document on stdin, to stdout.
+        """Run as a pandoc JSON filter: a document on stdin, to stdout
+        (``main([self])``)."""
+        main(self, argv)
 
-        pandoc passes the output format as the first argument, and the
-        reader's options in the environment. While the filter's functions
-        run, ``print`` writes to stderr: pandoc reads stdout as the document.
-        """
-        take = handoff.get()
-        if take is not None:
-            take(self)  # a program running this script in its own process
-            return
-        conversion = Conversion.from_environment(argv)
-        stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
-        text = stdin.read()
-        sys.stdout = sys.stderr
-        try:
-            # (a process that ends with the document: nothing to collect)
-            with _fast.paused_gc():
-                doc = self(_fast.loads(text, Pandoc), conversion=conversion)
-                data = _utf8(doc, _fast.dumps(doc))
-        finally:
-            sys.stdout = sys.__stdout__
-        stdout.write(data)
-        stdout.flush()
+
+def main(filters: Filter | Iterable[Filter], argv: list[str] | None = None) -> None:
+    """Run a filter, or several in turn (each a whole walk, as a Lua filter
+    file returning a list of filters), as one pandoc JSON filter: a
+    document on stdin, to stdout.
+
+    pandoc passes the output format as the first argument, and the
+    reader's options in the environment. While the filters' functions
+    run, ``print`` writes to stderr: pandoc reads stdout as the document.
+    """
+    fs = [filters] if isinstance(filters, Filter) else list(filters)
+    take = handoff.get()
+    if take is not None:
+        for f in fs:
+            take(f)  # a program running this script in its own process
+        return
+    conversion = Conversion.from_environment(argv)
+    stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
+    text = stdin.read()
+    sys.stdout = sys.stderr
+    try:
+        # (a process that ends with the document: nothing to collect)
+        with _fast.paused_gc():
+            doc = run(_fast.loads(text, Pandoc), fs, conversion=conversion)
+            data = _utf8(doc, _fast.dumps(doc))
+    finally:
+        sys.stdout = sys.__stdout__
+    stdout.write(data)
+    stdout.flush()
 
 
 def run(

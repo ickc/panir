@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping
 from typing import Any
 
-from ._core import Node, NodeList, text_inlines, too_deep
+from ._core import Node, text_inlines, too_deep
 from ._types import (
     Block,
     Cite,
@@ -32,7 +33,16 @@ from ._types import (
 )
 from ._walk import Context, _walk_fields, walk
 
-__all__ = ["blocks", "check_unique", "from_python", "inlines", "stringify", "to_python"]
+__all__ = [
+    "blocks",
+    "check_unique",
+    "from_python",
+    "inlines",
+    "items",
+    "lookup",
+    "stringify",
+    "to_python",
+]
 
 _QUOTES = {QuoteType.SingleQuote: ("‘", "’"), QuoteType.DoubleQuote: ("“", "”")}
 
@@ -118,11 +128,52 @@ def _text(value: Any, out: list[str], inlines_only: bool) -> None:
             _text(getattr(value, f), out, inlines_only)
 
 
+def lookup(
+    value: Mapping[str, MetaValue] | MetaValue | None, key: str, /, *keys: str
+) -> MetaValue | None:
+    """The metadata value at a path of keys, each but the last in a map:
+    Lua's ``((meta.a or {}).b or {}).c``, ``None`` where a key is missing or
+    a value on the way is not a map (where Lua would fail, on ``true``, or
+    find a method, on a string or a list). ``value`` is the metadata, a
+    ``MetaMap``, or ``None``.
+
+        depth = lookup(doc.meta, "toc", "depth")
+    """
+    found: MetaValue | None = None
+    for k in (key, *keys):
+        if isinstance(value, MetaMap):
+            found = value.content.get(k)
+        elif isinstance(value, Mapping):
+            found = value.get(k)
+        else:
+            return None
+        value = found
+    return found
+
+
+def items(value: MetaValue | None) -> list[MetaValue]:
+    """One value or a list of them, as a list: a ``MetaList``'s items,
+    nothing for ``None``, any other value alone (a filter's ``ensure_list``;
+    the shapes ``header-includes`` takes). A new list, of the document's
+    values.
+
+        for name in items(doc.meta.get("author")): ...
+    """
+    if value is None:
+        return []
+    if isinstance(value, MetaList):
+        return list(value.content)
+    return [value]
+
+
 @too_deep("to_python")
 def to_python(value: MetaValue | Mapping[str, MetaValue]) -> Any:
-    """Metadata as plain Python: str, bool, list, dict.
-
-    ``MetaInlines`` and ``MetaBlocks`` become their text (``stringify``).
+    """Metadata as plain Python values, as pandoc's Lua gives them to a
+    filter: a ``MetaString`` a str, a ``MetaBool`` a bool, a ``MetaList`` a
+    list, a ``MetaMap`` (or the metadata) a dict, ``MetaInlines`` and
+    ``MetaBlocks`` a list of their inlines or blocks (copies: as in Lua,
+    the plain value is not the document's). ``from_python`` converts it
+    back (an empty list to a ``MetaList``). For their text, ``stringify``.
     """
     return _to_python(value)
 
@@ -139,17 +190,20 @@ def _to_python(value: Any) -> Any:
     if isinstance(value, MetaString):
         return value.text
     if isinstance(value, (MetaInlines, MetaBlocks)):
-        return stringify(value.content)
+        return copy.deepcopy(list(value.content))
     raise TypeError(f"not metadata: {value!r}")
 
 
 @too_deep("from_python")
 def from_python(value: Any) -> MetaValue | None:
-    """A Python value as metadata, or None if it has no obvious form.
+    """A Python value as metadata, as pandoc's Lua converts a plain Lua
+    value, or None if it has no obvious form.
 
-    str -> MetaString, bool -> MetaBool, list -> MetaList, dict -> MetaMap,
-    int and float -> MetaString (YAML numbers read by pandoc are strings too).
-    Setting metadata converts with this: ``doc.meta["draft"] = True``.
+    str -> MetaString, bool -> MetaBool, int and float -> MetaString (as
+    Lua's numbers), an inline or a list of inlines -> MetaInlines, a block
+    or a list of blocks -> MetaBlocks, another list -> MetaList (of each
+    converted), a mapping -> MetaMap. Setting metadata converts with this:
+    ``doc.meta["draft"] = True``, ``doc.meta["name"] = [Str("Ada")]``.
     """
     return _from_python(value)
 
@@ -163,9 +217,17 @@ def _from_python(value: Any) -> MetaValue | None:
         return MetaString(value)
     if isinstance(value, (int, float)):
         return MetaString(str(value))
+    if isinstance(value, Inline):
+        return MetaInlines(value)
+    if isinstance(value, Block):
+        return MetaBlocks(value)
     if isinstance(value, Mapping):
         return MetaMap({k: _meta(v) for k, v in value.items()})
-    if isinstance(value, (list, tuple)) and not isinstance(value, NodeList):
+    if isinstance(value, (list, tuple)):
+        if value and all(isinstance(x, Inline) for x in value):
+            return MetaInlines(*value)
+        if value and all(isinstance(x, Block) for x in value):
+            return MetaBlocks(*value)
         return MetaList(*[_meta(v) for v in value])
     return None
 

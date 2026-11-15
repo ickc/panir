@@ -212,6 +212,52 @@ function scenario_metadelete()
     Filters([(f, :typewise)])
 end
 
+function scenario_truthy()
+    function f(d::Pandoc)
+        keys = ["yes", "no", "text", "empty", "null", "noword", "zero", "list", "map", "block", "missing"]
+        words = ["$k=$(truthy(get(d.meta, k, nothing)))" for k in keys]
+        or(v) = truthy(v) ? v : MetaString("d")
+        push!(words, "no-or=$(stringify(or(get(d.meta, "no", nothing))))",
+              "text-or=$(stringify(or(get(d.meta, "text", nothing))))")
+        push!(d.blocks, Para(join(words, " ")))
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
+function scenario_lookup()
+    paths = [["toc"], ["toc", "depth"], ["toc", "style", "name"], ["toc", "missing"], ["missing", "depth"],
+             ["flag", "depth"], ["list", "a"], ["text", "map"], ["toc", "depth", "x"], ["toc", "style", "name", "x"]]
+    function f(d::Pandoc)
+        words = map(paths) do path
+            v = lookup(d.meta, path...)
+            "$(join(path, "."))=$(v === nothing ? "none" : stringify(v))"
+        end
+        push!(d.blocks, Para(join(words, " ")))
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
+function scenario_items()
+    function f(d::Pandoc)
+        words = map(["one", "list", "empty", "map", "nested", "off", "inlines", "missing"]) do k
+            texts = map(stringify, items(get(d.meta, k, nothing)))
+            "$k=$(length(texts)):$(join(texts, ","))"
+        end
+        push!(d.blocks, Para(join(words, " ")))
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
+function scenario_chain()
+    mark = Ref("?")
+    configure(m::Panir.Meta) = (mark[] = stringify(truthy(get(m, "mark", nothing)) ? m["mark"] : "!"); nothing)
+    add(s::Str) = Str(s.text * mark[])
+    Filters([(configure, :typewise), (add, :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
@@ -220,6 +266,7 @@ const SCENARIOS = Dict(
     "newdoc" => scenario_newdoc, "twice" => scenario_twice, "metacount" => scenario_metacount,
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
     "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete,
+    "truthy" => scenario_truthy, "lookup" => scenario_lookup, "items" => scenario_items, "chain" => scenario_chain,
 )
 
 @testset "filters as pandoc's Lua" begin
@@ -227,9 +274,8 @@ const SCENARIOS = Dict(
     lua = sort([splitext(f)[1] for f in readdir(joinpath(CORPUS, "filters")) if endswith(f, ".lua")])
     @test sort([l["name"] for l in lines]) == lua  # else run scripts/filters-corpus.sh
     @test sort(collect(keys(SCENARIOS))) == lua
-    run(filters, input) = foldl(filters; init = fromjson(input)) do doc, (f, traverse)
-        walk!(f, doc; traverse, format = FORMAT)
-    end
+    # (each scenario's filters in one call, as a Lua file returning a list)
+    run(filters, input) = walk!([f => traverse for (f, traverse) in filters], fromjson(input); format = FORMAT)
     @testset "$(l["name"])" for l in lines
         if l["output"] === nothing  # pandoc fails on it: so must the filter
             @test_throws Exception run(SCENARIOS[l["name"]](), l["input"])

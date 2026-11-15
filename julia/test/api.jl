@@ -359,7 +359,8 @@ end
     m = Module()
     Core.eval(m, :(using Panir))
     for name in (:Str, :Para, :Inline, :MetaValue, :InlineMath, :DoubleQuote, :AlignLeft, :LowerRoman, :OneParen,
-                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify, :check_unique)
+                 :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify, :check_unique, :truthy, :lookup,
+                 :items)
         @test isdefined(m, name)
     end
     # the common words, the aliases and the enums' types: as Panir.X
@@ -374,6 +375,23 @@ end
     @test Panir.handoff(() -> Panir.hand_over(f, :bottomup)) == (f, :bottomup)
     @test Panir.hand_over(f, :typewise) == false  # (not in handoff: the runner goes on)
     @test Panir.handoff(() -> run_filter(f; traverse = :topdown)) == (f, :topdown)
+    # a list of filters, handed over as it is: walk! takes it
+    @test Panir.handoff(() -> run_filter([f, f => :topdown])) == ([f, f => :topdown], :typewise)
+end
+
+@testset "a list of filters, in turn" begin
+    marks = String[]
+    configure(m::Panir.Meta) = (push!(marks, stringify(m["mark"])); nothing)
+    mark(s::Str) = Str(s.text * marks[1])
+    doc = Pandoc(Para("a b"); meta = Dict("mark" => "!"))
+    # the second uses what the first read: in one typewise walk, the inlines
+    # come before the metadata
+    @test stringify(walk!([configure, mark => :topdown], doc).blocks) == "a! b!"
+    @test stringify(walk!([mark], Emph("x"))) == "x!"  # (a fragment too)
+    out = IOBuffer()
+    Panir._run([configure, mark], :typewise, IOBuffer(serialize(Pandoc(Para("c"); meta = Dict("mark" => "?")))), out,
+               ["html"], Dict{String, String}())
+    @test stringify(Panir.parse(String(take!(out))).blocks) == "c!"  # (marks[1]: the first read)
 end
 
 @testset "the README's examples run" begin
@@ -413,4 +431,38 @@ end
     # a node with nothing in it can't change: one Space in two places is fine
     sp = Space()
     @test check_unique(Para(Str("a"), sp, Str("b"), sp)) === nothing
+end
+
+@testset "Lua's truth of metadata values" begin
+    # false only for a missing value and `false`, as Lua's `if meta.x then`
+    for v in [MetaBool(true), MetaString(""), MetaString("false"), MetaInlines(), MetaBlocks(), MetaList(),
+              MetaMap(Dict{String, MetaValue}())]
+        @test truthy(v)
+    end
+    @test !truthy(MetaBool(false)) && !truthy(nothing)
+    @test_throws TypeError (MetaBool(false) ? 1 : 2)  # (a node in `if` is an error, not true)
+end
+
+@testset "a nested option, through maps" begin
+    meta = Pandoc(; meta = Dict("toc" => Dict("depth" => "2", "style" => Dict("name" => "x")), "flag" => true,
+                                "l" => ["a"])).meta
+    @test lookup(meta, "toc", "depth") == MetaString("2")
+    @test lookup(meta, "toc", "style", "name") == MetaString("x")
+    @test lookup(meta["toc"], "depth") == MetaString("2")  # from a MetaMap
+    @test lookup(meta, "toc") === meta["toc"]
+    for path in (("toc", "missing"), ("missing", "depth"), ("flag", "x"), ("l", "a"), ("toc", "depth", "x"))
+        @test lookup(meta, path...) === nothing
+    end
+    @test lookup(nothing, "x") === nothing
+end
+
+@testset "one value or a list of them, as a list" begin
+    meta = Pandoc(; meta = Dict("one" => "a", "l" => ["a", "b"], "e" => [], "off" => false)).meta
+    @test items(meta["one"]) == [MetaString("a")]
+    @test items(meta["l"]) == [MetaString("a"), MetaString("b")]
+    @test isempty(items(meta["e"])) && isempty(items(nothing))
+    @test items(meta["off"]) == [MetaBool(false)]
+    listed = items(meta["l"])
+    pop!(listed)  # a new vector: the document's is as it was
+    @test length(meta["l"].content) == 2
 end
