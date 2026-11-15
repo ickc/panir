@@ -42,10 +42,11 @@ schema/pandoc-ast.json ──(tools/gen_<language>.py)──> each language's de
   from pandoc-types itself. An unknown kind of type stops the build.
 - **`schema/pandoc-ast.json`**: what every binding generates from. It adds
   what the declarations don't say, decided once for all languages: field
-  names (pandoc's Lua API's where it has them), how each type is encoded in
-  JSON, defaults, which field constructors take as varargs. `tools/derive.py`
-  documents the rules, and fails rather than guesses when pandoc-types changes
-  beyond them.
+  names (pandoc-types' record names, or named after their types; most are
+  pandoc's Lua API's, and each README lists those that are not), how each
+  type is encoded in JSON, defaults, which field constructors take as
+  varargs. `tools/derive.py` documents the rules, and fails rather than
+  guesses when pandoc-types changes beyond them.
 - **The corpus** is the contract. `arbitrary.jsonl` holds random documents
   that pandoc-types' own aeson instances encoded, covering every
   constructor; every binding must decode and re-encode each one unchanged.

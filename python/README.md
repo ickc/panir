@@ -23,7 +23,8 @@ if __name__ == "__main__":
 
 One class per pandoc constructor, a subclass of its type: `Para` and `Header`
 are `Block`s, `Str` and `Emph` are `Inline`s. Fields have pandoc-types' names
-and order, as in pandoc's Lua API: `Header(level, *content, attr=...)`.
+(in snake case) and order: `Header(level, *content, attr=...)`; most are
+pandoc's Lua API's, and "Coming from Lua" lists those that are not.
 Where Lua's constructors take every argument in an order of their own, so
 do these: `Cite(content, citations)`, `Citation(id, mode, prefix, suffix,
 note_num, hash)`, `Table(caption, col_specs, head, bodies, foot, attr=)`,
@@ -246,6 +247,17 @@ What a port of a Lua filter trips over:
   the body. Here a node in a second place is a copy you make
   (`copy.deepcopy(x)`), or one node in two places.
 - `el.t`, `el.tag`: `type(el).__name__`.
+- **Field names** are pandoc's Lua API's (`content`, `text`, `attr`,
+  `level`, `citations`, `note_num`, ...; and, as in Lua, an element's
+  attributes', target's and list attributes' fields are its own too:
+  `el.identifier`, `link.title`, `ol.start`), but for pandoc-types' names
+  here: `quote_type` (Lua's `quotetype`), `math_type` (`mathtype`),
+  `list_attributes` (`listAttributes`), a table's `col_specs` (`colspecs`,
+  pairs in Lua, `ColSpec`s of `alignment` and `width` here), a caption's
+  `content` (`long`), a cell's `content` (`contents`), an image's
+  `content` (`caption`); and a link's or image's `target` is a `Target` of
+  `url` and `title` (in Lua `target`, an image's `src`, is the URL):
+  `link.url`, `image.url`.
 - `el.attributes.k`, `= v`, `= nil`: `el.attributes["k"]` (or
   `.get("k")`), `= v`, `.pop("k", None)`; the first pair with the key, as
   in Lua. A Lua table as attributes (`{id = "x", class = "a b"}`) gives
@@ -254,18 +266,46 @@ What a port of a Lua filter trips over:
 - `error(...)`: raise; the exception gets a note naming the function and
   the place.
 - `return el, false` (top-down): `ctx.skip_children()`.
+- In pandoc's Lua (top-down), `return el, false` from the `Pandoc` or
+  `Meta` function skips nothing: the metadata and the blocks are walked
+  all the same (checked with pandoc 3.14). Here `ctx.skip_children()`
+  there skips them, as for any node.
 - A Lua file returning a list of filters (`return {configure, quotes}`):
   `main([configure, quotes])` (or `run(doc, [...])`), each a whole walk,
   in turn.
 - Lists count from 0 here, from 1 in Lua (`el.content[1]`).
 - The metadata a Lua filter keeps from its `Meta` function, for the
   functions after: `ctx.doc.meta`.
+- `FORMAT`: `ctx.format`, the output format pandoc passed; `None` where
+  none is known (a filter applied without one: `f(doc)`), where Lua's
+  `FORMAT` is always a string: `ctx.format or ""`.
+- Lua's string patterns (`s:match`, `gsub`, `find`) are not regular
+  expressions: `%` escapes (`%.`), `-` is a lazy `*`, `%a` is a letter
+  (ASCII), `%s` ASCII whitespace, and there is no `|`; a port translates
+  each, or escapes a literal string (`re.escape`).
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `@f.on(MetaValue)` (or `MetaList`, ...) is called
   on each one.
 
 #### Metadata
+
+pandoc's Lua gives a filter the metadata as plain Lua values; here each
+value is a node, a `MetaValue`, holding what Lua gives in a field
+(checked with pandoc 3.14):
+
+| in the document | in Lua (`pandoc.utils.type`) | here |
+|---|---|---|
+| `x: some text`; also `x: ""`, `x: 1`, `x: no` | `Inlines` | `MetaInlines`: `content`, a list of inlines |
+| `x: \|` and indented lines (blocks) | `Blocks` | `MetaBlocks`: `content`, a list of blocks |
+| `-M x=text` on the command line; YAML's null, `x:` | `string` | `MetaString`: `text` |
+| `x: true`, `x: false`; `-M x=true` | `boolean` | `MetaBool`: `value` |
+| `x: [a, b]` | `List` | `MetaList`: `content`, a list of values |
+| `x: {k: v}` | `table` | `MetaMap`: `content`, a dict of values |
+| no field | `nil` | `None` (`meta.get("x")`) |
+
+`pandoc.utils.type(v) == "Inlines"` is `isinstance(v, MetaInlines)`, or a
+`match` on the classes (`case MetaInlines(content):`).
 
 - **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
   missing field and for `false` only; an empty string, list or map is
@@ -287,6 +327,10 @@ What a port of a Lua filter trips over:
   list a `MetaList`, a dict a `MetaMap`. `to_python(v)` reads metadata as
   Lua gives it: strings, bools, lists, dicts, and inlines and blocks as
   lists of them (copies, as Lua's are values); `stringify(v)` its text.
+- **Lua's tables are references** until pandoc converts the metadata back:
+  a table put in two places is two values after (scholarly-metadata merges
+  one institute into another). Here a node in two places is one node: copy
+  it (`copy.deepcopy`), as any node.
 
 ```python
 >>> meta = Pandoc(meta={"draft": False, "title": "", "toc": {"depth": "2"}, "tags": "a"}).meta

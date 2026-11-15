@@ -178,6 +178,18 @@ What a port of a Lua filter trips over:
 - **Lua's elements are values**: `pandoc.Span(meta.title)` puts a copy in
   the body; here, `.clone()` (ownership allows nothing else).
 - `el.t`, `el.tag`: `x.tag()`.
+- **Field names** are pandoc's Lua API's (`content`, `text`, `attr`,
+  `level`, `citations`, `note_num`, ...), but for pandoc-types' names
+  here: `quote_type` (Lua's `quotetype`), `math_type` (`mathtype`),
+  `list_attributes` (`listAttributes`), a table's `col_specs` (`colspecs`,
+  pairs in Lua, `ColSpec`s of `alignment` and `width` here), a caption's
+  `content` (`long`), a cell's `content` (`contents`), an image's
+  `content` (`caption`); and a link's or image's `target` is a `Target` of
+  `url` and `title` (in Lua `target`, an image's `src`, is the URL, and
+  `title` the element's). An element's attributes, target and list
+  attributes are fields of their own here: Lua's `el.identifier` is
+  `attr.identifier`, `link.title` `target.title`, `ol.start`
+  `list_attributes.start`.
 - `el.attributes.k`, `= v`, `= nil`: `attr.get("k")`, `attr.set("k", v)`,
   `attr.remove("k")`; the first pair with the key, as in Lua. A Lua table
   as attributes (`{id = "x", class = "a b"}`) gives the identifier and
@@ -187,6 +199,10 @@ What a port of a Lua filter trips over:
   `ctx.apply(&mut el, &mut filter)?`, in every function (each returns an
   `Option`).
 - `return el, false` (top-down): `ctx.skip_children()`.
+- In pandoc's Lua (top-down), `return el, false` from the `Pandoc` or
+  `Meta` function skips nothing: the metadata and the blocks are walked
+  all the same (checked with pandoc 3.14). Here `ctx.skip_children()`
+  there skips them, as for any node.
 - A Lua file returning a list of filters (`return {configure, quotes}`):
   `apply` after `apply` in `panir::filter`'s function, `?` between; what a
   later one needs of an earlier one (a Lua upvalue) is a field it is given:
@@ -230,11 +246,36 @@ What a port of a Lua filter trips over:
   itself, as pandocfilters' metavars allows, looks missing there, where
   the other languages, whose `ctx.doc.meta` is the whole map, walk it
   until the walk is too deep.
+- `FORMAT`: `ctx.format()`, the output format pandoc passed; `None` where
+  none is known (`apply` with `None`; `panir::filter` run by hand, without
+  pandoc's argument), where Lua's `FORMAT` is always a string:
+  `ctx.format().unwrap_or_default()`.
+- Lua's string patterns (`s:match`, `gsub`, `find`) are not regular
+  expressions: `%` escapes (`%.`), `-` is a lazy `*`, `%a` is a letter
+  (ASCII), `%s` ASCII whitespace, and there is no `|`; a port translates
+  each, or escapes a literal string (`regex::escape`).
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `meta_value` is called on each one.
 
 #### Metadata
+
+pandoc's Lua gives a filter the metadata as plain Lua values; here each
+value is a node, a `MetaValue`, holding what Lua gives in a field
+(checked with pandoc 3.14):
+
+| in the document | in Lua (`pandoc.utils.type`) | here |
+|---|---|---|
+| `x: some text`; also `x: ""`, `x: 1`, `x: no` | `Inlines` | `MetaValue::MetaInlines(Vec<Inline>)` |
+| `x: \|` and indented lines (blocks) | `Blocks` | `MetaValue::MetaBlocks(Vec<Block>)` |
+| `-M x=text` on the command line; YAML's null, `x:` | `string` | `MetaValue::MetaString(Text)` |
+| `x: true`, `x: false`; `-M x=true` | `boolean` | `MetaValue::MetaBool(bool)` |
+| `x: [a, b]` | `List` | `MetaValue::MetaList(Vec<MetaValue>)` |
+| `x: {k: v}` | `table` | `MetaValue::MetaMap(Meta)`, a `BTreeMap` |
+| no field | `nil` | `None` (`meta.get("x")`) |
+
+`pandoc.utils.type(v)` is a `match` on the variants (`v.tag()` names them:
+`"MetaInlines"`).
 
 - **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
   missing field and for `false` only; an empty string, list or map is
@@ -252,6 +293,10 @@ What a port of a Lua filter trips over:
   v.into())` converts a plain value as Lua does (below, in "Types");
   reading needs no conversion: a `MetaMap`'s content is a `BTreeMap`, a
   `MetaList`'s a `Vec`, `MetaInlines`' a `Vec<Inline>`.
+- **Lua's tables are references** until pandoc converts the metadata back:
+  a table put in two places is two values after (scholarly-metadata merges
+  one institute into another). Here a value has one owner: a second place
+  takes a `.clone()`, or an index into where it is.
 
 ```rust
 use panir::{MetaValue, Pandoc, items, lookup, truthy};
