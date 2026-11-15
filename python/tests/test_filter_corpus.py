@@ -580,12 +580,79 @@ def chain() -> list[Filter]:
     return [configure, add]
 
 
+INLINESOF_KEYS = (
+    "text", "blocks", "on", "map", "emptymap", "null", "empty", "list",
+    "nulls", "mixed", "lists", "listblocks", "listbool", "emptylist",
+)  # fmt: skip
+
+
+def inlinesof() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def convert(doc):
+        for k in INLINESOF_KEYS:
+            try:
+                xs = A.inlines_of(doc.meta[k])
+            except A.ASTTypeError:
+                xs = [Str("fails")]
+            doc.blocks.append(Para(Str(f"{k}:"), Space(), *xs))
+            try:
+                bs = A.blocks_of(doc.meta[k])
+            except A.ASTTypeError:
+                bs = [Para("fails")]
+            doc.blocks.append(Div(*bs, identifier=k))
+
+    return [f]
+
+
+def roman() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def numerals(doc):
+        numbers = (0, 1, 4, 9, 14, 40, 90, 400, 1994, 2026, 3999, 4000, 1000000, -1)
+        doc.blocks.append(Para(" ".join(f"{n}={A.to_roman_numeral(n)}" for n in numbers)))
+
+    return [f]
+
+
+def pairs(v: A.MetaValue | None) -> list[tuple[object, A.MetaValue | Inline | Block]]:
+    """Lua's ``pairs`` over a metadata value, as Python's README says to write it."""
+    match v:
+        case MetaMap(content):
+            return list(content.items())
+        case MetaList(content) | MetaInlines(content) | MetaBlocks(content):
+            return list(enumerate(content, 1))
+    raise TypeError(f"Lua's pairs fails on {type(v).__name__}")
+
+
+PAIRS_KEYS = ("map", "list", "inlines", "blocks", "emptymap", "emptylist", "on", "null", "missing")
+
+
+def pairs_() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def entries(doc):
+        for k in PAIRS_KEYS:
+            try:
+                found = sorted(pairs(doc.meta.get(k)), key=lambda kv: kv[0])
+                text = ",".join(f"{key}={A.stringify(v)}" for key, v in found)
+            except TypeError:
+                text = "fails"
+            doc.blocks.append(Para(f"{k}: {text}"))
+
+    return [f]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
     + (once, lists, meta, newdoc, twice, metacount, attributes, fails, helperfails)
     + (replaced, metavalues, metadelete, truthy, lookup, items, chain, prepend)
-}
+    + (inlinesof, roman)
+} | {"pairs": pairs_}
 
 
 def test_every_scenario_has_python_filters():

@@ -1,9 +1,13 @@
 //! Metadata as pandoc's Lua filters read and write it: made from plain
-//! values, Lua's truth, a lookup through maps, one value or a list.
+//! values, Lua's truth, a lookup through maps, one value or a list, a value
+//! as inlines or blocks; and pandoc.utils.to_roman_numeral.
 
 use std::collections::BTreeMap;
 
-use panir::{Block, Inline, MetaValue, given, into_items, items, lookup, truthy};
+use panir::{
+    Block, Inline, Meta, MetaValue, blocks_of, given, inlines, inlines_of, into_items, items,
+    lookup, to_roman_numeral, truthy,
+};
 
 #[test]
 fn metadata_from_plain_values() {
@@ -164,4 +168,105 @@ fn one_value_or_a_list() {
     assert!(into_items(empty).is_empty());
     assert_eq!(into_items(MetaValue::from(false)), [false.into()]);
     assert!(meta.is_empty());
+}
+
+#[test]
+fn inlines_of_and_blocks_of_as_lua() {
+    // as pandoc 3.14's Lua converts a value where inlines or blocks go
+    let plain = |s: &str| Block::Plain(inlines(s));
+    let emph: MetaValue = vec![
+        Inline::Str("x".into()),
+        Inline::Space,
+        Inline::Emph(inlines("y")),
+    ]
+    .into();
+    let map = MetaValue::MetaMap(Meta::new());
+    assert_eq!(inlines_of(&"a b".into()), Ok(inlines("a b")));
+    assert_eq!(blocks_of(&"a b".into()), Ok(vec![plain("a b")]));
+    assert_eq!(blocks_of(&"".into()), Ok(vec![plain("")]));
+    let MetaValue::MetaInlines(xs) = &emph else {
+        unreachable!()
+    };
+    assert_eq!(inlines_of(&emph).as_ref(), Ok(xs));
+    let each: Vec<Block> = xs.iter().map(|x| Block::Plain(vec![x.clone()])).collect();
+    assert_eq!(blocks_of(&emph), Ok(each));
+    let para = MetaValue::from(Block::Para(inlines("p")));
+    assert_eq!(blocks_of(&para), Ok(vec![Block::Para(inlines("p"))]));
+    assert_eq!(
+        (inlines_of(&map), blocks_of(&map)),
+        (Ok(vec![]), Ok(vec![]))
+    );
+    let texts: MetaValue = ["a b", "c"].into_iter().collect();
+    let strs = vec![Inline::Str("a b".into()), Inline::Str("c".into())];
+    assert_eq!(inlines_of(&texts), Ok(strs)); // a Str each, unsplit
+    assert_eq!(blocks_of(&texts), Ok(vec![plain("a b"), plain("c")]));
+    let mixed: MetaValue = vec![
+        MetaValue::from(Inline::Emph(inlines("x"))),
+        map.clone(),
+        MetaValue::MetaList(vec![]),
+        MetaValue::MetaList(vec!["".into()]),
+    ]
+    .into();
+    let got = vec![
+        Block::Plain(vec![Inline::Emph(inlines("x"))]),
+        plain(""),
+        plain(""),
+        Block::Plain(vec![Inline::Str("".into())]),
+    ];
+    assert_eq!(blocks_of(&mixed), Ok(got));
+    let fails = [
+        (
+            inlines_of(&para).map(|_| ()),
+            "expected inlines (MetaInlines, MetaString, MetaMap, or a MetaList of MetaStrings), got MetaBlocks",
+        ),
+        (inlines_of(&true.into()).map(|_| ()), "got MetaBool"),
+        (
+            inlines_of(&mixed).map(|_| ()),
+            "MetaList.content[0]: expected an inline (a MetaString), got MetaInlines",
+        ),
+        (
+            blocks_of(&false.into()).map(|_| ()),
+            "expected blocks (MetaBlocks, MetaInlines, MetaString, MetaMap, or a MetaList), got MetaBool",
+        ),
+        (
+            blocks_of(&vec![MetaValue::from("a"), para.clone()].into()).map(|_| ()),
+            "MetaList.content[1]: expected a block",
+        ),
+        (
+            blocks_of(&vec![MetaValue::MetaList(vec![emph.clone()])].into()).map(|_| ()),
+            "MetaList.content[0].content[0]: expected an inline",
+        ),
+    ];
+    for (got, message) in fails {
+        let e = got.unwrap_err();
+        assert!(e.contains(message), "{e}");
+    }
+}
+
+#[test]
+fn to_roman_numeral_as_lua() {
+    // pandoc.utils.to_roman_numeral, checked with pandoc 3.14
+    let got: Vec<String> = [1, 4, 9, 14, 40, 90, 400, 1994, 3999]
+        .into_iter()
+        .map(to_roman_numeral)
+        .collect();
+    assert_eq!(
+        got,
+        [
+            "I",
+            "IV",
+            "IX",
+            "XIV",
+            "XL",
+            "XC",
+            "CD",
+            "MCMXCIV",
+            "MMMCMXCIX"
+        ]
+    );
+    let out: Vec<String> = [0, 4000, i64::MAX, -1, i64::MIN]
+        .into_iter()
+        .map(to_roman_numeral)
+        .collect();
+    assert_eq!(out, ["", "?", "?", "?", "?"]);
 }

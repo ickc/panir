@@ -202,6 +202,42 @@ What a port of a Lua filter trips over:
   element, then returns `nil` (pandoc-ext/list-table removes a div's class,
   then declines an empty div) is ported by deciding first, and changing
   after.
+- **The list functions change their list in place**: `inlines` and
+  `blocks` get the list as `&mut Vec`, where Lua's `Inlines` and `Blocks`
+  return a new list, or `nil` for the list as it was. An original that
+  builds a new list and declines unless something changed (`return
+  changed and out or nil`) is ported by deciding first, from a look at
+  the list, and taking it apart (`std::mem::take(xs)`) only when it is to
+  change (gap 4's rule, for lists):
+
+  ```rust
+  use panir::{Ctx, Filter, Inline};
+
+  /// Each `Str` "x" doubled; the list untouched (Lua's `nil`) without one.
+  struct Double;
+
+  impl Filter for Double {
+      fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) -> Option<()> {
+          let is_x = |x: &Inline| matches!(x, Inline::Str(s) if s.as_str() == "x");
+          if !xs.iter().any(is_x) {
+              return Some(()); // declined, before anything changed
+          }
+          let mut out = vec![];
+          for x in std::mem::take(xs) {
+              if is_x(&x) {
+                  out.push(x.clone());
+              }
+              out.push(x);
+          }
+          *xs = out;
+          Some(())
+      }
+  }
+
+  let mut doc = panir::Pandoc::new(vec![panir::Block::Para(panir::inlines("x y"))]);
+  panir::apply(&mut doc, &mut Double, None).unwrap();
+  assert_eq!(panir::stringify(&doc), "xx y");
+  ```
 - **Lua's elements are values**: `pandoc.Span(meta.title)` puts a copy in
   the body; here, `.clone()` (ownership allows nothing else).
 - `el.t`, `el.tag`: `x.tag()`.
@@ -307,10 +343,29 @@ What a port of a Lua filter trips over:
   });
   let options = conversion.reader_options.as_ref();
   assert_eq!(options.and_then(|o| o["track-changes"].as_str()), Some("all-changes"));
+  let writer = panir::Conversion::from_parts(None, |k| {
+      (k == "PANDOC_WRITER_OPTIONS").then(|| r#"{"number-sections": true}"#.into())
+  });
+  assert_eq!(writer.writer_options.map(|o| o["number-sections"] == true), Some(true));
   let s = "«»";
   assert_eq!((s.chars().count(), s.len()), (2, 4));
   assert_eq!(String::from_utf8_lossy(&s.as_bytes()[0..1]), "\u{fffd}");
   ```
+- `PANDOC_WRITER_OPTIONS`: `ctx.conversion().writer_options`, keyed as
+  pandoc's JSON keys the reader's (Lua's `number_sections` is
+  `"number-sections"`, `top_level_division` `"top-level-division"`,
+  `number_offset` `"number-offset"`), with Lua's values
+  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). It is read
+  from `$PANDOC_WRITER_OPTIONS`, which nothing sets yet (proposed to
+  pandoc and libpandoc): pandoc 3.14 gives the writer's options to Lua
+  filters only, so a JSON filter under plain pandoc has none (`None`),
+  whatever `-N` or `--top-level-division` say. Where a host runs the
+  filter in process and knows the conversion (libpandoc),
+  `ctx.conversion().options` has them in defaults-file keys and values
+  (`"number-sections": true`, `"top-level-division": "chapter"`,
+  `"variables"`).
+- `pandoc.utils.to_roman_numeral(n)`: `to_roman_numeral(n)`, the same (1
+  to 3999; `""` for 0, `"?"` for anything else).
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `meta_value` is called on each one.
@@ -352,6 +407,33 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
   `MetaList`'s items, nothing for a missing value, any other value alone:
   a slice, borrowed from the document. `into_items(meta.remove("x"))` (or
   of a value) owns them: a `Vec`, moved out.
+- **A value as inlines or blocks**, as Lua converts it where they go
+  (`pandoc.Inlines(meta.x)` or `pandoc.Span(meta.x)`; `pandoc.Blocks(...)`
+  or `pandoc.Div(...)`): `inlines_of(&v)`, `blocks_of(&v)`, new `Vec`s
+  (clones), or an `Err` naming the kind where Lua fails (for
+  `ctx.ok(...)?`; checked with pandoc 3.14):
+
+  | value | `inlines_of(&v)` | `blocks_of(&v)` |
+  |---|---|---|
+  | `MetaInlines` | its inlines | a `Plain` of each inline |
+  | `MetaString` | its words | a `Plain` of its words |
+  | `MetaBlocks` | fails | its blocks |
+  | `MetaMap` | none | none |
+  | `MetaList` | a `Str` of each item's text, unsplit, if each is a `MetaString`; else fails | a `Plain` of each item's `inlines_of` (failing where it does) |
+  | `MetaBool` | fails | fails |
+
+  Each of a value's items as one block (Lua's `pandoc.MetaBlocks{block,
+  meta.x}`, as filters write `header-includes`) is
+  `blocks_of(&into_items(v).into())`.
+- **Lua's `pairs(v)`** over a metadata value: a map's entries, `for (k,
+  x) in m` of a `MetaMap(m)`; a list's, inlines' or blocks' items by
+  index from 1, `(1..).zip(xs)`; on text, a boolean or `nil` Lua fails
+  (`bad argument #1 to 'for iterator'`; checked with pandoc 3.14). Lua
+  gives a map's entries in no order, another on each run, so an original
+  whose output depends on it isn't deterministic, and a port can't
+  reproduce it; here a map is a `BTreeMap`, its keys in order (by byte,
+  which is by code point), as pandoc's JSON has them, keys added later
+  too.
 - **Writing metadata** (Lua's `meta.x = v`): `meta.insert("x".into(),
   v.into())` converts a plain value as Lua does (below, in "Types");
   reading needs no conversion: a `MetaMap`'s content is a `BTreeMap`, a
@@ -375,7 +457,7 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
   takes the other branch too.
 
 ```rust
-use panir::{MetaValue, Pandoc, given, into_items, items, lookup, stringify, truthy};
+use panir::{Block, Inline, MetaValue, Pandoc, blocks_of, given, inlines_of, into_items, items, lookup, stringify, truthy};
 
 let mut doc = Pandoc::new(vec![]);
 doc.meta.insert("draft".into(), false.into());
@@ -393,6 +475,10 @@ assert_eq!(lookup(meta, &["title", "depth"]), None);
 assert_eq!(lookup(&meta["toc"], &["depth"]), Some(&MetaValue::from("2")));
 assert_eq!(items(meta.get("tags")), [MetaValue::from("a")]);
 assert!(items(meta.get("missing")).is_empty());
+assert_eq!(inlines_of(&meta["tags"]), Ok(vec![Inline::Str("a".into())]));
+assert_eq!(blocks_of(&meta["tags"]), Ok(vec![Block::Plain(vec![Inline::Str("a".into())])]));
+assert!(inlines_of(&meta["draft"]).is_err()); // as Lua: a boolean is not inlines
+assert_eq!(panir::to_roman_numeral(2026), "MMXXVI");
 
 // a raw block before what `tags` has, whatever its shape (as filters write `header-includes`)
 let mut header = vec![MetaValue::from(panir::Block::raw("html", "<style/>"))];

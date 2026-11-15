@@ -376,6 +376,21 @@ What a port of a Lua filter trips over:
   `track_changes`, `tab_stop`, and pandoc 2's `trackChanges` is gone),
   with the same values (`"all-changes"`); `undefined` where pandoc passed
   none.
+- `PANDOC_WRITER_OPTIONS`: `ctx.conversion.writerOptions`, keyed as
+  pandoc's JSON keys the reader's (Lua's `number_sections` is
+  `"number-sections"`, `top_level_division` `"top-level-division"`,
+  `number_offset` `"number-offset"`), with Lua's values
+  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). It is read
+  from `$PANDOC_WRITER_OPTIONS`, which nothing sets yet (proposed to
+  pandoc and libpandoc): pandoc 3.14 gives the writer's options to Lua
+  filters only, so a JSON filter under plain pandoc has none
+  (`undefined`), whatever `-N` or `--top-level-division` say. Where a host
+  runs the filter in process and knows the conversion (libpandoc),
+  `ctx.conversion.options` has them in defaults-file keys and values
+  (`"number-sections": true`, `"top-level-division": "chapter"`,
+  `"variables"`).
+- `pandoc.utils.to_roman_numeral(n)`: `toRomanNumeral(n)`, the same (1
+  to 3999; `""` for 0, `"?"` for anything else; not an integer fails).
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `MetaValue` (or `MetaList`, ...) is called on each
@@ -400,6 +415,12 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
 `pandoc.utils.type(v) == "Inlines"` is `v.t === "MetaInlines"`, which
 narrows `v` (a `switch (v.t)` too).
 
+A field may be missing, and the type says so: `meta.x` (as a `MetaMap`'s
+`content.x`) is a `MetaValue | undefined`, to test (`meta.x?.t`), or read
+with `given`, `lookup` or `items`, which take one. A field is removed with
+`delete meta.x`; a value `undefined` is an error where the document is
+checked (`serialize`, constructors).
+
 - **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
   missing field and for `false` only; an empty string, list or map is
   true, as is the text `no`. A node is an object, always true in
@@ -418,6 +439,36 @@ narrows `v` (a `switch (v.t)` too).
   `header-includes` takes): `items(meta.x)`, a `MetaList`'s items, nothing
   for a missing value, any other value alone; a new array, of the
   document's values.
+- **A value as inlines or blocks**, as Lua converts it where they go
+  (`pandoc.Inlines(meta.x)` or `pandoc.Span(meta.x)`; `pandoc.Blocks(...)`
+  or `pandoc.Div(...)`): `inlinesOf(v)`, `blocksOf(v)`, new arrays
+  (copies), or an `ASTTypeError` where Lua fails (checked with pandoc
+  3.14):
+
+  | value | `inlinesOf(v)` | `blocksOf(v)` |
+  |---|---|---|
+  | `MetaInlines` | its inlines | a `Plain` of each inline |
+  | `MetaString` | its words | a `Plain` of its words |
+  | `MetaBlocks` | fails | its blocks |
+  | `MetaMap` | none | none |
+  | `MetaList` | a `Str` of each item's text, unsplit, if each is a `MetaString`; else fails | a `Plain` of each item's `inlinesOf` (failing where it does) |
+  | `MetaBool` | fails | fails |
+
+  Each of a value's items as one block (Lua's `pandoc.MetaBlocks{block,
+  meta.x}`, as filters write `header-includes`) is
+  `blocksOf(MetaList(items(v)))`.
+- **Lua's `pairs(v)`** over a metadata value: a map's entries,
+  `Object.entries(v.content)` (their values typed perhaps `undefined`,
+  above); a list's, inlines' or blocks' items by index from 1,
+  `v.content.map((x, i) => [i + 1, x])`; on text, a boolean or `nil` Lua
+  fails (`bad argument #1 to 'for iterator'`; checked with pandoc 3.14).
+  Lua gives a map's entries in no order, another on each run, so an
+  original whose output depends on it isn't deterministic, and a port
+  can't reproduce it; here a map is an object, whose keys come in
+  JavaScript's order: those that are array indices (`"9"`, `"10"`) first,
+  in numeric order, then the others in the order pandoc's JSON has them
+  (sorted, by code point), keys added later after them (sort the entries
+  for pandoc's order always).
 - **Writing metadata** (Lua's `meta.x = v`): the metadata is a plain
   object, whose fields don't convert what is put there: `fromPlain(v)`
   converts a plain value as Lua does (a string is a `MetaString`, a
@@ -448,7 +499,9 @@ narrows `v` (a `switch (v.t)` too).
   takes the other branch too.
 
 ```ts
-import { Conversion, fromPlain, given, items, lookup, stringify, toPlain, truthy } from "panir";
+import {
+  blocksOf, Conversion, fromPlain, given, inlinesOf, items, lookup, Plain, stringify, toPlain, toRomanNumeral, truthy,
+} from "panir";
 
 const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" }, tags: "a" } }).meta;
 assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
@@ -461,8 +514,13 @@ meta.name = fromPlain([Str("Ada"), Space(), Str("L.")]);
 assert.deepEqual(meta.name, MetaInlines([Str("Ada"), Space(), Str("L.")]));
 assert.deepEqual(toPlain(meta.toc!), { depth: "2" });
 assert.equal(toPlain(meta).tags, "a");
+assert.deepEqual(inlinesOf(meta.tags!), [Str("a")]);
+assert.deepEqual(blocksOf(meta.name), [Plain([Str("Ada")]), Plain([Space()]), Plain([Str("L.")])]);
+assert.deepEqual([toRomanNumeral(2026), toRomanNumeral(0), toRomanNumeral(4000)], ["MMXXVI", "", "?"]);
 const options = new Conversion({ readerOptions: { "track-changes": "all-changes" } }).readerOptions;
 assert.equal(options?.["track-changes"], "all-changes");
+const writer = new Conversion({ writerOptions: { "number-sections": true } }).writerOptions;
+assert.equal(writer?.["number-sections"], true);
 assert.equal("width: SIZE".replace("SIZE", () => "$&5%"), "width: $&5%");
 const bytes = new TextEncoder().encode("«»");
 assert.deepEqual(["«»".length, bytes.length, new TextDecoder().decode(bytes.subarray(0, 1))], [2, 4, "\ufffd"]);
@@ -516,6 +574,7 @@ AST, whatever the maps' prototypes.)
 
 `fromJSON`/`toJSON` for any type of the schema (`fromJSON(j, "Inline")`),
 `check`, `stringify` (as pandoc's `pandoc.utils.stringify`, metadata and
-all), `toPlain`/`fromPlain` for metadata, `copy`, `equal`.
+all) and `toRomanNumeral`, `toPlain`/`fromPlain` for metadata, `copy`,
+`equal`.
 
 Status: a prototype.

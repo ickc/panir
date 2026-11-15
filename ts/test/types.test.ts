@@ -9,7 +9,7 @@ import {
   applyFilter, ASTTypeError, Emph, fromPlain, given, Header, lookup, MetaBlocks, MetaBool, MetaInlines, MetaList,
   MetaMap, MetaString, Pandoc as makePandoc, Para, parse, serialize, Str, toPlain, truthy, walk,
 } from "../src/index.ts";
-import type { Block, Filter, Inline, MetaValue, Pandoc, PlainValue, Row } from "../src/index.ts";
+import type { Block, Filter, Inline, Meta, MetaValue, Pandoc, PlainValue, Row } from "../src/index.ts";
 import type { runFilter } from "../src/node.ts";
 
 const doc = (): Pandoc => parse(serialize({
@@ -134,6 +134,27 @@ test("Lua's truth: given narrows to the value; truthy, not a type guard, doesn't
   if (!truthy(off)) assert.equal(off?.t, "MetaBool"); // (a value, though false)
 });
 
+test("a metadata field may be missing, and its type says so", () => {
+  const meta = makePandoc([], { meta: { title: "T", toc: { depth: "2" } } }).meta;
+  // @ts-expect-error: meta.title is possibly undefined (a field the document may not have)
+  assert.equal(meta.title.t, "MetaString");
+  assert.equal(meta.title?.t, "MetaString");
+  const d: MetaValue = given(meta.x) ?? MetaString("d"); // Lua's `meta.x or d`
+  assert.deepEqual(d, MetaString("d"));
+  const toc = meta.toc;
+  // @ts-expect-error: a MetaMap's fields too
+  assert.ok(toc?.t === "MetaMap" && toc.content.depth.t === "MetaString");
+  assert.ok(toc?.t === "MetaMap" && toc.content.depth?.t === "MetaString");
+  // writing a field, spreading, and a document's metadata given to a constructor
+  meta.draft = MetaBool(true);
+  const more: Meta = { ...meta, extra: MetaString("e") };
+  assert.deepEqual(makePandoc([], { meta: more }).meta.extra, MetaString("e"));
+  // Object.entries' values are typed perhaps undefined too (never, in a
+  // document panir made or read: a key is removed with delete)
+  const texts = Object.entries(meta).map(([k, v]) => `${k}=${v?.t}`);
+  assert.deepEqual(texts, ["title=MetaString", "toc=MetaMap", "draft=MetaBool"]);
+});
+
 test("toPlain's result is typed: by the kind given, else any plain value", () => {
   const text: string = toPlain(MetaString("a"));
   const flag: boolean = toPlain(MetaBool(true));
@@ -141,7 +162,7 @@ test("toPlain's result is typed: by the kind given, else any plain value", () =>
   const blocks: Block[] = toPlain(MetaBlocks([Para("x")]));
   const list: PlainValue[] = toPlain(MetaList(["a"]));
   const meta = makePandoc([], { meta: { toc: { depth: "2" }, draft: false } }).meta;
-  const map: { [key: string]: PlainValue } = toPlain(meta);
+  const map: { [key: string]: PlainValue | undefined } = toPlain(meta);
   assert.deepEqual([text, flag, inlines, blocks, list, map.draft], ["a", true, [Str("x")], [Para("x")], ["a"], false]);
   const v: MetaValue = meta.toc!;
   const plain = toPlain(v); // any of them: narrowed by a test, with no cast

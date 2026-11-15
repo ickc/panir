@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import copy
+import operator
 from collections.abc import Mapping
 from typing import Any
 
-from ._core import Node, text_inlines, too_deep
+from ._core import ASTTypeError, Node, text_inlines, too_deep
 from ._types import (
     Block,
     Cite,
@@ -35,13 +36,16 @@ from ._walk import Context, _walk_fields, walk
 
 __all__ = [
     "blocks",
+    "blocks_of",
     "check_unique",
     "from_python",
     "inlines",
+    "inlines_of",
     "items",
     "lookup",
     "stringify",
     "to_python",
+    "to_roman_numeral",
 ]
 
 _QUOTES = {QuoteType.SingleQuote: ("‘", "’"), QuoteType.DoubleQuote: ("“", "”")}
@@ -128,6 +132,29 @@ def _text(value: Any, out: list[str], inlines_only: bool) -> None:
             _text(getattr(value, f), out, inlines_only)
 
 
+_ROMAN = (
+    (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"),
+    (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+)  # fmt: skip
+
+
+def to_roman_numeral(n: int) -> str:
+    """An integer in Roman numerals, as pandoc's Lua
+    ``pandoc.utils.to_roman_numeral``: 1 to 3999 (``"MMXXVI"``), ``""`` for
+    0, and ``"?"`` for anything else, negative or 4000 and more. Not an
+    integer (a bool too) is a ``TypeError``, as in Lua."""
+    if isinstance(n, bool):
+        raise TypeError("to_roman_numeral takes an integer, got bool")
+    n = operator.index(n)
+    if not 0 <= n < 4000:
+        return "?"
+    out = []
+    for value, letters in _ROMAN:
+        count, n = divmod(n, value)
+        out.append(letters * count)
+    return "".join(out)
+
+
 def lookup(
     value: Mapping[str, MetaValue] | MetaValue | None, key: str, /, *keys: str
 ) -> MetaValue | None:
@@ -164,6 +191,72 @@ def items(value: MetaValue | None) -> list[MetaValue]:
     if isinstance(value, MetaList):
         return list(value.content)
     return [value]
+
+
+_INLINES = "inlines (MetaInlines, MetaString, MetaMap, or a MetaList of MetaStrings)"
+
+
+def inlines_of(value: MetaValue) -> list[Inline]:
+    """A metadata value as inlines, as pandoc's Lua converts it where inlines
+    go (``pandoc.Inlines(meta.x)``, ``pandoc.Span(meta.x)``): inlines as they
+    are (copies, as Lua's are values), text its words, a map none, a list a
+    ``Str`` of each item's text, unsplit, if every item is text (a
+    ``MetaString``, as ``-M`` makes); blocks, a boolean or a list of anything
+    else fail, as in Lua (``ASTTypeError``).
+
+        symbol = inlines_of(meta["qed-symbol"])
+    """
+    return _inlines_of(value, "", _INLINES)
+
+
+def _inlines_of(value: MetaValue, where: str, expected: str) -> list[Inline]:
+    if isinstance(value, MetaInlines):
+        return copy.deepcopy(list(value.content))
+    if isinstance(value, MetaString):
+        return inlines(value.text)
+    if isinstance(value, MetaMap):
+        return []
+    if isinstance(value, MetaList):
+        out: list[Inline] = []
+        for i, x in enumerate(value.content):
+            if not isinstance(x, MetaString):
+                at = f"{where or 'MetaList'}.content[{i}]"
+                raise ASTTypeError(at, "an inline (a MetaString)", type(x).__name__)
+            out.append(Str(x.text))
+        return out
+    raise ASTTypeError(where, expected, type(value).__name__)
+
+
+def blocks_of(value: MetaValue) -> list[Block]:
+    """A metadata value as blocks, as pandoc's Lua converts it where blocks
+    go (``pandoc.Blocks(meta.x)``, ``pandoc.Div(meta.x)``): blocks as they
+    are (copies), text a ``Plain`` of its words, a map none, inlines a
+    ``Plain`` of each inline (Lua's, as inlines are a list), a list a
+    ``Plain`` of each item as ``inlines_of`` makes it (a list of text, an
+    inline each: so items that are inlines, text or maps); a boolean, or a
+    list holding blocks, a boolean or a list of other than text, fail, as in
+    Lua (``ASTTypeError``).
+
+    So ``blocks_of(MetaList(*items(v)))`` is each of ``v``'s items as one
+    block, as a Lua list of them given to ``pandoc.Blocks`` (or
+    ``pandoc.MetaBlocks``, as filters write ``header-includes``).
+    """
+    if isinstance(value, MetaBlocks):
+        return copy.deepcopy(list(value.content))
+    if isinstance(value, MetaInlines):
+        return [Plain(x) for x in copy.deepcopy(list(value.content))]
+    if isinstance(value, MetaString):
+        return blocks(value.text)
+    if isinstance(value, MetaMap):
+        return []
+    if isinstance(value, MetaList):
+        expected = f"a block ({_INLINES.removeprefix('inlines (')}"
+        return [
+            Plain(*_inlines_of(x, f"MetaList.content[{i}]", expected))
+            for i, x in enumerate(value.content)
+        ]
+    expected = "blocks (MetaBlocks, MetaInlines, MetaString, MetaMap, or a MetaList)"
+    raise ASTTypeError("", expected, type(value).__name__)
 
 
 @too_deep("to_python")

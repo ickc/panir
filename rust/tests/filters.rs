@@ -3,7 +3,7 @@
 
 use panir::{
     Attr, Block, Ctx, Div, Filter, FilterError, Header, Inline, Meta, MetaValue, Order, Pandoc,
-    apply, from_str, given, into_items, items, lookup, to_string, truthy,
+    apply, blocks_of, from_str, given, inlines_of, into_items, items, lookup, to_string, truthy,
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -734,6 +734,119 @@ impl Filter for Prepend {
     }
 }
 
+/// Each field as inlines and as blocks, or "fails", as Lua converts them.
+struct InlinesOf(Order);
+
+impl Filter for InlinesOf {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let keys = [
+            "text",
+            "blocks",
+            "on",
+            "map",
+            "emptymap",
+            "null",
+            "empty",
+            "list",
+            "nulls",
+            "mixed",
+            "lists",
+            "listblocks",
+            "listbool",
+            "emptylist",
+        ];
+        for k in keys {
+            let v = &doc.meta[k];
+            let mut para = vec![Inline::Str(format!("{k}:").into()), Inline::Space];
+            para.extend(inlines_of(v).unwrap_or_else(|_| vec!["fails".into()]));
+            let blocks = blocks_of(v).unwrap_or_else(|_| vec![Block::Para(vec!["fails".into()])]);
+            doc.blocks.push(Block::Para(para));
+            doc.blocks.push(
+                Div {
+                    attr: Attr::new(k, &[], &[]),
+                    content: blocks,
+                }
+                .into(),
+            );
+        }
+        Some(())
+    }
+}
+
+/// pandoc.utils.to_roman_numeral of some numbers, in a paragraph.
+struct Roman(Order);
+
+impl Filter for Roman {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let numbers = [
+            0, 1, 4, 9, 14, 40, 90, 400, 1994, 2026, 3999, 4000, 1000000, -1,
+        ];
+        let words: Vec<String> = numbers
+            .iter()
+            .map(|n| format!("{n}={}", panir::to_roman_numeral(*n)))
+            .collect();
+        doc.blocks
+            .push(Block::Para(panir::inlines(&words.join(" "))));
+        Some(())
+    }
+}
+
+/// Lua's `pairs` over a metadata value, as the README says to write it:
+/// each key (or index from 1) with its value's text; `None` where Lua fails.
+fn pairs(v: Option<&MetaValue>) -> Option<Vec<(String, String)>> {
+    let indexed = |texts: Vec<String>| (1..).map(|i: usize| i.to_string()).zip(texts).collect();
+    match v? {
+        MetaValue::MetaMap(m) => Some(
+            m.iter()
+                .map(|(k, x)| (k.to_string(), panir::stringify(x)))
+                .collect(),
+        ),
+        MetaValue::MetaList(xs) => Some(indexed(xs.iter().map(panir::stringify).collect())),
+        MetaValue::MetaInlines(xs) => Some(indexed(xs.iter().map(panir::stringify).collect())),
+        MetaValue::MetaBlocks(xs) => Some(indexed(xs.iter().map(panir::stringify).collect())),
+        MetaValue::MetaString(_) | MetaValue::MetaBool(_) => None,
+    }
+}
+
+/// Each field's entries by Lua's `pairs`, sorted, or "fails".
+struct Pairs(Order);
+
+impl Filter for Pairs {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let keys = [
+            "map",
+            "list",
+            "inlines",
+            "blocks",
+            "emptymap",
+            "emptylist",
+            "on",
+            "null",
+            "missing",
+        ];
+        for k in keys {
+            let text = pairs(doc.meta.get(k)).map_or("fails".into(), |mut found| {
+                found.sort();
+                let entries: Vec<String> =
+                    found.iter().map(|(key, x)| format!("{key}={x}")).collect();
+                entries.join(",")
+            });
+            doc.blocks
+                .push(Block::Para(panir::inlines(&format!("{k}: {text}"))));
+        }
+        Some(())
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -762,6 +875,9 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "truthy" => Box::new(Truthy(order)),
         "lookup" => Box::new(Lookup(order)),
         "items" => Box::new(Items(order)),
+        "inlinesof" => Box::new(InlinesOf(order)),
+        "roman" => Box::new(Roman(order)),
+        "pairs" => Box::new(Pairs(order)),
         "prepend" => Box::new(Prepend(order, Inline::raw("tex", "\\raw{}"))),
         "chain" => {
             // (a Lua file's list of filters: one apply after the other)

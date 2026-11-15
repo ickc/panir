@@ -285,6 +285,44 @@ function scenario_chain()
     Filters([(configure, :typewise), (add, :typewise)])
 end
 
+function scenario_inlinesof()
+    keys = ["text", "blocks", "on", "map", "emptymap", "null", "empty", "list",
+            "nulls", "mixed", "lists", "listblocks", "listbool", "emptylist"]
+    orfails(f, v, fails) = try f(v) catch e; e isa ASTTypeError ? [fails] : rethrow() end
+    function f(d::Pandoc)
+        for k in keys
+            push!(d.blocks, Para([Str("$k:"), Space(), orfails(inlines_of, d.meta[k], Str("fails"))...]))
+            push!(d.blocks, Div(orfails(blocks_of, d.meta[k], Para("fails")); identifier = k))
+        end
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
+function scenario_roman()
+    numbers = [0, 1, 4, 9, 14, 40, 90, 400, 1994, 2026, 3999, 4000, 1000000, -1]
+    f(d::Pandoc) = (push!(d.blocks, Para(join(("$n=$(to_roman_numeral(n))" for n in numbers), " "))); nothing)
+    Filters([(f, :typewise)])
+end
+
+function scenario_pairs()
+    keys = ["map", "list", "inlines", "blocks", "emptymap", "emptylist", "on", "null", "missing"]
+    function f(d::Pandoc)
+        for k in keys
+            text = try
+                # Lua's pairs, as the README says to write it: a map's or a list's content
+                found = sort!(collect(pairs(d.meta[k].content)); by = first)
+                join(("$key=$(stringify(x))" for (key, x) in found), ",")
+            catch
+                "fails"
+            end
+            push!(d.blocks, Para("$k: $text"))
+        end
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
@@ -294,7 +332,8 @@ const SCENARIOS = Dict(
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
     "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete, "helperfails" => scenario_helperfails,
     "truthy" => scenario_truthy, "lookup" => scenario_lookup, "items" => scenario_items, "chain" => scenario_chain,
-    "prepend" => scenario_prepend,
+    "prepend" => scenario_prepend, "inlinesof" => scenario_inlinesof, "roman" => scenario_roman,
+    "pairs" => scenario_pairs,
 )
 
 @testset "filters as pandoc's Lua" begin

@@ -278,6 +278,21 @@ What a port of a Lua filter trips over:
   fields are `track_changes`, `tab_stop`, and pandoc 2's `trackChanges` is
   gone), with the same values (`"all-changes"`); `nothing` where pandoc
   passed none.
+- `PANDOC_WRITER_OPTIONS`: `ctx.conversion.writer_options`, keyed as
+  pandoc's JSON keys the reader's (Lua's `number_sections` is
+  `"number-sections"`, `top_level_division` `"top-level-division"`,
+  `number_offset` `"number-offset"`), with Lua's values
+  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). It is read
+  from `$PANDOC_WRITER_OPTIONS`, which nothing sets yet (proposed to
+  pandoc and libpandoc): pandoc 3.14 gives the writer's options to Lua
+  filters only, so a JSON filter under plain pandoc has none (`nothing`),
+  whatever `-N` or `--top-level-division` say. Where a host runs the
+  filter in process and knows the conversion (libpandoc),
+  `ctx.conversion.options` has them in defaults-file keys and values
+  (`"number-sections": true`, `"top-level-division": "chapter"`,
+  `"variables"`).
+- `pandoc.utils.to_roman_numeral(n)`: `to_roman_numeral(n)`, the same (1
+  to 3999; `""` for 0, `"?"` for anything else; not an integer fails).
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, a method for `MetaValue` (or `MetaList`, ...) is
@@ -315,6 +330,33 @@ for it (`f(v::MetaInlines) = ...`).
   `header-includes` takes): `items(get(meta, "x", nothing))`, a
   `MetaList`'s items, nothing for a missing value, any other value alone;
   a new vector, of the document's values.
+- **A value as inlines or blocks**, as Lua converts it where they go
+  (`pandoc.Inlines(meta.x)` or `pandoc.Span(meta.x)`; `pandoc.Blocks(...)`
+  or `pandoc.Div(...)`): `inlines_of(v)`, `blocks_of(v)`, new vectors
+  (copies), or an `ASTTypeError` where Lua fails (checked with pandoc
+  3.14):
+
+  | value | `inlines_of(v)` | `blocks_of(v)` |
+  |---|---|---|
+  | `MetaInlines` | its inlines | a `Plain` of each inline |
+  | `MetaString` | its words | a `Plain` of its words |
+  | `MetaBlocks` | fails | its blocks |
+  | `MetaMap` | none | none |
+  | `MetaList` | a `Str` of each item's text, unsplit, if each is a `MetaString`; else fails | a `Plain` of each item's `inlines_of` (failing where it does) |
+  | `MetaBool` | fails | fails |
+
+  Each of a value's items as one block (Lua's `pandoc.MetaBlocks{block,
+  meta.x}`, as filters write `header-includes`) is
+  `blocks_of(MetaList(items(v)))`.
+- **Lua's `pairs(v)`** over a metadata value: `pairs(v.content)`, a
+  map's entries, or a list's, inlines' or blocks' items by index from 1,
+  as Lua's; on text, a boolean or `nil` Lua fails (`bad argument #1 to
+  'for iterator'`; checked with pandoc 3.14), as `v.content` does here.
+  Lua gives a map's entries in no order, another on each run, so an
+  original whose output depends on it isn't deterministic, and a port
+  can't reproduce it; here a map is a `Dict`, in no order either:
+  `sort!(collect(pairs(m)); by = first)` has pandoc's JSON's (its keys
+  sorted, by code point).
 - **Writing metadata** (Lua's `meta.x = v`): setting a field converts a
   plain value as Lua does (above, in "The AST"); reading needs no
   conversion: a `MetaMap`'s content is a `Dict`, a `MetaList`'s a
@@ -344,7 +386,10 @@ draft = meta["draft"]; truthy(draft) ? draft : MetaString("final")  # MetaString
 lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")  # (MetaString("2"), nothing)
 items(meta["tags"]), items(get(meta, "missing", nothing))  # ([MetaString("a")], MetaValue[])
 meta["name"] = [Str("Ada"), Space(), Str("L.")]  # MetaInlines(Str("Ada"), Space(), Str("L."))
+inlines_of(meta["tags"]), blocks_of(meta["name"])  # ([Str("a")], [Plain(Str("Ada")), Plain(Space()), Plain(Str("L."))])
+to_roman_numeral(2026), to_roman_numeral(0), to_roman_numeral(4000)  # ("MMXXVI", "", "?")
 Conversion(; reader_options = Dict("track-changes" => "all-changes")).reader_options["track-changes"]  # "all-changes"
+Conversion(; writer_options = Dict("number-sections" => true)).writer_options["number-sections"]  # true
 replace("width: SIZE", "SIZE" => "\\1 5%")  # "width: \\1 5%"
 length("«»"), ncodeunits("«»"), codeunit("«»", 1)  # (2, 4, 0xc2)
 ```

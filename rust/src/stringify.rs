@@ -1,4 +1,5 @@
-//! [`stringify`]: the text of a node, as pandoc's Lua `pandoc.utils.stringify`.
+//! [`stringify`]: the text of a node, as pandoc's Lua `pandoc.utils.stringify`;
+//! and [`to_roman_numeral`], as its `pandoc.utils.to_roman_numeral`.
 
 use crate::{
     Block, Caption, Cell, Citation, Inline, Meta, MetaValue, Pandoc, QuoteType, Row, TableBody,
@@ -131,4 +132,32 @@ impl<T: Stringify> Stringify for Vec<T> {
     fn stringify_into(&self, out: &mut String) {
         self.as_slice().stringify_into(out);
     }
+}
+
+/// An integer in Roman numerals, as pandoc's Lua
+/// `pandoc.utils.to_roman_numeral`: 1 to 3999 (`"MMXXVI"`), `""` for 0, and
+/// `"?"` for anything else, negative or 4000 and more.
+///
+/// ```
+/// use panir::to_roman_numeral;
+///
+/// assert_eq!(to_roman_numeral(1994), "MCMXCIV");
+/// assert_eq!([to_roman_numeral(0), to_roman_numeral(4000), to_roman_numeral(-1)], ["", "?", "?"]);
+/// ```
+pub fn to_roman_numeral(n: i64) -> String {
+    #[rustfmt::skip]
+    const ROMAN: [(i64, &str); 13] = [
+        (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"),
+        (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+    ];
+    if !(0..4000).contains(&n) {
+        return "?".into();
+    }
+    let mut n = n;
+    let mut out = String::new();
+    for (value, letters) in ROMAN {
+        out.push_str(&letters.repeat((n / value) as usize));
+        n %= value;
+    }
+    out
 }

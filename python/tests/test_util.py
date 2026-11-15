@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -27,9 +28,11 @@ from panir import (
     Note,
     Pandoc,
     Para,
+    Plain,
     Quoted,
     QuoteType,
     RawInline,
+    Space,
     Str,
     stringify,
     to_python,
@@ -218,3 +221,49 @@ def test_items():
     listed = panir.items(meta["l"])
     listed.pop()  # a new list: the document's is as it was
     assert len(meta["l"].content) == 2 and listed[0] is meta["l"].content[0]  # type: ignore[attr-defined]
+
+
+def test_inlines_of_and_blocks_of_as_lua():
+    """A value where inlines or blocks go, as pandoc 3.14's Lua converts it."""
+    words = [Str("a"), Space(), Str("b")]
+    emph = MetaInlines(Str("x"), Space(), Emph("y"))
+    assert panir.inlines_of(MetaString("a b")) == words
+    assert panir.blocks_of(MetaString("a b")) == [Plain(*words)]
+    assert panir.blocks_of(MetaString("")) == [Plain()]
+    assert panir.inlines_of(emph) == list(emph.content)
+    assert panir.blocks_of(emph) == [Plain(Str("x")), Plain(Space()), Plain(Emph("y"))]
+    assert panir.blocks_of(MetaBlocks(Para("p"))) == [Para("p")]
+    assert panir.inlines_of(MetaMap({"k": "v"})) == panir.blocks_of(MetaMap({"k": "v"})) == []
+    texts = MetaList(MetaString("a b"), MetaString("c"))
+    assert panir.inlines_of(texts) == [Str("a b"), Str("c")]  # a Str each, unsplit
+    assert panir.blocks_of(texts) == [Plain(*words), Plain(Str("c"))]
+    mixed = MetaList(MetaInlines(Emph("x")), MetaMap(), MetaList(), MetaList(MetaString("")))
+    assert panir.blocks_of(mixed) == [Plain(Emph("x")), Plain(), Plain(), Plain(Str(""))]
+    assert panir.inlines_of(MetaList()) == panir.blocks_of(MetaList()) == []
+    # copies: Lua's values are values
+    got = panir.inlines_of(emph)
+    assert got[2] == emph.content[2] and got[2] is not emph.content[2]
+    inlines = "inlines (MetaInlines, MetaString, MetaMap, or a MetaList of MetaStrings)"
+    blocks = "blocks (MetaBlocks, MetaInlines, MetaString, MetaMap, or a MetaList)"
+    fails = [
+        (panir.inlines_of, MetaBlocks(Para("p")), f"expected {inlines}, got MetaBlocks"),
+        (panir.inlines_of, MetaBool(True), "got MetaBool"),
+        (panir.inlines_of, mixed, "content[0]: expected an inline (a MetaString), got MetaInlines"),
+        (panir.blocks_of, MetaBool(False), f"expected {blocks}, got MetaBool"),
+        (panir.blocks_of, MetaList(MetaString("a"), MetaBlocks()), "content[1]: expected a block"),
+        (panir.blocks_of, MetaList(MetaBool(True)), "got MetaBool"),
+        (panir.blocks_of, MetaList(MetaList(emph)), "content[0].content[0]: expected an inline"),
+    ]  # fmt: skip
+    for f, v, message in fails:
+        with pytest.raises(ASTTypeError, match=re.escape(message)):
+            f(v)
+
+
+def test_to_roman_numeral_as_lua():
+    """pandoc.utils.to_roman_numeral, checked with pandoc 3.14."""
+    got = [panir.to_roman_numeral(n) for n in (1, 4, 9, 14, 40, 90, 400, 1994, 3999)]
+    assert got == ["I", "IV", "IX", "XIV", "XL", "XC", "CD", "MCMXCIV", "MMMCMXCIX"]
+    assert [panir.to_roman_numeral(n) for n in (0, 4000, 10**30, -1)] == ["", "?", "?", "?"]
+    for wrong in (2.5, "12", True):
+        with pytest.raises(TypeError):
+            panir.to_roman_numeral(wrong)  # type: ignore[arg-type]

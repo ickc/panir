@@ -2,7 +2,8 @@
 
 A filter function that takes a ``Context`` finds it in ``ctx.conversion``:
 the output format, and, when known, the input and output formats with
-extensions, the reader's options and the conversion's options. To parse a
+extensions, the reader's and the writer's options and the conversion's
+options. To parse a
 fragment (a table cell, an attribute) the way the document was read, pass
 it to libpandoc, whose realm calling pandoc is:
 
@@ -22,7 +23,9 @@ How much is known depends on who runs the filter:
   (``$PANDOC_INPUT_FORMAT``);
 - **as a JSON filter** under pandoc (``pandoc --filter``): the output
   format's name and the reader's options only, until pandoc also sets
-  ``$PANDOC_INPUT_FORMAT`` (proposed: jgm/pandoc#11016).
+  ``$PANDOC_INPUT_FORMAT`` (proposed: jgm/pandoc#11016), and
+  ``$PANDOC_WRITER_OPTIONS`` (proposed after it), which pandoc gives Lua
+  filters only.
 """
 
 from __future__ import annotations
@@ -43,11 +46,23 @@ class Conversion:
     filter (``"html5"``). ``input_format`` and ``output_format`` are the
     formats with extensions (``"commonmark_x-smart"``), when known.
     ``reader_options`` are the reader's options (pandoc's
-    ``PANDOC_READER_OPTIONS``), and ``options`` the conversion's options, in
-    pandoc's defaults-file keys, when known.
+    ``PANDOC_READER_OPTIONS``), ``writer_options`` the writer's (Lua's
+    ``PANDOC_WRITER_OPTIONS``), each keyed as pandoc's JSON keys the
+    reader's (Lua's ``number_sections`` is ``"number-sections"``,
+    ``top_level_division`` ``"top-level-division"``) with Lua's values
+    (``"top-level-chapter"``), and ``options`` the conversion's options, in
+    pandoc's defaults-file keys and values (``"top-level-division":
+    "chapter"``), when known.
     """
 
-    __slots__ = ("format", "input_format", "options", "output_format", "reader_options")
+    __slots__ = (
+        "format",
+        "input_format",
+        "options",
+        "output_format",
+        "reader_options",
+        "writer_options",
+    )
 
     def __init__(
         self,
@@ -56,12 +71,14 @@ class Conversion:
         input_format: str | None = None,
         output_format: str | None = None,
         reader_options: Mapping[str, Any] | None = None,
+        writer_options: Mapping[str, Any] | None = None,
         options: Mapping[str, Any] | None = None,
     ) -> None:
         self.format = format
         self.input_format = input_format
         self.output_format = output_format
         self.reader_options = reader_options
+        self.writer_options = writer_options
         self.options = options
 
     @classmethod
@@ -71,15 +88,19 @@ class Conversion:
         pandoc passes the output format as the first argument and the
         reader's options in ``$PANDOC_READER_OPTIONS``. libpandoc also passes
         the formats with extensions, ``$PANDOC_INPUT_FORMAT`` and
-        ``$PANDOC_OUTPUT_FORMAT`` (proposed to pandoc: jgm/pandoc#11016).
+        ``$PANDOC_OUTPUT_FORMAT`` (proposed to pandoc: jgm/pandoc#11016);
+        the writer's options are read from ``$PANDOC_WRITER_OPTIONS`` where
+        set (proposed to pandoc and to libpandoc; neither sets it yet).
         """
         argv = sys.argv[1:] if argv is None else argv
-        env = os.environ.get("PANDOC_READER_OPTIONS")
+        reader = os.environ.get("PANDOC_READER_OPTIONS")
+        writer = os.environ.get("PANDOC_WRITER_OPTIONS")
         return cls(
             argv[0] if argv else None,
             input_format=os.environ.get("PANDOC_INPUT_FORMAT") or None,
             output_format=os.environ.get("PANDOC_OUTPUT_FORMAT") or None,
-            reader_options=json.loads(env) if env else None,
+            reader_options=json.loads(reader) if reader else None,
+            writer_options=json.loads(writer) if writer else None,
         )
 
     def __repr__(self) -> str:
