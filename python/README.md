@@ -355,6 +355,24 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
   `header-includes` takes): `items(meta.get("x"))`, a `MetaList`'s items,
   nothing for a missing value, any other value alone; a new list, of the
   document's values.
+- **A value as inlines or blocks**, as Lua converts it where they go
+  (`pandoc.Inlines(meta.x)` or `pandoc.Span(meta.x)`; `pandoc.Blocks(...)`
+  or `pandoc.Div(...)`): `inlines_of(v)`, `blocks_of(v)`, new lists
+  (copies), or an `ASTTypeError` where Lua fails (checked with pandoc
+  3.14):
+
+  | value | `inlines_of(v)` | `blocks_of(v)` |
+  |---|---|---|
+  | `MetaInlines` | its inlines | a `Plain` of each inline |
+  | `MetaString` | its words | a `Plain` of its words |
+  | `MetaBlocks` | fails | its blocks |
+  | `MetaMap` | none | none |
+  | `MetaList` | a `Str` of each item's text, unsplit, if each is a `MetaString`; else fails | a `Plain` of each item's `inlines_of` (failing where it does) |
+  | `MetaBool` | fails | fails |
+
+  Each of a value's items as one block (Lua's `pandoc.MetaBlocks{block,
+  meta.x}`, as filters write `header-includes`) is
+  `blocks_of(MetaList(*items(v)))`.
 - **Writing metadata** (Lua's `meta.x = v`): setting a field converts a
   plain value as Lua does (`from_python`): a string is a `MetaString`, a
   bool a `MetaBool`, a number a `MetaString` of it, an inline or a list of
@@ -395,6 +413,8 @@ MetaString('final')
 MetaInlines(Str('Ada'), Space(), Str('L.'))
 >>> to_python(meta["toc"]), to_python(meta["name"])[0]
 ({'depth': '2'}, Str('Ada'))
+>>> inlines_of(meta["tags"]), blocks_of(meta["name"])
+([Str('a')], [Plain(Str('Ada')), Plain(Space()), Plain(Str('L.'))])
 >>> options = Conversion("latex", reader_options={"track-changes": "all-changes"}).reader_options or {}
 >>> options["track-changes"]
 'all-changes'

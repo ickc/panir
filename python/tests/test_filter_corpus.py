@@ -580,11 +580,38 @@ def chain() -> list[Filter]:
     return [configure, add]
 
 
+INLINESOF_KEYS = (
+    "text", "blocks", "on", "map", "emptymap", "null", "empty", "list",
+    "nulls", "mixed", "lists", "listblocks", "listbool", "emptylist",
+)  # fmt: skip
+
+
+def inlinesof() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def convert(doc):
+        for k in INLINESOF_KEYS:
+            try:
+                xs = A.inlines_of(doc.meta[k])
+            except A.ASTTypeError:
+                xs = [Str("fails")]
+            doc.blocks.append(Para(Str(f"{k}:"), Space(), *xs))
+            try:
+                bs = A.blocks_of(doc.meta[k])
+            except A.ASTTypeError:
+                bs = [Para("fails")]
+            doc.blocks.append(Div(*bs, identifier=k))
+
+    return [f]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
     + (once, lists, meta, newdoc, twice, metacount, attributes, fails, helperfails)
     + (replaced, metavalues, metadelete, truthy, lookup, items, chain, prepend)
+    + (inlinesof,)
 }
 
 

@@ -456,6 +456,34 @@ end
     @test lookup(nothing, "x") === nothing
 end
 
+@testset "a metadata value as inlines or blocks, as pandoc's Lua converts it" begin
+    ab = words("a", "b")
+    emph = MetaInlines([Str("x"), Space(), Emph("y")])
+    @test inlines_of(MetaString("a b")) == ab
+    @test blocks_of(MetaString("a b")) == [Plain(ab)]
+    @test blocks_of(MetaString("")) == [Plain()]
+    @test inlines_of(emph) == emph.content && inlines_of(emph)[3] !== emph.content[3]  # copies
+    @test blocks_of(emph) == [Plain(Str("x")), Plain(Space()), Plain(Emph("y"))]
+    @test blocks_of(MetaBlocks([Para("p")])) == [Para("p")]
+    @test isempty(inlines_of(MetaMap(Dict("k" => "v")))) && isempty(blocks_of(MetaMap(Dict("k" => "v"))))
+    texts = MetaList([MetaString("a b"), MetaString("c")])
+    @test inlines_of(texts) == [Str("a b"), Str("c")]  # a Str each, unsplit
+    @test blocks_of(texts) == [Plain(ab), Plain(Str("c"))]
+    mixed = MetaList([MetaInlines([Emph("x")]), MetaMap(), MetaList(), MetaList([MetaString("")])])
+    @test blocks_of(mixed) == [Plain(Emph("x")), Plain(), Plain(), Plain(Str(""))]
+    for (f, v, message) in [
+        (inlines_of, MetaBlocks([Para("p")]), "expected inlines (MetaInlines, MetaString, MetaMap, or a MetaList of MetaStrings), got MetaBlocks"),
+        (inlines_of, MetaBool(true), "got MetaBool"),
+        (inlines_of, mixed, "MetaList.content[0]: expected an inline (a MetaString), got MetaInlines"),
+        (blocks_of, MetaBool(false), "expected blocks (MetaBlocks, MetaInlines, MetaString, MetaMap, or a MetaList), got MetaBool"),
+        (blocks_of, MetaList([MetaString("a"), MetaBlocks()]), "MetaList.content[1]: expected a block"),
+        (blocks_of, MetaList([MetaList([emph])]), "MetaList.content[0].content[0]: expected an inline"),
+    ]
+        e = try f(v); nothing catch e; e end
+        @test e isa ASTTypeError && occursin(message, sprint(showerror, e))
+    end
+end
+
 @testset "one value or a list of them, as a list" begin
     meta = Pandoc(; meta = Dict("one" => "a", "l" => ["a", "b"], "e" => [], "off" => false)).meta
     @test items(meta["one"]) == [MetaString("a")]

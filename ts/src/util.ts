@@ -267,6 +267,66 @@ export function items(value: MetaValue | null | undefined): MetaValue[] {
   return value.t === "MetaList" ? [...value.content] : [value];
 }
 
+const INLINES = "inlines (MetaInlines, MetaString, MetaMap, or a MetaList of MetaStrings)";
+
+/**
+ * A metadata value as inlines, as pandoc's Lua converts it where inlines go
+ * (`pandoc.Inlines(meta.x)`, `pandoc.Span(meta.x)`): inlines as they are
+ * (copies, as Lua's are values), text its words, a map none, a list a `Str`
+ * of each item's text, unsplit, if every item is text (a `MetaString`, as
+ * `-M` makes); blocks, a boolean or a list of anything else fail, as in Lua
+ * (`ASTTypeError`).
+ */
+export function inlinesOf(value: MetaValue): Inline[] {
+  return inlinesIn(value, "", INLINES);
+}
+
+function inlinesIn(value: MetaValue, where: string, expected: string): Inline[] {
+  switch (value?.t) {
+    case "MetaInlines":
+      return copyOf(value.content);
+    case "MetaString":
+      return inlines(value.text);
+    case "MetaMap":
+      return [];
+    case "MetaList":
+      return value.content.map((x, i): Inline => {
+        if (x.t === "MetaString") return { t: "Str", text: x.text };
+        throw new ASTTypeError(`${where || "MetaList"}.content[${i}]`, "an inline (a MetaString)", describe(x));
+      });
+  }
+  throw new ASTTypeError(where, expected, describe(value));
+}
+
+/**
+ * A metadata value as blocks, as pandoc's Lua converts it where blocks go
+ * (`pandoc.Blocks(meta.x)`, `pandoc.Div(meta.x)`): blocks as they are
+ * (copies), text a `Plain` of its words, a map none, inlines a `Plain` of
+ * each inline (Lua's, as inlines are a list), a list a `Plain` of each
+ * item as `inlinesOf` makes it; a boolean, or a list holding blocks, a
+ * boolean or a list of other than text, fail, as in Lua (`ASTTypeError`).
+ * So `blocksOf(MetaList(items(v)))` is each of `v`'s items as one block, as
+ * a Lua list of them given to `pandoc.Blocks` (or `pandoc.MetaBlocks`, as
+ * filters write `header-includes`).
+ */
+export function blocksOf(value: MetaValue): Block[] {
+  switch (value?.t) {
+    case "MetaBlocks":
+      return copyOf(value.content);
+    case "MetaInlines":
+      return copyOf(value.content).map((x): Block => ({ t: "Plain", content: [x] }));
+    case "MetaString":
+      return blocks(value.text);
+    case "MetaMap":
+      return [];
+    case "MetaList": {
+      const expected = `a block (${INLINES.slice("inlines (".length)}`;
+      return value.content.map((x, i): Block => ({ t: "Plain", content: inlinesIn(x, `MetaList.content[${i}]`, expected) }));
+    }
+  }
+  throw new ASTTypeError("", "blocks (MetaBlocks, MetaInlines, MetaString, MetaMap, or a MetaList)", describe(value));
+}
+
 /**
  * Metadata as plain values, as pandoc's Lua gives them to a filter: a
  * `MetaString` a string, a `MetaBool` a boolean, a `MetaList` an array, a

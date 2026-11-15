@@ -352,6 +352,24 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
   `MetaList`'s items, nothing for a missing value, any other value alone:
   a slice, borrowed from the document. `into_items(meta.remove("x"))` (or
   of a value) owns them: a `Vec`, moved out.
+- **A value as inlines or blocks**, as Lua converts it where they go
+  (`pandoc.Inlines(meta.x)` or `pandoc.Span(meta.x)`; `pandoc.Blocks(...)`
+  or `pandoc.Div(...)`): `inlines_of(&v)`, `blocks_of(&v)`, new `Vec`s
+  (clones), or an `Err` naming the kind where Lua fails (for
+  `ctx.ok(...)?`; checked with pandoc 3.14):
+
+  | value | `inlines_of(&v)` | `blocks_of(&v)` |
+  |---|---|---|
+  | `MetaInlines` | its inlines | a `Plain` of each inline |
+  | `MetaString` | its words | a `Plain` of its words |
+  | `MetaBlocks` | fails | its blocks |
+  | `MetaMap` | none | none |
+  | `MetaList` | a `Str` of each item's text, unsplit, if each is a `MetaString`; else fails | a `Plain` of each item's `inlines_of` (failing where it does) |
+  | `MetaBool` | fails | fails |
+
+  Each of a value's items as one block (Lua's `pandoc.MetaBlocks{block,
+  meta.x}`, as filters write `header-includes`) is
+  `blocks_of(&into_items(v).into())`.
 - **Writing metadata** (Lua's `meta.x = v`): `meta.insert("x".into(),
   v.into())` converts a plain value as Lua does (below, in "Types");
   reading needs no conversion: a `MetaMap`'s content is a `BTreeMap`, a
@@ -375,7 +393,7 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
   takes the other branch too.
 
 ```rust
-use panir::{MetaValue, Pandoc, given, into_items, items, lookup, stringify, truthy};
+use panir::{Block, Inline, MetaValue, Pandoc, blocks_of, given, inlines_of, into_items, items, lookup, stringify, truthy};
 
 let mut doc = Pandoc::new(vec![]);
 doc.meta.insert("draft".into(), false.into());
@@ -393,6 +411,9 @@ assert_eq!(lookup(meta, &["title", "depth"]), None);
 assert_eq!(lookup(&meta["toc"], &["depth"]), Some(&MetaValue::from("2")));
 assert_eq!(items(meta.get("tags")), [MetaValue::from("a")]);
 assert!(items(meta.get("missing")).is_empty());
+assert_eq!(inlines_of(&meta["tags"]), Ok(vec![Inline::Str("a".into())]));
+assert_eq!(blocks_of(&meta["tags"]), Ok(vec![Block::Plain(vec![Inline::Str("a".into())])]));
+assert!(inlines_of(&meta["draft"]).is_err()); // as Lua: a boolean is not inlines
 
 // a raw block before what `tags` has, whatever its shape (as filters write `header-includes`)
 let mut header = vec![MetaValue::from(panir::Block::raw("html", "<style/>"))];

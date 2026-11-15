@@ -23,7 +23,7 @@ export { Conversion } from "./conversion.ts";
 export type { ConversionInit } from "./conversion.ts";
 export {
   blocks, copy, equal, fromPlain, getAttribute, hasAttribute, inlines, removeAttribute, setAttribute, stringify, toPlain,
-  given, items, lookup, truthy,
+  given, items, lookup, truthy, inlinesOf, blocksOf,
 } from "./util.ts";
 export type { PlainValue } from "./util.ts";
 

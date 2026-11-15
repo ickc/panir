@@ -424,6 +424,24 @@ checked (`serialize`, constructors).
   `header-includes` takes): `items(meta.x)`, a `MetaList`'s items, nothing
   for a missing value, any other value alone; a new array, of the
   document's values.
+- **A value as inlines or blocks**, as Lua converts it where they go
+  (`pandoc.Inlines(meta.x)` or `pandoc.Span(meta.x)`; `pandoc.Blocks(...)`
+  or `pandoc.Div(...)`): `inlinesOf(v)`, `blocksOf(v)`, new arrays
+  (copies), or an `ASTTypeError` where Lua fails (checked with pandoc
+  3.14):
+
+  | value | `inlinesOf(v)` | `blocksOf(v)` |
+  |---|---|---|
+  | `MetaInlines` | its inlines | a `Plain` of each inline |
+  | `MetaString` | its words | a `Plain` of its words |
+  | `MetaBlocks` | fails | its blocks |
+  | `MetaMap` | none | none |
+  | `MetaList` | a `Str` of each item's text, unsplit, if each is a `MetaString`; else fails | a `Plain` of each item's `inlinesOf` (failing where it does) |
+  | `MetaBool` | fails | fails |
+
+  Each of a value's items as one block (Lua's `pandoc.MetaBlocks{block,
+  meta.x}`, as filters write `header-includes`) is
+  `blocksOf(MetaList(items(v)))`.
 - **Writing metadata** (Lua's `meta.x = v`): the metadata is a plain
   object, whose fields don't convert what is put there: `fromPlain(v)`
   converts a plain value as Lua does (a string is a `MetaString`, a
@@ -454,7 +472,9 @@ checked (`serialize`, constructors).
   takes the other branch too.
 
 ```ts
-import { Conversion, fromPlain, given, items, lookup, stringify, toPlain, truthy } from "panir";
+import {
+  blocksOf, Conversion, fromPlain, given, inlinesOf, items, lookup, Plain, stringify, toPlain, truthy,
+} from "panir";
 
 const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" }, tags: "a" } }).meta;
 assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
@@ -467,6 +487,8 @@ meta.name = fromPlain([Str("Ada"), Space(), Str("L.")]);
 assert.deepEqual(meta.name, MetaInlines([Str("Ada"), Space(), Str("L.")]));
 assert.deepEqual(toPlain(meta.toc!), { depth: "2" });
 assert.equal(toPlain(meta).tags, "a");
+assert.deepEqual(inlinesOf(meta.tags!), [Str("a")]);
+assert.deepEqual(blocksOf(meta.name), [Plain([Str("Ada")]), Plain([Space()]), Plain([Str("L.")])]);
 const options = new Conversion({ readerOptions: { "track-changes": "all-changes" } }).readerOptions;
 assert.equal(options?.["track-changes"], "all-changes");
 assert.equal("width: SIZE".replace("SIZE", () => "$&5%"), "width: $&5%");

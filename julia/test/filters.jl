@@ -285,6 +285,20 @@ function scenario_chain()
     Filters([(configure, :typewise), (add, :typewise)])
 end
 
+function scenario_inlinesof()
+    keys = ["text", "blocks", "on", "map", "emptymap", "null", "empty", "list",
+            "nulls", "mixed", "lists", "listblocks", "listbool", "emptylist"]
+    orfails(f, v, fails) = try f(v) catch e; e isa ASTTypeError ? [fails] : rethrow() end
+    function f(d::Pandoc)
+        for k in keys
+            push!(d.blocks, Para([Str("$k:"), Space(), orfails(inlines_of, d.meta[k], Str("fails"))...]))
+            push!(d.blocks, Div(orfails(blocks_of, d.meta[k], Para("fails")); identifier = k))
+        end
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
@@ -294,7 +308,7 @@ const SCENARIOS = Dict(
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
     "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete, "helperfails" => scenario_helperfails,
     "truthy" => scenario_truthy, "lookup" => scenario_lookup, "items" => scenario_items, "chain" => scenario_chain,
-    "prepend" => scenario_prepend,
+    "prepend" => scenario_prepend, "inlinesof" => scenario_inlinesof,
 )
 
 @testset "filters as pandoc's Lua" begin

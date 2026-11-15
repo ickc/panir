@@ -5,9 +5,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
-  applyFilter, checkUnique, copy, Div, Emph, fromJSON, fromPlain, getAttribute, given, Header, HorizontalRule, items, lookup,
-  MetaBool, MetaInlines, MetaList, MetaString, Pandoc as makePandoc, Para, RawBlock, RawInline, removeAttribute,
-  setAttribute, Str, stringify, Strong, toJSON, truthy, Underline,
+  applyFilter, ASTTypeError, blocksOf, checkUnique, copy, Div, Emph, fromJSON, fromPlain, getAttribute, given, Header,
+  HorizontalRule, inlinesOf, items, lookup, MetaBool, MetaInlines, MetaList, MetaString, Pandoc as makePandoc, Para,
+  RawBlock, RawInline, removeAttribute, setAttribute, Space, Str, stringify, Strong, toJSON, truthy,
+  Underline,
 } from "../src/index.ts";
 import type {
   AnyFilter, Block, Filter, MetaBool as MetaBoolNode, MetaInlines as MetaInlinesNode, MetaList as MetaListNode,
@@ -304,6 +305,28 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
       { Str: (s) => Str(s.text + mark) },
     ];
   },
+
+  inlinesof: () => [{
+    Pandoc: (doc) => {
+      const keys = [
+        "text", "blocks", "on", "map", "emptymap", "null", "empty", "list",
+        "nulls", "mixed", "lists", "listblocks", "listbool", "emptylist",
+      ];
+      const orFails = <T>(f: () => T[], fails: T): T[] => {
+        try {
+          return f();
+        } catch (e) {
+          if (e instanceof ASTTypeError) return [fails];
+          throw e;
+        }
+      };
+      for (const k of keys) {
+        const v = doc.meta[k]!;
+        doc.blocks.push(Para([Str(`${k}:`), Space(), ...orFails(() => inlinesOf(v), Str("fails"))]));
+        doc.blocks.push(Div(orFails(() => blocksOf(v), Para("fails")), { identifier: k }));
+      }
+    },
+  }],
 
   attributes: () => [{
     Span: (s) => {

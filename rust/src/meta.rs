@@ -1,6 +1,7 @@
 //! Metadata as pandoc's Lua filters read and write it: Lua's truth, a
-//! lookup through maps, one value or a list of them, and metadata made from
-//! plain Rust values, as pandoc's Lua converts plain Lua values.
+//! lookup through maps, one value or a list of them, a value as inlines or
+//! blocks, and metadata made from plain Rust values, as pandoc's Lua
+//! converts plain Lua values.
 
 use crate::{Block, Inline, Meta, MetaValue, Text};
 use start::Start;
@@ -155,6 +156,98 @@ pub fn into_items(value: impl Into<Option<MetaValue>>) -> Vec<MetaValue> {
         None => vec![],
         Some(MetaValue::MetaList(xs)) => xs,
         Some(v) => vec![v],
+    }
+}
+
+const INLINES: &str = "inlines (MetaInlines, MetaString, MetaMap, or a MetaList of MetaStrings)";
+
+/// A metadata value as inlines, as pandoc's Lua converts it where inlines go
+/// (`pandoc.Inlines(meta.x)`, `pandoc.Span(meta.x)`): inlines as they are
+/// (cloned, as Lua's are values), text its words, a map none, a list a `Str`
+/// of each item's text, unsplit, if every item is text (a `MetaString`, as
+/// `-M` makes); blocks, a boolean or a list of anything else fail, as in Lua:
+/// an `Err` naming the kind, for [`Ctx::ok`](crate::Ctx::ok).
+///
+/// ```
+/// use panir::{Inline, MetaValue, inlines_of};
+///
+/// assert_eq!(inlines_of(&"a b".into()), Ok(panir::inlines("a b")));
+/// let texts: MetaValue = ["a b", "c"].into_iter().collect();
+/// assert_eq!(inlines_of(&texts), Ok(vec![Inline::Str("a b".into()), Inline::Str("c".into())]));
+/// assert_eq!(
+///     inlines_of(&true.into()).unwrap_err(),
+///     "expected inlines (MetaInlines, MetaString, MetaMap, or a MetaList of MetaStrings), got MetaBool"
+/// );
+/// ```
+pub fn inlines_of(value: &MetaValue) -> Result<Vec<Inline>, String> {
+    inlines_in(value, "", INLINES)
+}
+
+fn inlines_in(value: &MetaValue, at: &str, expected: &str) -> Result<Vec<Inline>, String> {
+    match value {
+        MetaValue::MetaInlines(xs) => Ok(xs.clone()),
+        MetaValue::MetaString(s) => Ok(crate::inlines(s)),
+        MetaValue::MetaMap(_) => Ok(vec![]),
+        MetaValue::MetaList(xs) => (xs.iter().enumerate())
+            .map(|(i, x)| match x {
+                MetaValue::MetaString(s) => Ok(Inline::Str(s.clone())),
+                _ => {
+                    let at = if at.is_empty() { "MetaList" } else { at };
+                    Err(format!(
+                        "{at}.content[{i}]: expected an inline (a MetaString), got {}",
+                        x.tag()
+                    ))
+                }
+            })
+            .collect(),
+        _ if at.is_empty() => Err(format!("expected {expected}, got {}", value.tag())),
+        _ => Err(format!("{at}: expected {expected}, got {}", value.tag())),
+    }
+}
+
+/// A metadata value as blocks, as pandoc's Lua converts it where blocks go
+/// (`pandoc.Blocks(meta.x)`, `pandoc.Div(meta.x)`): blocks as they are
+/// (cloned), text a `Plain` of its words, a map none, inlines a `Plain` of
+/// each inline (Lua's, as inlines are a list), a list a `Plain` of each
+/// item as [`inlines_of`] makes it; a boolean, or a list holding blocks, a
+/// boolean or a list of other than text, fail, as in Lua: an `Err` naming
+/// the kind. So `blocks_of(&into_items(v).into())` is each of `v`'s items
+/// as one block, as a Lua list of them given to `pandoc.Blocks` (or
+/// `pandoc.MetaBlocks`, as filters write `header-includes`).
+///
+/// ```
+/// use panir::{Block, Inline, MetaValue, blocks_of};
+///
+/// let words: MetaValue = panir::inlines("a b").into();
+/// assert_eq!(blocks_of(&words).unwrap().len(), 3); // a Plain each
+/// assert_eq!(blocks_of(&"a b".into()), Ok(vec![Block::Plain(panir::inlines("a b"))]));
+/// let mixed: MetaValue = vec![words, MetaValue::MetaMap(Default::default())].into();
+/// assert_eq!(
+///     blocks_of(&mixed),
+///     Ok(vec![Block::Plain(panir::inlines("a b")), Block::Plain(vec![])])
+/// );
+/// assert!(blocks_of(&false.into()).is_err());
+/// ```
+pub fn blocks_of(value: &MetaValue) -> Result<Vec<Block>, String> {
+    match value {
+        MetaValue::MetaBlocks(xs) => Ok(xs.clone()),
+        MetaValue::MetaInlines(xs) => {
+            Ok(xs.iter().map(|x| Block::Plain(vec![x.clone()])).collect())
+        }
+        MetaValue::MetaString(s) => Ok(crate::blocks(s)),
+        MetaValue::MetaMap(_) => Ok(vec![]),
+        MetaValue::MetaList(xs) => {
+            let expected = format!("a block ({}", &INLINES["inlines (".len()..]);
+            (xs.iter().enumerate())
+                .map(|(i, x)| {
+                    inlines_in(x, &format!("MetaList.content[{i}]"), &expected).map(Block::Plain)
+                })
+                .collect()
+        }
+        MetaValue::MetaBool(_) => Err(format!(
+            "expected blocks (MetaBlocks, MetaInlines, MetaString, MetaMap, or a MetaList), got {}",
+            value.tag()
+        )),
     }
 }
 

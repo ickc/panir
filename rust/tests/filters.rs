@@ -3,7 +3,7 @@
 
 use panir::{
     Attr, Block, Ctx, Div, Filter, FilterError, Header, Inline, Meta, MetaValue, Order, Pandoc,
-    apply, from_str, given, into_items, items, lookup, to_string, truthy,
+    apply, blocks_of, from_str, given, inlines_of, into_items, items, lookup, to_string, truthy,
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -734,6 +734,48 @@ impl Filter for Prepend {
     }
 }
 
+/// Each field as inlines and as blocks, or "fails", as Lua converts them.
+struct InlinesOf(Order);
+
+impl Filter for InlinesOf {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let keys = [
+            "text",
+            "blocks",
+            "on",
+            "map",
+            "emptymap",
+            "null",
+            "empty",
+            "list",
+            "nulls",
+            "mixed",
+            "lists",
+            "listblocks",
+            "listbool",
+            "emptylist",
+        ];
+        for k in keys {
+            let v = &doc.meta[k];
+            let mut para = vec![Inline::Str(format!("{k}:").into()), Inline::Space];
+            para.extend(inlines_of(v).unwrap_or_else(|_| vec!["fails".into()]));
+            let blocks = blocks_of(v).unwrap_or_else(|_| vec![Block::Para(vec!["fails".into()])]);
+            doc.blocks.push(Block::Para(para));
+            doc.blocks.push(
+                Div {
+                    attr: Attr::new(k, &[], &[]),
+                    content: blocks,
+                }
+                .into(),
+            );
+        }
+        Some(())
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -762,6 +804,7 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "truthy" => Box::new(Truthy(order)),
         "lookup" => Box::new(Lookup(order)),
         "items" => Box::new(Items(order)),
+        "inlinesof" => Box::new(InlinesOf(order)),
         "prepend" => Box::new(Prepend(order, Inline::raw("tex", "\\raw{}"))),
         "chain" => {
             // (a Lua file's list of filters: one apply after the other)

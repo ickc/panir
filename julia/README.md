@@ -315,6 +315,24 @@ for it (`f(v::MetaInlines) = ...`).
   `header-includes` takes): `items(get(meta, "x", nothing))`, a
   `MetaList`'s items, nothing for a missing value, any other value alone;
   a new vector, of the document's values.
+- **A value as inlines or blocks**, as Lua converts it where they go
+  (`pandoc.Inlines(meta.x)` or `pandoc.Span(meta.x)`; `pandoc.Blocks(...)`
+  or `pandoc.Div(...)`): `inlines_of(v)`, `blocks_of(v)`, new vectors
+  (copies), or an `ASTTypeError` where Lua fails (checked with pandoc
+  3.14):
+
+  | value | `inlines_of(v)` | `blocks_of(v)` |
+  |---|---|---|
+  | `MetaInlines` | its inlines | a `Plain` of each inline |
+  | `MetaString` | its words | a `Plain` of its words |
+  | `MetaBlocks` | fails | its blocks |
+  | `MetaMap` | none | none |
+  | `MetaList` | a `Str` of each item's text, unsplit, if each is a `MetaString`; else fails | a `Plain` of each item's `inlines_of` (failing where it does) |
+  | `MetaBool` | fails | fails |
+
+  Each of a value's items as one block (Lua's `pandoc.MetaBlocks{block,
+  meta.x}`, as filters write `header-includes`) is
+  `blocks_of(MetaList(items(v)))`.
 - **Writing metadata** (Lua's `meta.x = v`): setting a field converts a
   plain value as Lua does (above, in "The AST"); reading needs no
   conversion: a `MetaMap`'s content is a `Dict`, a `MetaList`'s a
@@ -344,6 +362,7 @@ draft = meta["draft"]; truthy(draft) ? draft : MetaString("final")  # MetaString
 lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")  # (MetaString("2"), nothing)
 items(meta["tags"]), items(get(meta, "missing", nothing))  # ([MetaString("a")], MetaValue[])
 meta["name"] = [Str("Ada"), Space(), Str("L.")]  # MetaInlines(Str("Ada"), Space(), Str("L."))
+inlines_of(meta["tags"]), blocks_of(meta["name"])  # ([Str("a")], [Plain(Str("Ada")), Plain(Space()), Plain(Str("L."))])
 Conversion(; reader_options = Dict("track-changes" => "all-changes")).reader_options["track-changes"]  # "all-changes"
 replace("width: SIZE", "SIZE" => "\\1 5%")  # "width: \\1 5%"
 length("«»"), ncodeunits("«»"), codeunit("«»", 1)  # (2, 4, 0xc2)

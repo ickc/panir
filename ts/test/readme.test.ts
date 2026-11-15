@@ -103,7 +103,9 @@ applyFilter(doc, { traverse: order, Code: (c) => Str(c.text) });
 // #endregion
 
 // #region README
-import { Conversion, fromPlain, given, items, lookup, stringify, toPlain, truthy } from "../src/index.ts";
+import {
+  blocksOf, Conversion, fromPlain, given, inlinesOf, items, lookup, Plain, stringify, toPlain, truthy,
+} from "../src/index.ts";
 
 const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" }, tags: "a" } }).meta;
 assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
@@ -116,6 +118,8 @@ meta.name = fromPlain([Str("Ada"), Space(), Str("L.")]);
 assert.deepEqual(meta.name, MetaInlines([Str("Ada"), Space(), Str("L.")]));
 assert.deepEqual(toPlain(meta.toc!), { depth: "2" });
 assert.equal(toPlain(meta).tags, "a");
+assert.deepEqual(inlinesOf(meta.tags!), [Str("a")]);
+assert.deepEqual(blocksOf(meta.name), [Plain([Str("Ada")]), Plain([Space()]), Plain([Str("L.")])]);
 const options = new Conversion({ readerOptions: { "track-changes": "all-changes" } }).readerOptions;
 assert.equal(options?.["track-changes"], "all-changes");
 assert.equal("width: SIZE".replace("SIZE", () => "$&5%"), "width: $&5%");

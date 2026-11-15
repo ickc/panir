@@ -6,10 +6,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
-  ASTTypeError, Attr, Citation, Code, copy, Div, Emph, equal, fromJSON, fromPlain, getAttribute, given, hasAttribute,
-  items, LineBreak, ListAttributes, lookup, removeAttribute, setAttribute,
+  ASTTypeError, Attr, blocksOf, Citation, Code, copy, Div, Emph, equal, fromJSON, fromPlain, getAttribute, given,
+  hasAttribute, inlinesOf, items, LineBreak, ListAttributes, lookup, removeAttribute, setAttribute,
   MetaBlocks, MetaBool, MetaInlines, MetaList, MetaMap, MetaString, Note, Pandoc, Para, parse, Plain, Quoted, RawInline,
-  serialize, Str, stringify, toPlain, truthy,
+  serialize, Space, Str, stringify, toPlain, truthy,
 } from "../src/index.ts";
 import type { Pandoc as Doc, MetaString as MetaStringNode } from "../src/index.ts";
 import { pandoc } from "./pandoc.ts";
@@ -174,6 +174,37 @@ test("one value or a list of them, as a list", () => {
   const listed = items(meta.l);
   listed.pop(); // a new array: the document's is as it was
   assert.equal((meta.l as { content: unknown[] }).content.length, 2);
+});
+
+test("a metadata value as inlines or blocks, as pandoc's Lua converts it", () => {
+  const words = [Str("a"), Space(), Str("b")];
+  const emph = MetaInlines([Str("x"), Space(), Emph("y")]);
+  assert.deepEqual(inlinesOf(MetaString("a b")), words);
+  assert.deepEqual(blocksOf(MetaString("a b")), [Plain(words)]);
+  assert.deepEqual(blocksOf(MetaString("")), [Plain([])]);
+  assert.deepEqual(inlinesOf(emph), emph.content);
+  assert.deepEqual(blocksOf(emph), [Plain([Str("x")]), Plain([Space()]), Plain([Emph("y")])]);
+  assert.deepEqual(blocksOf(MetaBlocks([Para("p")])), [Para("p")]);
+  assert.deepEqual([inlinesOf(MetaMap({ k: "v" })), blocksOf(MetaMap({ k: "v" }))], [[], []]);
+  const texts = MetaList([MetaString("a b"), MetaString("c")]);
+  assert.deepEqual(inlinesOf(texts), [Str("a b"), Str("c")]); // a Str each, unsplit
+  assert.deepEqual(blocksOf(texts), [Plain(words), Plain([Str("c")])]);
+  const mixed = MetaList([MetaInlines([Emph("x")]), MetaMap({}), MetaList([]), MetaList([MetaString("")])]);
+  assert.deepEqual(blocksOf(mixed), [Plain([Emph("x")]), Plain([]), Plain([]), Plain([Str("")])]);
+  const got = inlinesOf(emph); // copies: Lua's values are values
+  assert.ok(got[2] !== emph.content[2]);
+  const fails: [(v: never) => unknown, unknown, string][] = [
+    [inlinesOf, MetaBlocks([Para("p")]), "expected inlines (MetaInlines, MetaString, MetaMap, or a MetaList of MetaStrings), got MetaBlocks"],
+    [inlinesOf, MetaBool(true), "got MetaBool"],
+    [inlinesOf, mixed, "MetaList.content[0]: expected an inline (a MetaString), got MetaInlines"],
+    [blocksOf, MetaBool(false), "expected blocks (MetaBlocks, MetaInlines, MetaString, MetaMap, or a MetaList), got MetaBool"],
+    [blocksOf, MetaList([MetaString("a"), MetaBlocks([])]), "MetaList.content[1]: expected a block"],
+    [blocksOf, MetaList([MetaList([emph])]), "MetaList.content[0].content[0]: expected an inline"],
+    [inlinesOf, undefined, "got undefined"],
+  ];
+  for (const [f, v, message] of fails) {
+    assert.throws(() => f(v as never), (e: Error) => e instanceof ASTTypeError && e.message.includes(message), message);
+  }
 });
 
 test("attributes by key, as pandoc's Lua", () => {
