@@ -243,6 +243,11 @@ function scenario_lookup()
             v = lookup(d.meta, path...)
             "$(join(path, "."))=$(v === nothing ? "none" : stringify(v))"
         end
+        for (key, keys...) in paths  # from a value
+            isempty(keys) && continue
+            v = lookup(get(d.meta, key, nothing), keys...)
+            push!(words, "$key:$(join(keys, "."))=$(v === nothing ? "none" : stringify(v))")
+        end
         push!(d.blocks, Para(join(words, " ")))
         nothing
     end

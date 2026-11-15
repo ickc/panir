@@ -124,6 +124,20 @@ fn a_nested_option() {
         panic!()
     };
     assert_eq!(lookup(toc, &["depth"]), Some(&"2".into()));
+    // from a value: in hand, perhaps missing (an Option of it, or of a reference)
+    let value = &meta["toc"];
+    assert_eq!(lookup(value, &["style", "name"]), Some(&"x".into()));
+    assert_eq!(lookup(&meta.get("toc"), &["depth"]), Some(&"2".into()));
+    assert_eq!(lookup(&meta.get("missing"), &["depth"]), None);
+    assert_eq!(lookup(&meta["flag"], &["depth"]), None); // (not a map)
+    assert_eq!(lookup(&meta["l"], &["a"]), None);
+    // from a &mut Meta, as a meta function has it, and then changing it
+    let m = &mut meta;
+    assert!(lookup(m, &["flag"]).is_some());
+    m.insert("more".into(), true.into());
+    let taken = meta.remove("toc");
+    assert_eq!(lookup(&taken, &["depth"]), Some(&"2".into()));
+    assert_eq!(lookup(&None::<MetaValue>, &["depth"]), None);
 }
 
 #[test]

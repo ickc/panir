@@ -522,6 +522,10 @@ def lookup() -> list[Filter]:
         for path in LOOKUP_PATHS:
             v = A.lookup(doc.meta, *path)
             words.append(f"{'.'.join(path)}={'none' if v is None else A.stringify(v)}")
+        for key, *keys in LOOKUP_PATHS:  # from a value
+            if keys:
+                v = A.lookup(doc.meta.get(key), *keys)
+                words.append(f"{key}:{'.'.join(keys)}={'none' if v is None else A.stringify(v)}")
         doc.blocks.append(Para(" ".join(words)))
 
     return [f]

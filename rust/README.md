@@ -314,8 +314,10 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
 - **A nested option**, Lua's `((meta.a or {}).b or {}).c`: `lookup(&meta,
   &["a", "b", "c"])`, `None` where a key is missing or a value on the way
   is not a map (where Lua would fail, on `true`, or find a method, on a
-  string or a list). It starts from the metadata or a `MetaMap`'s content
-  (a `Meta` too).
+  string or a list). It starts from the metadata (a `Meta`, as a
+  `MetaMap`'s content is too), a value (`&meta["a"]`), or one perhaps
+  missing: `lookup(&config, &["b"])` of `let config =
+  meta.remove("a")`, an `Option`.
 - **One value or a list of them** (a filter's `ensure_list`, the shapes
   `header-includes` takes): `items(meta.get("x"))` (or `items(v)`), a
   `MetaList`'s items, nothing for a missing value, any other value alone:
@@ -345,6 +347,7 @@ assert_eq!(
 assert_eq!(given(meta.get("draft")).map_or("final".into(), stringify), "final");
 assert_eq!(lookup(meta, &["toc", "depth"]), Some(&MetaValue::from("2")));
 assert_eq!(lookup(meta, &["title", "depth"]), None);
+assert_eq!(lookup(&meta["toc"], &["depth"]), Some(&MetaValue::from("2")));
 assert_eq!(items(meta.get("tags")), [MetaValue::from("a")]);
 assert!(items(meta.get("missing")).is_empty());
 ```

@@ -265,6 +265,11 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
         const v = lookup(doc.meta, key, ...keys);
         return `${[key, ...keys].join(".")}=${v === undefined ? "none" : stringify(v)}`;
       });
+      for (const [key, first, ...rest] of paths) { // from a value
+        if (first === undefined) continue;
+        const v = lookup(doc.meta[key], first, ...rest);
+        words.push(`${key}:${[first, ...rest].join(".")}=${v === undefined ? "none" : stringify(v)}`);
+      }
       doc.blocks.push(Para(words.join(" ")));
     },
   }],

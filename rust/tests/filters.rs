@@ -629,13 +629,21 @@ impl Filter for Lookup {
             &["toc", "depth", "x"],
             &["toc", "style", "name", "x"],
         ];
-        let words: Vec<String> = paths
+        let mut words: Vec<String> = paths
             .iter()
             .map(|path| {
                 let found = lookup(&doc.meta, path).map_or("none".into(), panir::stringify);
                 format!("{}={found}", path.join("."))
             })
             .collect();
+        // from a value
+        for (key, keys) in paths.iter().filter_map(|p| p.split_first()) {
+            if keys.is_empty() {
+                continue;
+            }
+            let found = lookup(&doc.meta.get(*key), keys).map_or("none".into(), panir::stringify);
+            words.push(format!("{key}:{}={found}", keys.join(".")));
+        }
         doc.blocks
             .push(Block::Para(panir::inlines(&words.join(" "))));
         Some(())

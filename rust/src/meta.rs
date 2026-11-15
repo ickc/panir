@@ -3,6 +3,7 @@
 //! plain Rust values, as pandoc's Lua converts plain Lua values.
 
 use crate::{Block, Inline, Meta, MetaValue, Text};
+use start::Start;
 
 /// Whether a metadata value is true as Lua sees it (`if meta.x then`,
 /// `meta.x or default`): there, and not `false`. An empty string, list or
@@ -46,7 +47,10 @@ pub fn given<'a>(value: impl Into<Option<&'a MetaValue>>) -> Option<&'a MetaValu
 /// The value at a path of keys, each but the last in a map (`MetaMap`):
 /// Lua's `((meta.a or {}).b or {}).c`, `None` where a key is missing or a
 /// value on the way is not a map (where Lua would fail, on `true`, or find a
-/// method, on a string or a list). A `MetaMap`'s content is a [`Meta`] too.
+/// method, on a string or a list). It starts from the metadata (a [`Meta`],
+/// as a `MetaMap`'s content is too), a metadata value, or one perhaps
+/// missing (an `Option` of a value, or of a reference to one, as
+/// `meta.remove` and `meta.get` give): anything else than a map has no keys.
 ///
 /// ```
 /// use panir::{MetaValue, lookup};
@@ -56,17 +60,56 @@ pub fn given<'a>(value: impl Into<Option<&'a MetaValue>>) -> Option<&'a MetaValu
 /// assert_eq!(lookup(&meta, &["a", "b"]), Some(&MetaValue::from("c")));
 /// assert_eq!(lookup(&meta, &["a", "b", "c"]), None); // (a string has no fields)
 /// assert_eq!(lookup(&meta, &["x", "b"]), None);
+/// // from a value, taken out or not
+/// assert_eq!(lookup(&meta["a"], &["b"]), Some(&MetaValue::from("c")));
+/// let a = meta.remove("a");
+/// assert_eq!(lookup(&a, &["b"]), Some(&MetaValue::from("c")));
+/// assert_eq!(lookup(&meta.get("x"), &["b"]), None);
 /// ```
-pub fn lookup<'a>(meta: &'a Meta, path: &[&str]) -> Option<&'a MetaValue> {
+pub fn lookup<'a, T: Start + ?Sized>(from: &'a T, path: &[&str]) -> Option<&'a MetaValue> {
     let (last, path) = path.split_last()?;
-    let mut map = meta;
+    let mut map = from.as_map()?;
     for key in path {
-        match map.get(*key)? {
-            MetaValue::MetaMap(m) => map = m,
-            _ => return None,
-        }
+        map = map.get(*key)?.as_map()?;
     }
     map.get(*last)
+}
+
+mod start {
+    use crate::{Meta, MetaValue};
+
+    /// What [`lookup`](super::lookup) starts from, as the map it reads
+    /// first: `None` for what isn't a map.
+    pub trait Start {
+        fn as_map(&self) -> Option<&Meta>;
+    }
+
+    impl Start for Meta {
+        fn as_map(&self) -> Option<&Meta> {
+            Some(self)
+        }
+    }
+
+    impl Start for MetaValue {
+        fn as_map(&self) -> Option<&Meta> {
+            match self {
+                MetaValue::MetaMap(m) => Some(m),
+                _ => None,
+            }
+        }
+    }
+
+    impl<T: Start + ?Sized> Start for &T {
+        fn as_map(&self) -> Option<&Meta> {
+            (**self).as_map()
+        }
+    }
+
+    impl<T: Start> Start for Option<T> {
+        fn as_map(&self) -> Option<&Meta> {
+            self.as_ref()?.as_map()
+        }
+    }
 }
 
 /// One value or a list of them, as a list: a `MetaList`'s items, nothing for
