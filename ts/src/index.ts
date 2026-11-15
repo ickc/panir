@@ -23,8 +23,9 @@ export { Conversion } from "./conversion.ts";
 export type { ConversionInit } from "./conversion.ts";
 export {
   blocks, copy, equal, fromPlain, getAttribute, hasAttribute, inlines, removeAttribute, setAttribute, stringify, toPlain,
-  items, lookup, truthy,
+  given, items, lookup, truthy,
 } from "./util.ts";
+export type { PlainValue } from "./util.ts";
 
 /** A document from pandoc's JSON text, checked (`ASTDecodeError`; a `SyntaxError` if it isn't JSON). */
 export function parse(text: string): Pandoc {

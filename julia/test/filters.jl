@@ -121,7 +121,7 @@ end
 function scenario_newdoc()
     function f(d::Pandoc)
         title = d.meta["title"]::MetaInlines
-        Pandoc(Header(1, title.content), Para("made anew"); meta = d.meta)
+        Pandoc(Header(1, deepcopy(title.content)), Para("made anew"); meta = d.meta)
     end
     f(s::Str) = Str(uppercase(s.text))
     Filters([(f, :topdown)])
@@ -164,6 +164,29 @@ function scenario_fails()
     function f(p::Para)
         (n[] += 1) == 2 && error("the second paragraph")
         push!(p.content, Str("!"))
+        nothing
+    end
+    Filters([(f, :typewise)])
+end
+
+function scenario_prepend()
+    mark = RawInline("tex", "\\raw{}")
+    function f(meta::Panir.Meta)
+        for k in ["one", "list", "map", "off", "missing"]
+            meta[k] = [RawBlock("html", "<$k>"); items(get(meta, k, nothing))]
+        end
+        nothing
+    end
+    f(s::Str) = s.text == "raw" ? deepcopy(mark) : nothing  # (one node, returned twice: a copy each)
+    Filters([(f, :typewise)])
+end
+
+function scenario_helperfails()
+    size(config::MetaMap) = get(config.content, "size", nothing)
+    size(config) = error("indent: a map of options, not $(repr(config))")
+    function f(meta::Panir.Meta)
+        s = size(get(meta, "indent", nothing))
+        s === nothing || (meta["size"] = s)
         nothing
     end
     Filters([(f, :typewise)])
@@ -217,8 +240,7 @@ function scenario_truthy()
         keys = ["yes", "no", "text", "empty", "null", "noword", "zero", "list", "map", "block", "missing"]
         words = ["$k=$(truthy(get(d.meta, k, nothing)))" for k in keys]
         or(v) = truthy(v) ? v : MetaString("d")
-        push!(words, "no-or=$(stringify(or(get(d.meta, "no", nothing))))",
-              "text-or=$(stringify(or(get(d.meta, "text", nothing))))")
+        push!(words, "or=" * join([stringify(or(get(d.meta, k, nothing))) for k in keys], ","))
         push!(d.blocks, Para(join(words, " ")))
         nothing
     end
@@ -232,6 +254,11 @@ function scenario_lookup()
         words = map(paths) do path
             v = lookup(d.meta, path...)
             "$(join(path, "."))=$(v === nothing ? "none" : stringify(v))"
+        end
+        for (key, keys...) in paths  # from a value
+            isempty(keys) && continue
+            v = lookup(get(d.meta, key, nothing), keys...)
+            push!(words, "$key:$(join(keys, "."))=$(v === nothing ? "none" : stringify(v))")
         end
         push!(d.blocks, Para(join(words, " ")))
         nothing
@@ -265,8 +292,9 @@ const SCENARIOS = Dict(
     "once" => scenario_once, "lists" => scenario_lists, "meta" => scenario_meta,
     "newdoc" => scenario_newdoc, "twice" => scenario_twice, "metacount" => scenario_metacount,
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
-    "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete,
+    "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete, "helperfails" => scenario_helperfails,
     "truthy" => scenario_truthy, "lookup" => scenario_lookup, "items" => scenario_items, "chain" => scenario_chain,
+    "prepend" => scenario_prepend,
 )
 
 @testset "filters as pandoc's Lua" begin
@@ -281,11 +309,15 @@ const SCENARIOS = Dict(
             @test_throws Exception run(SCENARIOS[l["name"]](), l["input"])
             continue
         end
-        @test norm(tojson(run(SCENARIOS[l["name"]](), l["input"]))) == norm(l["output"])
+        out = run(SCENARIOS[l["name"]](), l["input"])
+        @test norm(tojson(out)) == norm(l["output"])
+        @test check_unique(out) === nothing  # (Lua's elements are values: no node in two places)
         @testset "$(l["name"]), $traverse" for traverse in l["also"]
             filters = SCENARIOS[l["name"]]()
             @test all(t === :typewise for (_, t) in filters)  # stateless ones set no order
-            @test norm(tojson(run([(f, Symbol(traverse)) for (f, _) in filters], l["input"]))) == norm(l["output"])
+            out = run([(f, Symbol(traverse)) for (f, _) in filters], l["input"])
+            @test norm(tojson(out)) == norm(l["output"])
+            @test check_unique(out) === nothing
         end
     end
 end

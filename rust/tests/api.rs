@@ -199,6 +199,34 @@ fn attr_new_in_luas_order() {
 }
 
 #[test]
+fn raw_nodes_in_luas_order() {
+    use panir::{MetaValue, RawBlock, RawInline, Text};
+    let text = String::from("<br/>");
+    assert_eq!(
+        Block::raw("html", &text),
+        Block::RawBlock(Box::new(RawBlock {
+            format: "html".into(),
+            text: "<br/>".into(),
+        }))
+    );
+    assert_eq!(
+        Inline::raw(Text::from("tex"), text),
+        RawInline {
+            format: "tex".into(),
+            text: "<br/>".into(),
+        }
+        .into()
+    );
+    let meta: MetaValue = Block::raw("tex", "x").into();
+    assert_eq!(meta, MetaValue::MetaBlocks(vec![Block::raw("tex", "x")]));
+    let doc = Pandoc::new(vec![Block::raw("html", "<hr/>")]);
+    assert_eq!(
+        to_string(&doc),
+        r#"{"pandoc-api-version":[1,23,1,2],"meta":{},"blocks":[{"t":"RawBlock","c":["html","<hr/>"]}]}"#
+    );
+}
+
+#[test]
 fn a_blocks_inlines() {
     use panir::{Header, inlines};
     let mut header: Block = Header {

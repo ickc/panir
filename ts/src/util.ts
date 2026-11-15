@@ -4,7 +4,9 @@ import {
   ASTTypeError, deep, describe, isNodeOf, ownerOf, productOf, resolve, setKey, tables, textInlines, toMetaValue,
 } from "./core.ts";
 import type { TypeExpr } from "./core.ts";
-import type { Attr, Block, Inline, Meta, MetaValue, MetaValueInit } from "./generated.ts";
+import type {
+  Attr, Block, Inline, Meta, MetaBlocks, MetaBool, MetaInlines, MetaList, MetaMap, MetaString, MetaValue, MetaValueInit,
+} from "./generated.ts";
 
 /**
  * A string's words and spaces, as pandoc's Lua `pandoc.Inlines`: `Str` for
@@ -225,6 +227,17 @@ export function truthy(value: MetaValue | null | undefined): boolean {
 }
 
 /**
+ * The value if it is true as pandoc's Lua sees it (`truthy`), else
+ * `undefined`: Lua's `meta.x or d` is `given(meta.x) ?? d`, and its `if
+ * meta.x then ... meta.x ...` is `const x = given(meta.x); if (x) ...`, in
+ * which `x` is a `MetaValue`. (`truthy` is not a type guard: its false
+ * branch would say `undefined`, and `MetaBool(false)` is false too.)
+ */
+export function given<T extends MetaValue>(value: T | null | undefined): T | undefined {
+  return value != null && truthy(value) ? value : undefined;
+}
+
+/**
  * The metadata value at a path of keys, each but the last in a map: Lua's
  * `((meta.a or {}).b or {}).c`, `undefined` where a key is missing or a value
  * on the way is not a map (where Lua would fail, on `true`, or find a method,
@@ -262,9 +275,20 @@ export function items(value: MetaValue | null | undefined): MetaValue[] {
  * not the document's). `fromPlain` converts it back (an empty array to a
  * `MetaList`). For their text, `stringify`.
  */
-export function toPlain(value: MetaValue | Meta): unknown {
-  return deep("toPlain", () => plain(value));
+export function toPlain(value: MetaString): string;
+export function toPlain(value: MetaBool): boolean;
+export function toPlain(value: MetaInlines): Inline[];
+export function toPlain(value: MetaBlocks): Block[];
+export function toPlain(value: MetaList): PlainValue[];
+export function toPlain(value: MetaMap | Meta): { [key: string]: PlainValue };
+export function toPlain(value: MetaValue | Meta): PlainValue;
+export function toPlain(value: MetaValue | Meta): PlainValue {
+  return deep("toPlain", () => plain(value) as PlainValue);
 }
+
+/** Metadata as a plain value, as pandoc's Lua gives it (`toPlain`'s); what
+ * converts back (`fromPlain`, and constructors where metadata goes). */
+export type PlainValue = string | boolean | Inline[] | Block[] | PlainValue[] | { [key: string]: PlainValue };
 
 function plain(value: unknown): unknown {
   const v = value as MetaValue;

@@ -5,9 +5,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
-  applyFilter, Div, Emph, fromJSON, getAttribute, Header, HorizontalRule, items, lookup, MetaBool, MetaInlines, MetaList,
-  MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, stringify, Strong, toJSON, truthy,
-  Underline,
+  applyFilter, checkUnique, copy, Div, Emph, fromJSON, fromPlain, getAttribute, given, Header, HorizontalRule, items, lookup,
+  MetaBool, MetaInlines, MetaList, MetaString, Pandoc as makePandoc, Para, RawBlock, RawInline, removeAttribute,
+  setAttribute, Str, stringify, Strong, toJSON, truthy, Underline,
 } from "../src/index.ts";
 import type {
   AnyFilter, Block, Filter, MetaBool as MetaBoolNode, MetaInlines as MetaInlinesNode, MetaList as MetaListNode,
@@ -150,7 +150,7 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
     Pandoc: (doc) => {
       const title = doc.meta.title;
       assert.ok(title?.t === "MetaInlines");
-      return makePandoc([Header(1, title.content), Para("made anew")], { meta: doc.meta });
+      return makePandoc([Header(1, copy(title.content)), Para("made anew")], { meta: doc.meta });
     },
     Str: (s) => Str(s.text.toUpperCase()),
   }],
@@ -181,6 +181,19 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
       Para: (p) => {
         if (++n === 2) throw new Error("the second paragraph");
         p.content.push(Str("!"));
+      },
+    }];
+  },
+
+  helperfails: () => {
+    const size = (config: MetaValue | undefined) => {
+      if (config?.t !== "MetaMap") throw new Error(`indent: a map of options, not ${config?.t}`);
+      return config.content.size;
+    };
+    return [{
+      Meta: (meta) => {
+        const s = size(meta.indent);
+        if (s !== undefined) meta.size = s;
       },
     }];
   },
@@ -237,8 +250,7 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
     Pandoc: (doc) => {
       const keys = ["yes", "no", "text", "empty", "null", "noword", "zero", "list", "map", "block", "missing"];
       const words = keys.map((k) => `${k}=${truthy(doc.meta[k])}`);
-      const or = (v: MetaValue | undefined) => (truthy(v) ? v : MetaString("d"));
-      words.push(`no-or=${stringify(or(doc.meta.no))}`, `text-or=${stringify(or(doc.meta.text))}`);
+      words.push(`or=${keys.map((k) => stringify(given(doc.meta[k]) ?? MetaString("d"))).join(",")}`);
       doc.blocks.push(Para(words.join(" ")));
     },
   }],
@@ -253,9 +265,26 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
         const v = lookup(doc.meta, key, ...keys);
         return `${[key, ...keys].join(".")}=${v === undefined ? "none" : stringify(v)}`;
       });
+      for (const [key, first, ...rest] of paths) { // from a value
+        if (first === undefined) continue;
+        const v = lookup(doc.meta[key], first, ...rest);
+        words.push(`${key}:${[first, ...rest].join(".")}=${v === undefined ? "none" : stringify(v)}`);
+      }
       doc.blocks.push(Para(words.join(" ")));
     },
   }],
+
+  prepend: () => {
+    const mark = RawInline("tex", "\\raw{}");
+    return [{
+      Meta: (meta) => {
+        for (const k of ["one", "list", "map", "off", "missing"]) {
+          meta[k] = fromPlain([RawBlock("html", `<${k}>`), ...items(meta[k])]);
+        }
+      },
+      Str: (s) => (s.text === "raw" ? copy(mark) : undefined), // (one node, returned twice: a copy each)
+    }];
+  },
 
   items: () => [{
     Pandoc: (doc) => {
@@ -309,7 +338,9 @@ for (const { name, input, output, also } of lines) {
       assert.throws(() => applyFilter(doc, filters, FORMAT));
       return null;
     }
-    return toJSON(applyFilter(doc, filters, FORMAT));
+    const out = applyFilter(doc, filters, FORMAT);
+    checkUnique(out); // (Lua's elements are values: no node in two places)
+    return toJSON(out);
   };
   test(`as pandoc's Lua: ${name}`, () => {
     assert.ok(scenario, `no TypeScript filter for corpus/filters/${name}.lua`);

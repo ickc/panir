@@ -3,6 +3,7 @@ Python filters, must make of its input what pandoc's Lua filter made."""
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 
 import panir as A
@@ -32,6 +33,8 @@ from panir import (
     Note,
     Pandoc,
     Para,
+    RawBlock,
+    RawInline,
     Space,
     Span,
     Str,
@@ -290,7 +293,7 @@ def newdoc() -> list[Filter]:
     def anew(doc):
         title = doc.meta["title"]
         assert isinstance(title, MetaInlines)
-        return Pandoc(Header(1, *title.content), Para("made anew"), meta=doc.meta)
+        return Pandoc(Header(1, *copy.deepcopy(title.content)), Para("made anew"), meta=doc.meta)
 
     @f.on(Str)
     def up(s):
@@ -373,6 +376,21 @@ def fails() -> list[Filter]:
         if n == 2:
             raise ValueError("the second paragraph")
         p.content.append(Str("!"))
+
+    return [f]
+
+
+def helperfails() -> list[Filter]:
+    f = Filter()
+
+    def size(config):
+        if not isinstance(config, MetaMap):
+            raise TypeError(f"indent: a map of options, not {config!r}")
+        return config.content.get("size")
+
+    @f.on_meta
+    def configure(meta):
+        meta["size"] = size(meta.get("indent"))
 
     return [f]
 
@@ -477,8 +495,8 @@ def truthy() -> list[Filter]:
     @f.on(Pandoc)
     def truth(doc):
         words = [f"{k}={'true' if doc.meta.get(k) else 'false'}" for k in (*TRUTHY_KEYS, "missing")]
-        words.append(f"no-or={A.stringify(doc.meta.get('no') or MetaString('d'))}")
-        words.append(f"text-or={A.stringify(doc.meta.get('text') or MetaString('d'))}")
+        ors = [A.stringify(doc.meta.get(k) or MetaString("d")) for k in (*TRUTHY_KEYS, "missing")]
+        words.append(f"or={','.join(ors)}")
         doc.blocks.append(Para(" ".join(words)))
 
     return [f]
@@ -507,6 +525,10 @@ def lookup() -> list[Filter]:
         for path in LOOKUP_PATHS:
             v = A.lookup(doc.meta, *path)
             words.append(f"{'.'.join(path)}={'none' if v is None else A.stringify(v)}")
+        for key, *keys in LOOKUP_PATHS:  # from a value
+            if keys:
+                v = A.lookup(doc.meta.get(key), *keys)
+                words.append(f"{key}:{'.'.join(keys)}={'none' if v is None else A.stringify(v)}")
         doc.blocks.append(Para(" ".join(words)))
 
     return [f]
@@ -522,6 +544,23 @@ def items() -> list[Filter]:
             texts = [A.stringify(x) for x in A.items(doc.meta.get(k))]
             words.append(f"{k}={len(texts)}:{','.join(texts)}")
         doc.blocks.append(Para(" ".join(words)))
+
+    return [f]
+
+
+def prepend() -> list[Filter]:
+    f = Filter()
+    mark = RawInline("tex", "\\raw{}")
+
+    @f.on_meta
+    def header(meta):
+        for k in ("one", "list", "map", "off", "missing"):
+            meta[k] = [RawBlock("html", f"<{k}>"), *A.items(meta.get(k))]
+
+    @f.on(Str)
+    def raw(s):
+        if s.text == "raw":
+            return copy.deepcopy(mark)  # (one node, returned twice: a copy each)
 
     return [f]
 
@@ -544,8 +583,8 @@ def chain() -> list[Filter]:
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
-    + (once, lists, meta, newdoc, twice, metacount, attributes, fails)
-    + (replaced, metavalues, metadelete, truthy, lookup, items, chain)
+    + (once, lists, meta, newdoc, twice, metacount, attributes, fails, helperfails)
+    + (replaced, metavalues, metadelete, truthy, lookup, items, chain, prepend)
 }
 
 
@@ -577,3 +616,4 @@ def test_as_pandocs_lua(line, traverse):
         return
     doc = A.run(Pandoc.from_json(line["input"]), filters, FORMAT)
     assert doc.to_json() == line["output"]
+    A.check_unique(doc)  # (Lua's elements are values: no node in two places)

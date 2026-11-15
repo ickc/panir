@@ -6,10 +6,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  applyFilter, ASTTypeError, Emph, Header, MetaList, MetaMap, MetaString, Pandoc as makePandoc, Para, parse, serialize,
-  Str, walk,
+  applyFilter, ASTTypeError, Emph, fromPlain, given, Header, lookup, MetaBlocks, MetaBool, MetaInlines, MetaList,
+  MetaMap, MetaString, Pandoc as makePandoc, Para, parse, serialize, Str, toPlain, truthy, walk,
 } from "../src/index.ts";
-import type { Block, Filter, Inline, MetaValue, Pandoc, Row } from "../src/index.ts";
+import type { Block, Filter, Inline, MetaValue, Pandoc, PlainValue, Row } from "../src/index.ts";
 import type { runFilter } from "../src/node.ts";
 
 const doc = (): Pandoc => parse(serialize({
@@ -116,4 +116,40 @@ test("a function's ctx.parent is a node that can hold its node, and has a t to t
   // a context of its own (in walk) is of any node, with a t to test
   walk(makePandoc([Para([Str("x")])]), (_x, ctx) => { if (ctx.parent?.t === "Para") seen.push("walked"); });
   assert.equal(seen.at(-1), "walked");
+});
+
+test("Lua's truth: given narrows to the value; truthy, not a type guard, doesn't", () => {
+  const meta = makePandoc([], { meta: { toc: { on: "x", off: false } } }).meta;
+  const need = (v: MetaValue) => v.t;
+  // (lookup's result is MetaValue | undefined, as is any value perhaps missing)
+  const on = given(lookup(meta, "toc", "on"));
+  if (on) assert.equal(need(on), "MetaString");
+  assert.equal(given(lookup(meta, "toc", "off")) ?? "d", "d");
+  const v = lookup(meta, "toc", "on");
+  if (truthy(v)) {
+    // @ts-expect-error: still MetaValue | undefined (its false branch can't say undefined: MetaBool(false))
+    need(v);
+  }
+  const off = lookup(meta, "toc", "off");
+  if (!truthy(off)) assert.equal(off?.t, "MetaBool"); // (a value, though false)
+});
+
+test("toPlain's result is typed: by the kind given, else any plain value", () => {
+  const text: string = toPlain(MetaString("a"));
+  const flag: boolean = toPlain(MetaBool(true));
+  const inlines: Inline[] = toPlain(MetaInlines([Str("x")]));
+  const blocks: Block[] = toPlain(MetaBlocks([Para("x")]));
+  const list: PlainValue[] = toPlain(MetaList(["a"]));
+  const meta = makePandoc([], { meta: { toc: { depth: "2" }, draft: false } }).meta;
+  const map: { [key: string]: PlainValue } = toPlain(meta);
+  assert.deepEqual([text, flag, inlines, blocks, list, map.draft], ["a", true, [Str("x")], [Para("x")], ["a"], false]);
+  const v: MetaValue = meta.toc!;
+  const plain = toPlain(v); // any of them: narrowed by a test, with no cast
+  if (typeof plain === "object" && !Array.isArray(plain)) assert.deepEqual(plain.depth, "2");
+  // @ts-expect-error: not a string, unless narrowed
+  const wrong: string = toPlain(v);
+  assert.ok(wrong);
+  // and back: what toPlain gives is what fromPlain and the constructors take
+  assert.deepEqual(fromPlain(toPlain(v)), v);
+  assert.deepEqual(MetaMap({ again: toPlain(v) }).content.again, v);
 });

@@ -3,7 +3,7 @@
 
 use panir::{
     Attr, Block, Ctx, Div, Filter, FilterError, Header, Inline, Meta, MetaValue, Order, Pandoc,
-    apply, from_str, items, lookup, to_string, truthy,
+    apply, from_str, given, into_items, items, lookup, to_string, truthy,
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -449,6 +449,26 @@ impl Filter for Fails {
     }
 }
 
+/// A helper reading an option under `indent` fails on what isn't a map,
+/// and `ctx.ok` fails the walk with its error.
+struct HelperFails;
+
+fn size(config: Option<&MetaValue>) -> Result<Option<MetaValue>, String> {
+    match config {
+        Some(MetaValue::MetaMap(m)) => Ok(m.get("size").cloned()),
+        other => Err(format!("indent: a map of options, not {other:?}")),
+    }
+}
+
+impl Filter for HelperFails {
+    fn meta(&mut self, meta: &mut Meta, ctx: &mut Ctx) -> Option<()> {
+        if let Some(size) = ctx.ok(size(meta.get("indent")))? {
+            meta.insert("size".into(), size);
+        }
+        Some(())
+    }
+}
+
 /// Top-down: what a function returns is not given to a function again.
 #[derive(Default)]
 struct Replaced {
@@ -578,12 +598,11 @@ impl Filter for Truthy {
             .iter()
             .map(|k| format!("{k}={}", truthy(doc.meta.get(*k))))
             .collect();
-        let or = |v: Option<&MetaValue>| match v {
-            Some(v) if truthy(Some(v)) => panir::stringify(v),
-            _ => "d".into(),
-        };
-        words.push(format!("no-or={}", or(doc.meta.get("no"))));
-        words.push(format!("text-or={}", or(doc.meta.get("text"))));
+        let ors: Vec<String> = keys
+            .iter()
+            .map(|k| given(doc.meta.get(*k)).map_or("d".into(), panir::stringify))
+            .collect();
+        words.push(format!("or={}", ors.join(",")));
         doc.blocks
             .push(Block::Para(panir::inlines(&words.join(" "))));
         Some(())
@@ -610,13 +629,21 @@ impl Filter for Lookup {
             &["toc", "depth", "x"],
             &["toc", "style", "name", "x"],
         ];
-        let words: Vec<String> = paths
+        let mut words: Vec<String> = paths
             .iter()
             .map(|path| {
                 let found = lookup(&doc.meta, path).map_or("none".into(), panir::stringify);
                 format!("{}={found}", path.join("."))
             })
             .collect();
+        // from a value
+        for (key, keys) in paths.iter().filter_map(|p| p.split_first()) {
+            if keys.is_empty() {
+                continue;
+            }
+            let found = lookup(&doc.meta.get(*key), keys).map_or("none".into(), panir::stringify);
+            words.push(format!("{key}:{}={found}", keys.join(".")));
+        }
         doc.blocks
             .push(Block::Para(panir::inlines(&words.join(" "))));
         Some(())
@@ -680,6 +707,33 @@ impl Filter for Mark {
     }
 }
 
+/// Each field, taken out, written back after a raw block; one raw inline
+/// for each word `raw`, a copy of the filter's own.
+struct Prepend(Order, Inline);
+
+impl Filter for Prepend {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn meta(&mut self, meta: &mut Meta, _: &mut Ctx) -> Option<()> {
+        for k in ["one", "list", "map", "off", "missing"] {
+            let mut out = vec![MetaValue::from(Block::raw("html", format!("<{k}>")))];
+            out.extend(into_items(meta.remove(k)));
+            // (as Lua converts a list of a block alone: blocks)
+            let value = if out.len() == 1 {
+                out.remove(0)
+            } else {
+                out.into()
+            };
+            meta.insert(k.into(), value);
+        }
+        Some(())
+    }
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        matches!(x, Inline::Str(s) if s == "raw").then(|| vec![self.1.clone()])
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -703,10 +757,12 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "twice" => Box::new(Twice(order)),
         "attributes" => Box::new(Attributes(order)),
         "fails" => Box::new(Fails(0)),
+        "helperfails" => Box::new(HelperFails),
         "metadelete" => Box::new(MetaDelete(order)),
         "truthy" => Box::new(Truthy(order)),
         "lookup" => Box::new(Lookup(order)),
         "items" => Box::new(Items(order)),
+        "prepend" => Box::new(Prepend(order, Inline::raw("tex", "\\raw{}"))),
         "chain" => {
             // (a Lua file's list of filters: one apply after the other)
             let mut configure = Configure(order, "?".into());

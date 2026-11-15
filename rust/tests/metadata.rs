@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use panir::{Block, Inline, MetaValue, items, lookup, truthy};
+use panir::{Block, Inline, MetaValue, given, into_items, items, lookup, truthy};
 
 #[test]
 fn metadata_from_plain_values() {
@@ -64,9 +64,36 @@ fn lua_truth() {
         MetaValue::MetaMap(BTreeMap::new()),
     ] {
         assert!(truthy(Some(&v)), "{v:?}");
+        assert!(truthy(&v), "{v:?}"); // a value in hand, as an option
     }
     assert!(!truthy(Some(&false.into())));
+    assert!(!truthy(&MetaValue::from(false)));
     assert!(!truthy(None));
+    // in a closure over values (an Option's filter gives a &&MetaValue)
+    let mut meta = panir::Meta::new();
+    meta.insert("off".into(), false.into());
+    meta.insert("on".into(), "".into());
+    assert_eq!(meta.values().filter(|v| truthy(*v)).count(), 1);
+    assert_eq!(meta.get("on").filter(|v| truthy(*v)), Some(&"".into()));
+}
+
+#[test]
+fn given_is_the_value_if_true() {
+    let mut meta = panir::Meta::new();
+    meta.insert("off".into(), false.into());
+    meta.insert("on".into(), true.into());
+    meta.insert("empty".into(), "".into());
+    assert_eq!(given(meta.get("off")), None);
+    assert_eq!(given(meta.get("missing")), None);
+    assert_eq!(given(None), None);
+    for k in ["on", "empty"] {
+        assert!(std::ptr::eq(given(meta.get(k)).unwrap(), &meta[k])); // the document's own
+        assert!(std::ptr::eq(given(&meta[k]).unwrap(), &meta[k])); // from a value too
+    }
+    // Lua's `meta.x or d`
+    let d = MetaValue::from("d");
+    assert_eq!(given(meta.get("off")).unwrap_or(&d), &d);
+    assert_eq!(given(meta.get("empty")).unwrap_or(&d), &MetaValue::from(""));
 }
 
 #[test]
@@ -97,6 +124,20 @@ fn a_nested_option() {
         panic!()
     };
     assert_eq!(lookup(toc, &["depth"]), Some(&"2".into()));
+    // from a value: in hand, perhaps missing (an Option of it, or of a reference)
+    let value = &meta["toc"];
+    assert_eq!(lookup(value, &["style", "name"]), Some(&"x".into()));
+    assert_eq!(lookup(&meta.get("toc"), &["depth"]), Some(&"2".into()));
+    assert_eq!(lookup(&meta.get("missing"), &["depth"]), None);
+    assert_eq!(lookup(&meta["flag"], &["depth"]), None); // (not a map)
+    assert_eq!(lookup(&meta["l"], &["a"]), None);
+    // from a &mut Meta, as a meta function has it, and then changing it
+    let m = &mut meta;
+    assert!(lookup(m, &["flag"]).is_some());
+    m.insert("more".into(), true.into());
+    let taken = meta.remove("toc");
+    assert_eq!(lookup(&taken, &["depth"]), Some(&"2".into()));
+    assert_eq!(lookup(&None::<MetaValue>, &["depth"]), None);
 }
 
 #[test]
@@ -109,4 +150,18 @@ fn one_value_or_a_list() {
     assert!(items(Some(&empty)).is_empty());
     assert_eq!(items(Some(&false.into())), [false.into()]);
     assert!(items(None).is_empty());
+    // a value in hand, as an option
+    assert_eq!(items(&list), items(Some(&list)));
+    assert_eq!(items(&one), [MetaValue::from("a")]);
+    // owning: moved out of the document, an Option or a value
+    let mut meta = panir::Meta::new();
+    meta.insert("list".into(), list.clone());
+    meta.insert("one".into(), one.clone());
+    assert_eq!(into_items(meta.remove("list")), items(&list));
+    assert_eq!(into_items(meta.remove("one")), items(&one));
+    assert!(into_items(meta.remove("missing")).is_empty());
+    assert_eq!(into_items(one.clone()), [one]);
+    assert!(into_items(empty).is_empty());
+    assert_eq!(into_items(MetaValue::from(false)), [false.into()]);
+    assert!(meta.is_empty());
 }

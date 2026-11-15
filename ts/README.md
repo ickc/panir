@@ -198,13 +198,24 @@ assert.throws(() => applyFilter(Pandoc(Para("a")), wrong), {
 An error thrown in a function gets the same note (`in filter function
 ...`).
 
-As in Lua, what a function returns are values: `[el, el]` puts two nodes
-in the document, the second a copy. Elsewhere a node belongs in one place:
-to put it in a second, copy it (`copy(el)`), or whatever changes one later
-changes both. That is the filter's author's to get right, as anything a
-program does; for tests and debugging, `checkUnique(doc)` throws an error
-naming a node it finds in two places, and both (by identity: equal nodes
-are fine; an array in two places by what is in it).
+As in Lua, what one call returns are values: `[el, el]` puts two nodes in
+the document, the second a copy. Not across calls: a node returned by two
+calls is in two places (Lua's `local br = pandoc.RawBlock(...)`, returned
+for every marker, is a copy each time; here it is one node). Everywhere
+but within one return a node belongs in one place: to put it in a second,
+copy it (`copy(br)`), or whatever changes one later changes both. That is
+the filter's author's to get right, as anything a program does; for tests
+and debugging, `checkUnique(doc)` throws an error naming a node it finds
+in two places, and both (by identity: equal nodes are fine; an array in
+two places by what is in it).
+
+```ts
+import { checkUnique, copy, HorizontalRule, RawBlock } from "panir";
+
+const br = RawBlock("html", "<hr/>"); // made once
+const breaks: Filter = { HorizontalRule: () => copy(br) }; // a copy for each rule
+checkUnique(applyFilter(Pandoc([HorizontalRule(), HorizontalRule()]), breaks)); // (without the copy, it throws)
+```
 
 As in Lua, `Inlines` and `Blocks` get every list of them, and `Meta` the
 metadata; each returns a replacement, or nothing (converted as Lua does: a
@@ -346,6 +357,25 @@ What a port of a Lua filter trips over:
   (ASCII), `%s` ASCII whitespace, and there is no `|`; a port translates
   each, or escapes a literal string (`s.replace(/[\\^$.*+?()[\]{}|/]/g,
   "\\$&")`).
+- In `gsub`'s replacement too, `%` is special: `%1` is a capture, `%%` a
+  percent sign, and any other `%` an error (checked with pandoc 3.14), so
+  a replacement taken from the document (a size of `5%`) fails there.
+  JavaScript's `replace` has escapes of its own in a replacement string
+  (`$&`, `$1`, `$$`): `s.replace(re, () => text)` puts `text` in as it is.
+- Lua's strings are bytes: `#s`, `s:len()`, `s:sub(i, j)` and `s:byte(i)`
+  count bytes of UTF-8 (`#"é"` is 2; `s:sub(1, 1)` of it is half a
+  character, which pandoc reads back as U+FFFD), and `upper` and `lower`
+  change ASCII letters only; `utf8.len(s)` counts characters. A string's
+  `length` and `slice` count UTF-16 code units (`"😀".length` is 2), `[...s]`
+  is its characters; where an original depends on bytes,
+  `new TextEncoder().encode(s)` has them (`.length`, `.subarray(i - 1, j)`,
+  and `new TextDecoder().decode(...)`, which makes U+FFFD of half a
+  character, as pandoc does).
+- `PANDOC_READER_OPTIONS`: `ctx.conversion.readerOptions`, keyed as
+  pandoc's JSON (`"track-changes"`, `"tab-stop"`, where Lua's fields are
+  `track_changes`, `tab_stop`, and pandoc 2's `trackChanges` is gone),
+  with the same values (`"all-changes"`); `undefined` where pandoc passed
+  none.
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `MetaValue` (or `MetaList`, ...) is called on each
@@ -374,7 +404,11 @@ narrows `v` (a `switch (v.t)` too).
   missing field and for `false` only; an empty string, list or map is
   true, as is the text `no`. A node is an object, always true in
   JavaScript, `MetaBool(false)` too: `if (meta.x)` is true for `x: false`.
-  `truthy(meta.x)` is Lua's.
+  `truthy(meta.x)` is Lua's. `given(v)` is the value if `truthy`, else
+  `undefined`: Lua's `meta.x or d` is `given(meta.x) ?? d`, and `const v =
+  given(lookup(meta, "a", "b")); if (v) ...` narrows `v` to a `MetaValue`
+  (`truthy`, which says only true or false, does not: a type guard's false
+  branch would say `undefined`, and `MetaBool(false)` is false too).
 - **A nested option**, Lua's `((meta.a or {}).b or {}).c`: `lookup(meta,
   "a", "b", "c")`, `undefined` where a key is missing or a value on the
   way is not a map (where Lua would fail, on `true`, or find a method, on
@@ -392,22 +426,46 @@ narrows `v` (a `switch (v.t)` too).
   another list a `MetaList`, an object a `MetaMap`), as the constructors
   do. `toPlain(v)` reads metadata as Lua gives it: strings, booleans,
   arrays, objects, and inlines and blocks as arrays of them (copies, as
-  Lua's are values); `stringify(v)` its text.
+  Lua's are values), typed as a `PlainValue` (of the kind given: an object
+  of them for the metadata or a `MetaMap`; otherwise narrowed by `typeof`
+  and `Array.isArray`), which `fromPlain` takes; `stringify(v)` its text.
 - **Lua's tables are references** until pandoc converts the metadata back:
   a table put in two places is two values after (scholarly-metadata merges
   one institute into another). Here a node in two places is one node: copy
   it (`copy`), as any node.
+- **`return nil` from the `Meta` function** (or no `return`) loses in Lua
+  what it changed in the metadata, in place, nested values too, as for
+  any function (above; the `Pandoc` function's the same): the metadata
+  counts only if returned (checked with pandoc 3.14). Here what a function
+  changes stays: an original that changes the metadata, then returns
+  nothing in some case (first-line-indent's, unless it sets `indent`) is
+  ported by changing it only in the case that returns it.
+- **A metadata value's `.t` is `nil`** since pandoc 2.17 (its values are
+  plain Lua values; on `true` or `false`, Lua fails): an original testing
+  `meta.x.t == "MetaList"` takes its other branch whatever the value.
+  Here the test is `v.t === "MetaList"` (pandoc 3's
+  `pandoc.utils.type(v) == "List"`); a port of what the original does now
+  takes the other branch too.
 
 ```ts
-import { fromPlain, items, lookup, toPlain, truthy } from "panir";
+import { Conversion, fromPlain, given, items, lookup, stringify, toPlain, truthy } from "panir";
 
 const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" }, tags: "a" } }).meta;
 assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
+assert.deepEqual(given(meta.draft) ?? MetaString("final"), MetaString("final"));
+const depth = given(lookup(meta, "toc", "depth"));
+assert.equal(depth ? stringify(depth) : "3", "2");
 assert.deepEqual([lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")], [MetaString("2"), undefined]);
 assert.deepEqual([items(meta.tags), items(meta.missing)], [[MetaString("a")], []]);
 meta.name = fromPlain([Str("Ada"), Space(), Str("L.")]);
 assert.deepEqual(meta.name, MetaInlines([Str("Ada"), Space(), Str("L.")]));
 assert.deepEqual(toPlain(meta.toc!), { depth: "2" });
+assert.equal(toPlain(meta).tags, "a");
+const options = new Conversion({ readerOptions: { "track-changes": "all-changes" } }).readerOptions;
+assert.equal(options?.["track-changes"], "all-changes");
+assert.equal("width: SIZE".replace("SIZE", () => "$&5%"), "width: $&5%");
+const bytes = new TextEncoder().encode("«»");
+assert.deepEqual(["«»".length, bytes.length, new TextDecoder().decode(bytes.subarray(0, 1))], [2, 4, "\ufffd"]);
 ```
 
 ### Fragments
