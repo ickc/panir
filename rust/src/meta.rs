@@ -24,6 +24,25 @@ pub fn truthy<'a>(value: impl Into<Option<&'a MetaValue>>) -> bool {
     !matches!(value.into(), None | Some(MetaValue::MetaBool(false)))
 }
 
+/// The value if it is true as Lua sees it ([`truthy`]), else `None`: Lua's
+/// `meta.x or d` is `given(meta.get("x")).unwrap_or(&d)`, and `meta.x and
+/// f(meta.x)` is `given(meta.get("x")).map(f)`.
+///
+/// ```
+/// use panir::{MetaValue, given, stringify};
+///
+/// let mut meta = panir::Meta::new();
+/// meta.insert("draft".into(), false.into());
+/// meta.insert("class".into(), "wide".into());
+/// assert_eq!(given(meta.get("draft")), None);
+/// assert_eq!(given(meta.get("class")).map_or("plain".into(), stringify), "wide");
+/// let lang = ["quot-lang", "lang", "class"].iter().find_map(|k| given(meta.get(*k)));
+/// assert_eq!(lang, Some(&MetaValue::from("wide")));
+/// ```
+pub fn given<'a>(value: impl Into<Option<&'a MetaValue>>) -> Option<&'a MetaValue> {
+    value.into().filter(|v| truthy(*v))
+}
+
 /// The value at a path of keys, each but the last in a map (`MetaMap`):
 /// Lua's `((meta.a or {}).b or {}).c`, `None` where a key is missing or a
 /// value on the way is not a map (where Lua would fail, on `true`, or find a

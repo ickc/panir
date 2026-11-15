@@ -308,7 +308,9 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
 - **Lua's truth**: `if meta.x then` (and `meta.x or d`) is false for a
   missing field and for `false` only; an empty string, list or map is
   true, as is the text `no`: `truthy(meta.get("x"))`, or `truthy(v)` of a
-  value in hand.
+  value in hand. `given(meta.get("x"))` is the value if `truthy`, else
+  `None`: Lua's `meta.x or d` is `given(...).unwrap_or(&d)`, its `meta.x
+  and f(meta.x)` `given(...).map(f)`.
 - **A nested option**, Lua's `((meta.a or {}).b or {}).c`: `lookup(&meta,
   &["a", "b", "c"])`, `None` where a key is missing or a value on the way
   is not a map (where Lua would fail, on `true`, or find a method, on a
@@ -328,7 +330,7 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
   takes a `.clone()`, or an index into where it is.
 
 ```rust
-use panir::{MetaValue, Pandoc, items, lookup, truthy};
+use panir::{MetaValue, Pandoc, given, items, lookup, stringify, truthy};
 
 let mut doc = Pandoc::new(vec![]);
 doc.meta.insert("draft".into(), false.into());
@@ -340,6 +342,7 @@ assert_eq!(
     [truthy(meta.get("draft")), truthy(meta.get("title")), truthy(meta.get("missing"))],
     [false, true, false]
 );
+assert_eq!(given(meta.get("draft")).map_or("final".into(), stringify), "final");
 assert_eq!(lookup(meta, &["toc", "depth"]), Some(&MetaValue::from("2")));
 assert_eq!(lookup(meta, &["title", "depth"]), None);
 assert_eq!(items(meta.get("tags")), [MetaValue::from("a")]);

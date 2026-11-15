@@ -492,8 +492,8 @@ def truthy() -> list[Filter]:
     @f.on(Pandoc)
     def truth(doc):
         words = [f"{k}={'true' if doc.meta.get(k) else 'false'}" for k in (*TRUTHY_KEYS, "missing")]
-        words.append(f"no-or={A.stringify(doc.meta.get('no') or MetaString('d'))}")
-        words.append(f"text-or={A.stringify(doc.meta.get('text') or MetaString('d'))}")
+        ors = [A.stringify(doc.meta.get(k) or MetaString("d")) for k in (*TRUTHY_KEYS, "missing")]
+        words.append(f"or={','.join(ors)}")
         doc.blocks.append(Para(" ".join(words)))
 
     return [f]

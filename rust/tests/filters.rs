@@ -3,7 +3,7 @@
 
 use panir::{
     Attr, Block, Ctx, Div, Filter, FilterError, Header, Inline, Meta, MetaValue, Order, Pandoc,
-    apply, from_str, items, lookup, to_string, truthy,
+    apply, from_str, given, items, lookup, to_string, truthy,
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -598,12 +598,11 @@ impl Filter for Truthy {
             .iter()
             .map(|k| format!("{k}={}", truthy(doc.meta.get(*k))))
             .collect();
-        let or = |v: Option<&MetaValue>| match v {
-            Some(v) if truthy(Some(v)) => panir::stringify(v),
-            _ => "d".into(),
-        };
-        words.push(format!("no-or={}", or(doc.meta.get("no"))));
-        words.push(format!("text-or={}", or(doc.meta.get("text"))));
+        let ors: Vec<String> = keys
+            .iter()
+            .map(|k| given(doc.meta.get(*k)).map_or("d".into(), panir::stringify))
+            .collect();
+        words.push(format!("or={}", ors.join(",")));
         doc.blocks
             .push(Block::Para(panir::inlines(&words.join(" "))));
         Some(())

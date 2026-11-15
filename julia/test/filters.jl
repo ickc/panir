@@ -228,8 +228,7 @@ function scenario_truthy()
         keys = ["yes", "no", "text", "empty", "null", "noword", "zero", "list", "map", "block", "missing"]
         words = ["$k=$(truthy(get(d.meta, k, nothing)))" for k in keys]
         or(v) = truthy(v) ? v : MetaString("d")
-        push!(words, "no-or=$(stringify(or(get(d.meta, "no", nothing))))",
-              "text-or=$(stringify(or(get(d.meta, "text", nothing))))")
+        push!(words, "or=" * join([stringify(or(get(d.meta, k, nothing))) for k in keys], ","))
         push!(d.blocks, Para(join(words, " ")))
         nothing
     end

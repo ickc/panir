@@ -6,8 +6,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  applyFilter, ASTTypeError, Emph, Header, MetaList, MetaMap, MetaString, Pandoc as makePandoc, Para, parse, serialize,
-  Str, walk,
+  applyFilter, ASTTypeError, Emph, given, Header, lookup, MetaList, MetaMap, MetaString, Pandoc as makePandoc, Para,
+  parse, serialize, Str, truthy, walk,
 } from "../src/index.ts";
 import type { Block, Filter, Inline, MetaValue, Pandoc, Row } from "../src/index.ts";
 import type { runFilter } from "../src/node.ts";
@@ -116,4 +116,20 @@ test("a function's ctx.parent is a node that can hold its node, and has a t to t
   // a context of its own (in walk) is of any node, with a t to test
   walk(makePandoc([Para([Str("x")])]), (_x, ctx) => { if (ctx.parent?.t === "Para") seen.push("walked"); });
   assert.equal(seen.at(-1), "walked");
+});
+
+test("Lua's truth: given narrows to the value; truthy, not a type guard, doesn't", () => {
+  const meta = makePandoc([], { meta: { toc: { on: "x", off: false } } }).meta;
+  const need = (v: MetaValue) => v.t;
+  // (lookup's result is MetaValue | undefined, as is any value perhaps missing)
+  const on = given(lookup(meta, "toc", "on"));
+  if (on) assert.equal(need(on), "MetaString");
+  assert.equal(given(lookup(meta, "toc", "off")) ?? "d", "d");
+  const v = lookup(meta, "toc", "on");
+  if (truthy(v)) {
+    // @ts-expect-error: still MetaValue | undefined (its false branch can't say undefined: MetaBool(false))
+    need(v);
+  }
+  const off = lookup(meta, "toc", "off");
+  if (!truthy(off)) assert.equal(off?.t, "MetaBool"); // (a value, though false)
 });

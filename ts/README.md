@@ -374,7 +374,11 @@ narrows `v` (a `switch (v.t)` too).
   missing field and for `false` only; an empty string, list or map is
   true, as is the text `no`. A node is an object, always true in
   JavaScript, `MetaBool(false)` too: `if (meta.x)` is true for `x: false`.
-  `truthy(meta.x)` is Lua's.
+  `truthy(meta.x)` is Lua's. `given(v)` is the value if `truthy`, else
+  `undefined`: Lua's `meta.x or d` is `given(meta.x) ?? d`, and `const v =
+  given(lookup(meta, "a", "b")); if (v) ...` narrows `v` to a `MetaValue`
+  (`truthy`, which says only true or false, does not: a type guard's false
+  branch would say `undefined`, and `MetaBool(false)` is false too).
 - **A nested option**, Lua's `((meta.a or {}).b or {}).c`: `lookup(meta,
   "a", "b", "c")`, `undefined` where a key is missing or a value on the
   way is not a map (where Lua would fail, on `true`, or find a method, on
@@ -399,10 +403,13 @@ narrows `v` (a `switch (v.t)` too).
   it (`copy`), as any node.
 
 ```ts
-import { fromPlain, items, lookup, toPlain, truthy } from "panir";
+import { fromPlain, given, items, lookup, stringify, toPlain, truthy } from "panir";
 
 const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" }, tags: "a" } }).meta;
 assert.deepEqual([truthy(meta.draft), truthy(meta.title), truthy(meta.missing)], [false, true, false]);
+assert.deepEqual(given(meta.draft) ?? MetaString("final"), MetaString("final"));
+const depth = given(lookup(meta, "toc", "depth"));
+assert.equal(depth ? stringify(depth) : "3", "2");
 assert.deepEqual([lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")], [MetaString("2"), undefined]);
 assert.deepEqual([items(meta.tags), items(meta.missing)], [[MetaString("a")], []]);
 meta.name = fromPlain([Str("Ada"), Space(), Str("L.")]);

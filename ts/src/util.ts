@@ -225,6 +225,17 @@ export function truthy(value: MetaValue | null | undefined): boolean {
 }
 
 /**
+ * The value if it is true as pandoc's Lua sees it (`truthy`), else
+ * `undefined`: Lua's `meta.x or d` is `given(meta.x) ?? d`, and its `if
+ * meta.x then ... meta.x ...` is `const x = given(meta.x); if (x) ...`, in
+ * which `x` is a `MetaValue`. (`truthy` is not a type guard: its false
+ * branch would say `undefined`, and `MetaBool(false)` is false too.)
+ */
+export function given<T extends MetaValue>(value: T | null | undefined): T | undefined {
+  return value != null && truthy(value) ? value : undefined;
+}
+
+/**
  * The metadata value at a path of keys, each but the last in a map: Lua's
  * `((meta.a or {}).b or {}).c`, `undefined` where a key is missing or a value
  * on the way is not a map (where Lua would fail, on `true`, or find a method,

@@ -6,12 +6,12 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
-  ASTTypeError, Attr, Citation, Code, copy, Div, Emph, equal, fromJSON, fromPlain, getAttribute, hasAttribute,
+  ASTTypeError, Attr, Citation, Code, copy, Div, Emph, equal, fromJSON, fromPlain, getAttribute, given, hasAttribute,
   items, LineBreak, ListAttributes, lookup, removeAttribute, setAttribute,
   MetaBlocks, MetaBool, MetaInlines, MetaList, MetaMap, MetaString, Note, Pandoc, Para, parse, Plain, Quoted, RawInline,
   serialize, Str, stringify, toPlain, truthy,
 } from "../src/index.ts";
-import type { Pandoc as Doc } from "../src/index.ts";
+import type { Pandoc as Doc, MetaString as MetaStringNode } from "../src/index.ts";
 import { pandoc } from "./pandoc.ts";
 
 // for each document: stringify of the whole, of its metadata, of each
@@ -129,6 +129,24 @@ test("Lua's truth of metadata values: false only for a missing one and MetaBool(
   assert.equal(truthy(undefined), false);
   assert.equal(truthy(null), false);
   assert.equal(truthy(Pandoc([], { meta: { off: false } }).meta.off), false);
+});
+
+test("given: the value if Lua's truth says so, else undefined (Lua's meta.x or d)", () => {
+  const meta = Pandoc([], { meta: { off: false, on: true, empty: "", text: "x" } }).meta;
+  assert.equal(given(meta.off), undefined);
+  assert.equal(given(meta.missing), undefined);
+  assert.equal(given(null), undefined);
+  for (const k of ["on", "empty", "text"]) assert.equal(given(meta[k]), meta[k]); // the document's own
+  assert.equal(stringify(given(meta.off) ?? MetaString("d")), "d");
+  assert.equal(stringify(given(meta.empty) ?? MetaString("d")), "");
+  // narrowed, with no `!`: a MetaValue where one is needed
+  const v = given(meta.text);
+  const text: string = v ? stringify(v) : "none";
+  assert.equal(text, "x");
+  // a narrower type stays as it was
+  const s = MetaString("y");
+  const same: MetaStringNode | undefined = given(s);
+  assert.equal(same, s);
 });
 
 test("a nested option, through maps: undefined where a key is missing or a value on the way is not a map", () => {

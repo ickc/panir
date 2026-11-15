@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use panir::{Block, Inline, MetaValue, items, lookup, truthy};
+use panir::{Block, Inline, MetaValue, given, items, lookup, truthy};
 
 #[test]
 fn metadata_from_plain_values() {
@@ -75,6 +75,25 @@ fn lua_truth() {
     meta.insert("on".into(), "".into());
     assert_eq!(meta.values().filter(|v| truthy(*v)).count(), 1);
     assert_eq!(meta.get("on").filter(|v| truthy(*v)), Some(&"".into()));
+}
+
+#[test]
+fn given_is_the_value_if_true() {
+    let mut meta = panir::Meta::new();
+    meta.insert("off".into(), false.into());
+    meta.insert("on".into(), true.into());
+    meta.insert("empty".into(), "".into());
+    assert_eq!(given(meta.get("off")), None);
+    assert_eq!(given(meta.get("missing")), None);
+    assert_eq!(given(None), None);
+    for k in ["on", "empty"] {
+        assert!(std::ptr::eq(given(meta.get(k)).unwrap(), &meta[k])); // the document's own
+        assert!(std::ptr::eq(given(&meta[k]).unwrap(), &meta[k])); // from a value too
+    }
+    // Lua's `meta.x or d`
+    let d = MetaValue::from("d");
+    assert_eq!(given(meta.get("off")).unwrap_or(&d), &d);
+    assert_eq!(given(meta.get("empty")).unwrap_or(&d), &MetaValue::from(""));
 }
 
 #[test]
