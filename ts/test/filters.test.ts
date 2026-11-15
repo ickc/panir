@@ -5,9 +5,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
-  applyFilter, Div, Emph, fromJSON, getAttribute, given, Header, HorizontalRule, items, lookup, MetaBool, MetaInlines, MetaList,
-  MetaString, Pandoc as makePandoc, Para, removeAttribute, setAttribute, Str, stringify, Strong, toJSON, truthy,
-  Underline,
+  applyFilter, copy, Div, Emph, fromJSON, fromPlain, getAttribute, given, Header, HorizontalRule, items, lookup,
+  MetaBool, MetaInlines, MetaList, MetaString, Pandoc as makePandoc, Para, RawBlock, RawInline, removeAttribute,
+  setAttribute, Str, stringify, Strong, toJSON, truthy, Underline,
 } from "../src/index.ts";
 import type {
   AnyFilter, Block, Filter, MetaBool as MetaBoolNode, MetaInlines as MetaInlinesNode, MetaList as MetaListNode,
@@ -273,6 +273,18 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
       doc.blocks.push(Para(words.join(" ")));
     },
   }],
+
+  prepend: () => {
+    const mark = RawInline("tex", "\\raw{}");
+    return [{
+      Meta: (meta) => {
+        for (const k of ["one", "list", "map", "off", "missing"]) {
+          meta[k] = fromPlain([RawBlock("html", `<${k}>`), ...items(meta[k])]);
+        }
+      },
+      Str: (s) => (s.text === "raw" ? copy(mark) : undefined), // (one node, returned twice: a copy each)
+    }];
+  },
 
   items: () => [{
     Pandoc: (doc) => {

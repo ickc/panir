@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use panir::{Block, Inline, MetaValue, given, items, lookup, truthy};
+use panir::{Block, Inline, MetaValue, given, into_items, items, lookup, truthy};
 
 #[test]
 fn metadata_from_plain_values() {
@@ -153,4 +153,15 @@ fn one_value_or_a_list() {
     // a value in hand, as an option
     assert_eq!(items(&list), items(Some(&list)));
     assert_eq!(items(&one), [MetaValue::from("a")]);
+    // owning: moved out of the document, an Option or a value
+    let mut meta = panir::Meta::new();
+    meta.insert("list".into(), list.clone());
+    meta.insert("one".into(), one.clone());
+    assert_eq!(into_items(meta.remove("list")), items(&list));
+    assert_eq!(into_items(meta.remove("one")), items(&one));
+    assert!(into_items(meta.remove("missing")).is_empty());
+    assert_eq!(into_items(one.clone()), [one]);
+    assert!(into_items(empty).is_empty());
+    assert_eq!(into_items(MetaValue::from(false)), [false.into()]);
+    assert!(meta.is_empty());
 }

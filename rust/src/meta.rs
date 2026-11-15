@@ -134,6 +134,30 @@ pub fn items<'a>(value: impl Into<Option<&'a MetaValue>>) -> &'a [MetaValue] {
     }
 }
 
+/// As [`items`], owning: one value or a list of them, taken out of the
+/// document (`meta.remove("x")`, an `Option`, or a value), as a list of
+/// them, moved: a `MetaList`'s items, nothing for a missing value, any
+/// other value alone.
+///
+/// ```
+/// use panir::{Block, MetaValue, into_items};
+///
+/// let mut meta = panir::Meta::new();
+/// meta.insert("header-includes".into(), "<meta>".into());
+/// // a raw block before what is there, whatever its shape
+/// let mut header = vec![MetaValue::from(Block::raw("html", "<style/>"))];
+/// header.extend(into_items(meta.remove("header-includes")));
+/// meta.insert("header-includes".into(), header.into());
+/// assert_eq!(panir::items(meta.get("header-includes")).len(), 2);
+/// ```
+pub fn into_items(value: impl Into<Option<MetaValue>>) -> Vec<MetaValue> {
+    match value.into() {
+        None => vec![],
+        Some(MetaValue::MetaList(xs)) => xs,
+        Some(v) => vec![v],
+    }
+}
+
 // Plain values as metadata, as pandoc's Lua converts them: a string is a
 // MetaString, a boolean a MetaBool, inlines MetaInlines, blocks MetaBlocks,
 // metadata values a MetaList, a map a MetaMap.

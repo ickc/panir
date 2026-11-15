@@ -321,7 +321,8 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
 - **One value or a list of them** (a filter's `ensure_list`, the shapes
   `header-includes` takes): `items(meta.get("x"))` (or `items(v)`), a
   `MetaList`'s items, nothing for a missing value, any other value alone:
-  a slice, borrowed from the document.
+  a slice, borrowed from the document. `into_items(meta.remove("x"))` (or
+  of a value) owns them: a `Vec`, moved out.
 - **Writing metadata** (Lua's `meta.x = v`): `meta.insert("x".into(),
   v.into())` converts a plain value as Lua does (below, in "Types");
   reading needs no conversion: a `MetaMap`'s content is a `BTreeMap`, a
@@ -332,7 +333,7 @@ value is a node, a `MetaValue`, holding what Lua gives in a field
   takes a `.clone()`, or an index into where it is.
 
 ```rust
-use panir::{MetaValue, Pandoc, given, items, lookup, stringify, truthy};
+use panir::{MetaValue, Pandoc, given, into_items, items, lookup, stringify, truthy};
 
 let mut doc = Pandoc::new(vec![]);
 doc.meta.insert("draft".into(), false.into());
@@ -350,6 +351,12 @@ assert_eq!(lookup(meta, &["title", "depth"]), None);
 assert_eq!(lookup(&meta["toc"], &["depth"]), Some(&MetaValue::from("2")));
 assert_eq!(items(meta.get("tags")), [MetaValue::from("a")]);
 assert!(items(meta.get("missing")).is_empty());
+
+// a raw block before what `tags` has, whatever its shape (as filters write `header-includes`)
+let mut header = vec![MetaValue::from(panir::Block::raw("html", "<style/>"))];
+header.extend(into_items(doc.meta.remove("tags")));
+doc.meta.insert("tags".into(), header.into());
+assert_eq!(items(doc.meta.get("tags")).len(), 2);
 ```
 
 ## Types and `VisitMut`

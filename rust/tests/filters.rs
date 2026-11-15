@@ -3,7 +3,7 @@
 
 use panir::{
     Attr, Block, Ctx, Div, Filter, FilterError, Header, Inline, Meta, MetaValue, Order, Pandoc,
-    apply, from_str, given, items, lookup, to_string, truthy,
+    apply, from_str, given, into_items, items, lookup, to_string, truthy,
 };
 use serde_json::Value;
 use serde_json::value::RawValue;
@@ -707,6 +707,33 @@ impl Filter for Mark {
     }
 }
 
+/// Each field, taken out, written back after a raw block; one raw inline
+/// for each word `raw`, a copy of the filter's own.
+struct Prepend(Order, Inline);
+
+impl Filter for Prepend {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn meta(&mut self, meta: &mut Meta, _: &mut Ctx) -> Option<()> {
+        for k in ["one", "list", "map", "off", "missing"] {
+            let mut out = vec![MetaValue::from(Block::raw("html", format!("<{k}>")))];
+            out.extend(into_items(meta.remove(k)));
+            // (as Lua converts a list of a block alone: blocks)
+            let value = if out.len() == 1 {
+                out.remove(0)
+            } else {
+                out.into()
+            };
+            meta.insert(k.into(), value);
+        }
+        Some(())
+    }
+    fn inline(&mut self, x: &mut Inline, _: &mut Ctx) -> Option<Vec<Inline>> {
+        matches!(x, Inline::Str(s) if s == "raw").then(|| vec![self.1.clone()])
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -735,6 +762,7 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "truthy" => Box::new(Truthy(order)),
         "lookup" => Box::new(Lookup(order)),
         "items" => Box::new(Items(order)),
+        "prepend" => Box::new(Prepend(order, Inline::raw("tex", "\\raw{}"))),
         "chain" => {
             // (a Lua file's list of filters: one apply after the other)
             let mut configure = Configure(order, "?".into());

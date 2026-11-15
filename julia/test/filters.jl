@@ -169,6 +169,18 @@ function scenario_fails()
     Filters([(f, :typewise)])
 end
 
+function scenario_prepend()
+    mark = RawInline("tex", "\\raw{}")
+    function f(meta::Panir.Meta)
+        for k in ["one", "list", "map", "off", "missing"]
+            meta[k] = [RawBlock("html", "<$k>"); items(get(meta, k, nothing))]
+        end
+        nothing
+    end
+    f(s::Str) = s.text == "raw" ? deepcopy(mark) : nothing  # (one node, returned twice: a copy each)
+    Filters([(f, :typewise)])
+end
+
 function scenario_helperfails()
     size(config::MetaMap) = get(config.content, "size", nothing)
     size(config) = error("indent: a map of options, not $(repr(config))")
@@ -282,6 +294,7 @@ const SCENARIOS = Dict(
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
     "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete, "helperfails" => scenario_helperfails,
     "truthy" => scenario_truthy, "lookup" => scenario_lookup, "items" => scenario_items, "chain" => scenario_chain,
+    "prepend" => scenario_prepend,
 )
 
 @testset "filters as pandoc's Lua" begin

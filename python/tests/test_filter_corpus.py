@@ -3,6 +3,7 @@ Python filters, must make of its input what pandoc's Lua filter made."""
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 
 import panir as A
@@ -32,6 +33,8 @@ from panir import (
     Note,
     Pandoc,
     Para,
+    RawBlock,
+    RawInline,
     Space,
     Span,
     Str,
@@ -545,6 +548,23 @@ def items() -> list[Filter]:
     return [f]
 
 
+def prepend() -> list[Filter]:
+    f = Filter()
+    mark = RawInline("tex", "\\raw{}")
+
+    @f.on_meta
+    def header(meta):
+        for k in ("one", "list", "map", "off", "missing"):
+            meta[k] = [RawBlock("html", f"<{k}>"), *A.items(meta.get(k))]
+
+    @f.on(Str)
+    def raw(s):
+        if s.text == "raw":
+            return copy.deepcopy(mark)  # (one node, returned twice: a copy each)
+
+    return [f]
+
+
 def chain() -> list[Filter]:
     mark = ["?"]
     configure, add = Filter(), Filter()
@@ -564,7 +584,7 @@ SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
     + (once, lists, meta, newdoc, twice, metacount, attributes, fails, helperfails)
-    + (replaced, metavalues, metadelete, truthy, lookup, items, chain)
+    + (replaced, metavalues, metadelete, truthy, lookup, items, chain, prepend)
 }
 
 
