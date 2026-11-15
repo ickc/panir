@@ -1,12 +1,12 @@
 //! Metadata as pandoc's Lua filters read and write it: made from plain
 //! values, Lua's truth, a lookup through maps, one value or a list, a value
-//! as inlines or blocks.
+//! as inlines or blocks; and pandoc.utils.to_roman_numeral.
 
 use std::collections::BTreeMap;
 
 use panir::{
     Block, Inline, Meta, MetaValue, blocks_of, given, inlines, inlines_of, into_items, items,
-    lookup, truthy,
+    lookup, to_roman_numeral, truthy,
 };
 
 #[test]
@@ -241,4 +241,32 @@ fn inlines_of_and_blocks_of_as_lua() {
         let e = got.unwrap_err();
         assert!(e.contains(message), "{e}");
     }
+}
+
+#[test]
+fn to_roman_numeral_as_lua() {
+    // pandoc.utils.to_roman_numeral, checked with pandoc 3.14
+    let got: Vec<String> = [1, 4, 9, 14, 40, 90, 400, 1994, 3999]
+        .into_iter()
+        .map(to_roman_numeral)
+        .collect();
+    assert_eq!(
+        got,
+        [
+            "I",
+            "IV",
+            "IX",
+            "XIV",
+            "XL",
+            "XC",
+            "CD",
+            "MCMXCIV",
+            "MMMCMXCIX"
+        ]
+    );
+    let out: Vec<String> = [0, 4000, i64::MAX, -1, i64::MIN]
+        .into_iter()
+        .map(to_roman_numeral)
+        .collect();
+    assert_eq!(out, ["", "?", "?", "?", "?"]);
 }

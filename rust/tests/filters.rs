@@ -776,6 +776,27 @@ impl Filter for InlinesOf {
     }
 }
 
+/// pandoc.utils.to_roman_numeral of some numbers, in a paragraph.
+struct Roman(Order);
+
+impl Filter for Roman {
+    fn order(&self) -> Order {
+        self.0
+    }
+    fn pandoc(&mut self, doc: &mut Pandoc, _: &mut Ctx) -> Option<()> {
+        let numbers = [
+            0, 1, 4, 9, 14, 40, 90, 400, 1994, 2026, 3999, 4000, 1000000, -1,
+        ];
+        let words: Vec<String> = numbers
+            .iter()
+            .map(|n| format!("{n}={}", panir::to_roman_numeral(*n)))
+            .collect();
+        doc.blocks
+            .push(Block::Para(panir::inlines(&words.join(" "))));
+        Some(())
+    }
+}
+
 /// The scenario `name` on `doc`; `bottomup` for a stateless one run bottom-up.
 /// `None` if there is no Rust version of it.
 fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), FilterError>> {
@@ -805,6 +826,7 @@ fn scenario(name: &str, doc: &mut Pandoc, bottomup: bool) -> Option<Result<(), F
         "lookup" => Box::new(Lookup(order)),
         "items" => Box::new(Items(order)),
         "inlinesof" => Box::new(InlinesOf(order)),
+        "roman" => Box::new(Roman(order)),
         "prepend" => Box::new(Prepend(order, Inline::raw("tex", "\\raw{}"))),
         "chain" => {
             // (a Lua file's list of filters: one apply after the other)

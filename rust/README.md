@@ -311,6 +311,8 @@ What a port of a Lua filter trips over:
   assert_eq!((s.chars().count(), s.len()), (2, 4));
   assert_eq!(String::from_utf8_lossy(&s.as_bytes()[0..1]), "\u{fffd}");
   ```
+- `pandoc.utils.to_roman_numeral(n)`: `to_roman_numeral(n)`, the same (1
+  to 3999; `""` for 0, `"?"` for anything else).
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `meta_value` is called on each one.
@@ -414,6 +416,7 @@ assert!(items(meta.get("missing")).is_empty());
 assert_eq!(inlines_of(&meta["tags"]), Ok(vec![Inline::Str("a".into())]));
 assert_eq!(blocks_of(&meta["tags"]), Ok(vec![Block::Plain(vec![Inline::Str("a".into())])]));
 assert!(inlines_of(&meta["draft"]).is_err()); // as Lua: a boolean is not inlines
+assert_eq!(panir::to_roman_numeral(2026), "MMXXVI");
 
 // a raw block before what `tags` has, whatever its shape (as filters write `header-includes`)
 let mut header = vec![MetaValue::from(panir::Block::raw("html", "<style/>"))];

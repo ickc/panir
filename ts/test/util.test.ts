@@ -9,7 +9,7 @@ import {
   ASTTypeError, Attr, blocksOf, Citation, Code, copy, Div, Emph, equal, fromJSON, fromPlain, getAttribute, given,
   hasAttribute, inlinesOf, items, LineBreak, ListAttributes, lookup, removeAttribute, setAttribute,
   MetaBlocks, MetaBool, MetaInlines, MetaList, MetaMap, MetaString, Note, Pandoc, Para, parse, Plain, Quoted, RawInline,
-  serialize, Space, Str, stringify, toPlain, truthy,
+  serialize, Space, Str, stringify, toPlain, toRomanNumeral, truthy,
 } from "../src/index.ts";
 import type { Pandoc as Doc, MetaString as MetaStringNode } from "../src/index.ts";
 import { pandoc } from "./pandoc.ts";
@@ -205,6 +205,13 @@ test("a metadata value as inlines or blocks, as pandoc's Lua converts it", () =>
   for (const [f, v, message] of fails) {
     assert.throws(() => f(v as never), (e: Error) => e instanceof ASTTypeError && e.message.includes(message), message);
   }
+});
+
+test("pandoc.utils.to_roman_numeral", () => {
+  const got = [1, 4, 9, 14, 40, 90, 400, 1994, 3999].map(toRomanNumeral);
+  assert.deepEqual(got, ["I", "IV", "IX", "XIV", "XL", "XC", "CD", "MCMXCIV", "MMMCMXCIX"]);
+  assert.deepEqual([0, 4000, 2 ** 53, -1].map(toRomanNumeral), ["", "?", "?", "?"]);
+  for (const wrong of [2.5, NaN, Infinity]) assert.throws(() => toRomanNumeral(wrong), TypeError);
 });
 
 test("attributes by key, as pandoc's Lua", () => {

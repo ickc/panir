@@ -257,3 +257,13 @@ def test_inlines_of_and_blocks_of_as_lua():
     for f, v, message in fails:
         with pytest.raises(ASTTypeError, match=re.escape(message)):
             f(v)
+
+
+def test_to_roman_numeral_as_lua():
+    """pandoc.utils.to_roman_numeral, checked with pandoc 3.14."""
+    got = [panir.to_roman_numeral(n) for n in (1, 4, 9, 14, 40, 90, 400, 1994, 3999)]
+    assert got == ["I", "IV", "IX", "XIV", "XL", "XC", "CD", "MCMXCIV", "MMMCMXCIX"]
+    assert [panir.to_roman_numeral(n) for n in (0, 4000, 10**30, -1)] == ["", "?", "?", "?"]
+    for wrong in (2.5, "12", True):
+        with pytest.raises(TypeError):
+            panir.to_roman_numeral(wrong)  # type: ignore[arg-type]

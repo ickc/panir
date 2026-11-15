@@ -34,7 +34,7 @@ struct Readme;
 pub use filter::{Conversion, Ctx, Filter, FilterError, Order, Walkable, apply, apply_with};
 pub use generated::*;
 pub use meta::{blocks_of, given, inlines_of, into_items, items, lookup, truthy};
-pub use stringify::{Stringify, stringify};
+pub use stringify::{Stringify, stringify, to_roman_numeral};
 pub use text::Text;
 
 use std::fmt;

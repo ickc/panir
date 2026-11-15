@@ -278,6 +278,8 @@ What a port of a Lua filter trips over:
   fields are `track_changes`, `tab_stop`, and pandoc 2's `trackChanges` is
   gone), with the same values (`"all-changes"`); `nothing` where pandoc
   passed none.
+- `pandoc.utils.to_roman_numeral(n)`: `to_roman_numeral(n)`, the same (1
+  to 3999; `""` for 0, `"?"` for anything else; not an integer fails).
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, a method for `MetaValue` (or `MetaList`, ...) is
@@ -363,6 +365,7 @@ lookup(meta, "toc", "depth"), lookup(meta, "title", "depth")  # (MetaString("2")
 items(meta["tags"]), items(get(meta, "missing", nothing))  # ([MetaString("a")], MetaValue[])
 meta["name"] = [Str("Ada"), Space(), Str("L.")]  # MetaInlines(Str("Ada"), Space(), Str("L."))
 inlines_of(meta["tags"]), blocks_of(meta["name"])  # ([Str("a")], [Plain(Str("Ada")), Plain(Space()), Plain(Str("L."))])
+to_roman_numeral(2026), to_roman_numeral(0), to_roman_numeral(4000)  # ("MMXXVI", "", "?")
 Conversion(; reader_options = Dict("track-changes" => "all-changes")).reader_options["track-changes"]  # "all-changes"
 replace("width: SIZE", "SIZE" => "\\1 5%")  # "width: \\1 5%"
 length("«»"), ncodeunits("«»"), codeunit("«»", 1)  # (2, 4, 0xc2)

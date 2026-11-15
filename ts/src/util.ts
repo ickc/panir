@@ -327,6 +327,28 @@ export function blocksOf(value: MetaValue): Block[] {
   throw new ASTTypeError("", "blocks (MetaBlocks, MetaInlines, MetaString, MetaMap, or a MetaList)", describe(value));
 }
 
+const ROMAN: readonly (readonly [number, string])[] = [
+  [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"],
+  [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"],
+];
+
+/**
+ * An integer in Roman numerals, as pandoc's Lua
+ * `pandoc.utils.to_roman_numeral`: 1 to 3999 (`"MMXXVI"`), `""` for 0, and
+ * `"?"` for anything else, negative or 4000 and more. Not an integer is a
+ * `TypeError`, as in Lua.
+ */
+export function toRomanNumeral(n: number): string {
+  if (!Number.isInteger(n)) throw new TypeError(`toRomanNumeral takes an integer, got ${describe(n)}`);
+  if (n < 0 || n >= 4000) return "?";
+  let out = "";
+  for (const [value, letters] of ROMAN) {
+    out += letters.repeat(Math.floor(n / value));
+    n %= value;
+  }
+  return out;
+}
+
 /**
  * Metadata as plain values, as pandoc's Lua gives them to a filter: a
  * `MetaString` a string, a `MetaBool` a boolean, a `MetaList` an array, a

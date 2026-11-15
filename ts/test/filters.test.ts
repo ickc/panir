@@ -7,7 +7,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import {
   applyFilter, ASTTypeError, blocksOf, checkUnique, copy, Div, Emph, fromJSON, fromPlain, getAttribute, given, Header,
   HorizontalRule, inlinesOf, items, lookup, MetaBool, MetaInlines, MetaList, MetaString, Pandoc as makePandoc, Para,
-  RawBlock, RawInline, removeAttribute, setAttribute, Space, Str, stringify, Strong, toJSON, truthy,
+  RawBlock, RawInline, removeAttribute, setAttribute, Space, Str, stringify, Strong, toJSON, toRomanNumeral, truthy,
   Underline,
 } from "../src/index.ts";
 import type {
@@ -325,6 +325,13 @@ const SCENARIOS: Record<string, () => AnyFilter[]> = {
         doc.blocks.push(Para([Str(`${k}:`), Space(), ...orFails(() => inlinesOf(v), Str("fails"))]));
         doc.blocks.push(Div(orFails(() => blocksOf(v), Para("fails")), { identifier: k }));
       }
+    },
+  }],
+
+  roman: () => [{
+    Pandoc: (doc) => {
+      const numbers = [0, 1, 4, 9, 14, 40, 90, 400, 1994, 2026, 3999, 4000, 1000000, -1];
+      doc.blocks.push(Para(numbers.map((n) => `${n}=${toRomanNumeral(n)}`).join(" ")));
     },
   }],
 

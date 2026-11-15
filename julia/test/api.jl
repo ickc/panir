@@ -484,6 +484,13 @@ end
     end
 end
 
+@testset "pandoc.utils.to_roman_numeral" begin
+    @test to_roman_numeral.([1, 4, 9, 14, 40, 90, 400, 1994, 3999]) == ["I", "IV", "IX", "XIV", "XL", "XC", "CD", "MCMXCIV", "MMMCMXCIX"]
+    @test to_roman_numeral.([0, 4000, typemax(Int), -1, big(10)^30]) == ["", "?", "?", "?", "?"]
+    @test_throws MethodError to_roman_numeral(2.5)
+    @test_throws MethodError to_roman_numeral(true)
+end
+
 @testset "one value or a list of them, as a list" begin
     meta = Pandoc(; meta = Dict("one" => "a", "l" => ["a", "b"], "e" => [], "off" => false)).meta
     @test items(meta["one"]) == [MetaString("a")]

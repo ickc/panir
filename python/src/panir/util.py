@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import operator
 from collections.abc import Mapping
 from typing import Any
 
@@ -44,6 +45,7 @@ __all__ = [
     "lookup",
     "stringify",
     "to_python",
+    "to_roman_numeral",
 ]
 
 _QUOTES = {QuoteType.SingleQuote: ("‘", "’"), QuoteType.DoubleQuote: ("“", "”")}
@@ -128,6 +130,29 @@ def _text(value: Any, out: list[str], inlines_only: bool) -> None:
     else:
         for f, _ in _walk_fields(type(value)):
             _text(getattr(value, f), out, inlines_only)
+
+
+_ROMAN = (
+    (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"),
+    (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+)  # fmt: skip
+
+
+def to_roman_numeral(n: int) -> str:
+    """An integer in Roman numerals, as pandoc's Lua
+    ``pandoc.utils.to_roman_numeral``: 1 to 3999 (``"MMXXVI"``), ``""`` for
+    0, and ``"?"`` for anything else, negative or 4000 and more. Not an
+    integer (a bool too) is a ``TypeError``, as in Lua."""
+    if isinstance(n, bool):
+        raise TypeError("to_roman_numeral takes an integer, got bool")
+    n = operator.index(n)
+    if not 0 <= n < 4000:
+        return "?"
+    out = []
+    for value, letters in _ROMAN:
+        count, n = divmod(n, value)
+        out.append(letters * count)
+    return "".join(out)
 
 
 def lookup(

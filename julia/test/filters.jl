@@ -299,6 +299,12 @@ function scenario_inlinesof()
     Filters([(f, :typewise)])
 end
 
+function scenario_roman()
+    numbers = [0, 1, 4, 9, 14, 40, 90, 400, 1994, 2026, 3999, 4000, 1000000, -1]
+    f(d::Pandoc) = (push!(d.blocks, Para(join(("$n=$(to_roman_numeral(n))" for n in numbers), " "))); nothing)
+    Filters([(f, :typewise)])
+end
+
 const SCENARIOS = Dict(
     "upper" => scenario_upper, "modify" => scenario_modify, "splice" => scenario_splice,
     "generic" => scenario_generic, "typewise" => scenario_typewise, "topdown" => scenario_topdown,
@@ -308,7 +314,7 @@ const SCENARIOS = Dict(
     "attributes" => scenario_attributes, "fails" => scenario_fails, "replaced" => scenario_replaced,
     "metavalues" => scenario_metavalues, "metadelete" => scenario_metadelete, "helperfails" => scenario_helperfails,
     "truthy" => scenario_truthy, "lookup" => scenario_lookup, "items" => scenario_items, "chain" => scenario_chain,
-    "prepend" => scenario_prepend, "inlinesof" => scenario_inlinesof,
+    "prepend" => scenario_prepend, "inlinesof" => scenario_inlinesof, "roman" => scenario_roman,
 )
 
 @testset "filters as pandoc's Lua" begin

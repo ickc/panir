@@ -376,6 +376,8 @@ What a port of a Lua filter trips over:
   `track_changes`, `tab_stop`, and pandoc 2's `trackChanges` is gone),
   with the same values (`"all-changes"`); `undefined` where pandoc passed
   none.
+- `pandoc.utils.to_roman_numeral(n)`: `toRomanNumeral(n)`, the same (1
+  to 3999; `""` for 0, `"?"` for anything else; not an integer fails).
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `MetaValue` (or `MetaList`, ...) is called on each
@@ -473,7 +475,7 @@ checked (`serialize`, constructors).
 
 ```ts
 import {
-  blocksOf, Conversion, fromPlain, given, inlinesOf, items, lookup, Plain, stringify, toPlain, truthy,
+  blocksOf, Conversion, fromPlain, given, inlinesOf, items, lookup, Plain, stringify, toPlain, toRomanNumeral, truthy,
 } from "panir";
 
 const meta = Pandoc([], { meta: { draft: false, title: "", toc: { depth: "2" }, tags: "a" } }).meta;
@@ -489,6 +491,7 @@ assert.deepEqual(toPlain(meta.toc!), { depth: "2" });
 assert.equal(toPlain(meta).tags, "a");
 assert.deepEqual(inlinesOf(meta.tags!), [Str("a")]);
 assert.deepEqual(blocksOf(meta.name), [Plain([Str("Ada")]), Plain([Space()]), Plain([Str("L.")])]);
+assert.deepEqual([toRomanNumeral(2026), toRomanNumeral(0), toRomanNumeral(4000)], ["MMXXVI", "", "?"]);
 const options = new Conversion({ readerOptions: { "track-changes": "all-changes" } }).readerOptions;
 assert.equal(options?.["track-changes"], "all-changes");
 assert.equal("width: SIZE".replace("SIZE", () => "$&5%"), "width: $&5%");
@@ -544,6 +547,7 @@ AST, whatever the maps' prototypes.)
 
 `fromJSON`/`toJSON` for any type of the schema (`fromJSON(j, "Inline")`),
 `check`, `stringify` (as pandoc's `pandoc.utils.stringify`, metadata and
-all), `toPlain`/`fromPlain` for metadata, `copy`, `equal`.
+all) and `toRomanNumeral`, `toPlain`/`fromPlain` for metadata, `copy`,
+`equal`.
 
 Status: a prototype.

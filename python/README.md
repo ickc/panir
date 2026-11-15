@@ -318,6 +318,8 @@ What a port of a Lua filter trips over:
   pandoc's JSON (`"track-changes"`, `"tab-stop"`, where Lua's fields are
   `track_changes`, `tab_stop`, and pandoc 2's `trackChanges` is gone),
   with the same values (`"all-changes"`); `None` where pandoc passed none.
+- `pandoc.utils.to_roman_numeral(n)`: `to_roman_numeral(n)`, the same (1
+  to 3999; `""` for 0, `"?"` for anything else; not an integer fails).
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `@f.on(MetaValue)` (or `MetaList`, ...) is called
@@ -415,6 +417,8 @@ MetaInlines(Str('Ada'), Space(), Str('L.'))
 ({'depth': '2'}, Str('Ada'))
 >>> inlines_of(meta["tags"]), blocks_of(meta["name"])
 ([Str('a')], [Plain(Str('Ada')), Plain(Space()), Plain(Str('L.'))])
+>>> to_roman_numeral(2026), to_roman_numeral(0), to_roman_numeral(4000)
+('MMXXVI', '', '?')
 >>> options = Conversion("latex", reader_options={"track-changes": "all-changes"}).reader_options or {}
 >>> options["track-changes"]
 'all-changes'

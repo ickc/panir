@@ -6,8 +6,9 @@
   own encoding;
 - filters: ``Filter``, and ``walk`` underneath; ``Conversion``, the pandoc
   run a filter is part of, which parses fragments as the document was read;
-- ``stringify``, and metadata to and from Python (``to_python``,
-  ``from_python``), and as Lua reads it (``lookup``, ``items``, ``inlines_of``, ``blocks_of``).
+- ``stringify`` and ``to_roman_numeral``, as pandoc's Lua ``pandoc.utils``;
+  metadata to and from Python (``to_python``, ``from_python``), and as Lua
+  reads it (``lookup``, ``items``, ``inlines_of``, ``blocks_of``).
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from .util import (
     lookup,
     stringify,
     to_python,
+    to_roman_numeral,
 )
 
 __version__ = "0.1.0"
@@ -105,6 +107,7 @@ __all__ = [
     "run",
     "stringify",
     "to_python",
+    "to_roman_numeral",
     "walk",
 ]
 __all__ += _types.__all__

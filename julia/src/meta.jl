@@ -1,5 +1,6 @@
 # Metadata as pandoc's Lua filters read it: Lua's truth, a lookup through
-# maps, one value or a list of them, a value as inlines or blocks.
+# maps, one value or a list of them, a value as inlines or blocks; and
+# pandoc.utils.to_roman_numeral.
 
 """
     truthy(v) -> Bool
@@ -112,3 +113,24 @@ function blocks_of(v::MetaList)
 end
 blocks_of(v::MetaValue) = throw(ASTTypeError(Any[], "blocks (MetaBlocks, MetaInlines, MetaString, MetaMap, or a MetaList)",
                                              string(nameof(typeof(v))), ""))
+
+const _ROMAN = ((1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90, "XC"),
+                (50, "L"), (40, "XL"), (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"))
+
+"""
+    to_roman_numeral(n::Integer) -> String
+
+An integer in Roman numerals, as pandoc's Lua
+`pandoc.utils.to_roman_numeral`: 1 to 3999 (`"MMXXVI"`), `""` for 0, and
+`"?"` for anything else, negative or 4000 and more. (Not a `Bool`: Lua
+fails on one.)
+"""
+function to_roman_numeral(n::Union{Signed, Unsigned})
+    0 <= n < 4000 || return "?"
+    out = IOBuffer()
+    for (value, letters) in _ROMAN
+        count, n = divrem(n, value)
+        print(out, letters^count)
+    end
+    String(take!(out))
+end

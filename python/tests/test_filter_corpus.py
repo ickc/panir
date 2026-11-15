@@ -606,12 +606,23 @@ def inlinesof() -> list[Filter]:
     return [f]
 
 
+def roman() -> list[Filter]:
+    f = Filter()
+
+    @f.on(Pandoc)
+    def numerals(doc):
+        numbers = (0, 1, 4, 9, 14, 40, 90, 400, 1994, 2026, 3999, 4000, 1000000, -1)
+        doc.blocks.append(Para(" ".join(f"{n}={A.to_roman_numeral(n)}" for n in numbers)))
+
+    return [f]
+
+
 SCENARIOS: dict[str, Callable[[], list[Filter]]] = {
     f.__name__: f
     for f in (upper, modify, splice, generic, typewise, topdown, bottomup, skip, toplists)
     + (once, lists, meta, newdoc, twice, metacount, attributes, fails, helperfails)
     + (replaced, metavalues, metadelete, truthy, lookup, items, chain, prepend)
-    + (inlinesof,)
+    + (inlinesof, roman)
 }
 
 
