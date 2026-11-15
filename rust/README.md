@@ -202,6 +202,42 @@ What a port of a Lua filter trips over:
   element, then returns `nil` (pandoc-ext/list-table removes a div's class,
   then declines an empty div) is ported by deciding first, and changing
   after.
+- **The list functions change their list in place**: `inlines` and
+  `blocks` get the list as `&mut Vec`, where Lua's `Inlines` and `Blocks`
+  return a new list, or `nil` for the list as it was. An original that
+  builds a new list and declines unless something changed (`return
+  changed and out or nil`) is ported by deciding first, from a look at
+  the list, and taking it apart (`std::mem::take(xs)`) only when it is to
+  change (gap 4's rule, for lists):
+
+  ```rust
+  use panir::{Ctx, Filter, Inline};
+
+  /// Each `Str` "x" doubled; the list untouched (Lua's `nil`) without one.
+  struct Double;
+
+  impl Filter for Double {
+      fn inlines(&mut self, xs: &mut Vec<Inline>, _: &mut Ctx) -> Option<()> {
+          let is_x = |x: &Inline| matches!(x, Inline::Str(s) if s.as_str() == "x");
+          if !xs.iter().any(is_x) {
+              return Some(()); // declined, before anything changed
+          }
+          let mut out = vec![];
+          for x in std::mem::take(xs) {
+              if is_x(&x) {
+                  out.push(x.clone());
+              }
+              out.push(x);
+          }
+          *xs = out;
+          Some(())
+      }
+  }
+
+  let mut doc = panir::Pandoc::new(vec![panir::Block::Para(panir::inlines("x y"))]);
+  panir::apply(&mut doc, &mut Double, None).unwrap();
+  assert_eq!(panir::stringify(&doc), "xx y");
+  ```
 - **Lua's elements are values**: `pandoc.Span(meta.title)` puts a copy in
   the body; here, `.clone()` (ownership allows nothing else).
 - `el.t`, `el.tag`: `x.tag()`.
