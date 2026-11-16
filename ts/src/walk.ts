@@ -802,11 +802,12 @@ export function walk<W extends Walkable>(target: W, action: WalkAction,
   const calls: Calls = { fns: new Map(), self: undefined, nodes: ALL, lists: NO, every: action };
   const doc = kind.kind === "doc" ? target : undefined;
   const label = kind.kind === "doc" ? "" : kind.label;
-  const w = new Walker(calls, opts.topDown ?? false, doc, toConversion(opts.format), label);
-  return deep("walk", () => {
+  const conversion = toConversion(opts.format);
+  const w = new Walker(calls, opts.topDown ?? false, doc, conversion, label);
+  return within(conversion, () => deep("walk", () => {
     if (kind.kind === "list") return w.many(target as unknown[], kind.type, undefined, undefined, TOP) as W;
     return w.one(target, kind.kind === "doc" ? SCHEMA.root : kind.type) as W;
-  });
+  }));
 }
 
 /**
@@ -974,7 +975,8 @@ function hasOther(fns: Map<string, Call>): boolean {
  * returns it (or the document its `Pandoc` function returned). A list of
  * filters is applied one after the other, as a Lua filter file returning a
  * list. `format` is the output format's name, or the whole `Conversion`
- * (then in `ctx.conversion`).
+ * (then in `ctx.conversion`); without it, inside a filter function, the
+ * conversion of the walk that function is in.
  *
  * Or to a fragment: a node, or a list of inlines or of blocks, as Lua's
  * `el:walk{...}`: the functions apply to what is in a node, not to the node
@@ -988,13 +990,37 @@ export function applyFilter<W extends Walkable>(target: W, filters: readonly Fil
 export function applyFilter(target: Walkable, filter: object | readonly object[],
                             format?: string | Conversion): Walkable {
   const conversion = toConversion(format);
-  let out: unknown = target;
-  for (const f of isFilterList(filter) ? filter : [filter as Filter]) out = applyOne(out, f, conversion);
-  return out as Walkable;
+  return within(conversion, () => {
+    let out: unknown = target;
+    for (const f of isFilterList(filter) ? filter : [filter as Filter]) out = applyOne(out, f, conversion);
+    return out as Walkable;
+  });
 }
 
+// The conversion of the walk running now, for a walk started inside one of
+// its functions without one of its own (walks are synchronous: one runs at
+// a time, the inner ones inside it).
+let running: Conversion | undefined;
+
+/**
+ * The conversion a walk is given: the whole one; a format alone, a
+ * conversion knowing only that; neither, inside a filter function, the
+ * conversion of the walk that function is in (as Lua's `FORMAT` and
+ * `PANDOC_READER_OPTIONS` are the same everywhere in a filter).
+ */
 function toConversion(format: string | Conversion | undefined): Conversion {
-  return format instanceof Conversion ? format : new Conversion({ format });
+  if (format instanceof Conversion) return format;
+  return format === undefined && running ? running : new Conversion({ format });
+}
+
+function within<T>(conversion: Conversion, f: () => T): T {
+  const outer = running;
+  running = conversion;
+  try {
+    return f();
+  } finally {
+    running = outer;
+  }
 }
 
 function isFilterList(f: object | readonly object[]): f is readonly Filter[] {

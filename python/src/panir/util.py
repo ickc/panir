@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import operator
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -43,6 +44,7 @@ __all__ = [
     "inlines_of",
     "items",
     "lookup",
+    "lua_number",
     "stringify",
     "to_python",
     "to_roman_numeral",
@@ -153,6 +155,28 @@ def to_roman_numeral(n: int) -> str:
         count, n = divmod(n, value)
         out.append(letters * count)
     return "".join(out)
+
+
+_DECIMAL = re.compile(r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+_HEXADECIMAL = re.compile(r"([+-]?)0[xX]([0-9a-fA-F]+)")
+
+
+def lua_number(text: str) -> int | float | None:
+    """A number as Lua's ``tonumber(text)`` reads one: decimal (``"12"``,
+    ``"1.5"``, ``".5"``, ``"1e3"``) or a hexadecimal integer (``"0x1F"``), a
+    sign before it, ASCII blanks around it; an ``int`` where Lua's is an
+    integer, else a ``float``; ``None`` for anything else (``""``, ``"1
+    2"``, ``"inf"``), where Lua's is ``nil``. Not Lua's hexadecimal
+    fractions and exponents (``0x1.8p1``), nor its wrapping of a hexadecimal
+    integer beyond 64 bits. For ports reading a number from an attribute or
+    the metadata as their Lua original did (``tonumber(el.attributes.n)``)."""
+    text = text.strip(" \t\n\v\f\r")
+    if _DECIMAL.fullmatch(text):
+        return int(text) if text.lstrip("+-").isdigit() else float(text)
+    m = _HEXADECIMAL.fullmatch(text)
+    if m:
+        return int(m[1] + m[2], 16)
+    return None
 
 
 def lookup(

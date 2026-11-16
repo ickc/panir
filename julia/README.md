@@ -147,8 +147,10 @@ one's place.
 its `index` there (`ctx.container[ctx.index]` is the node), `next` and
 `prev`, `path` (from the document, counting from 0 as pandoc's JSON and
 errors do), `doc`, `format`, and `conversion` (a `Conversion`, as in
-Python: formats with extensions and reader options, when pandoc or
-libpandoc tells them). They are right after earlier nodes of the list
+Python: the formats with extensions, the reader's and the writer's
+options, and whether pandoc's sandbox is on, when pandoc or libpandoc
+tells them; a host calling filters in process makes it from libpandoc's
+context, `Conversion(context; options)`). They are right after earlier nodes of the list
 were deleted or spliced: a node replaced by none or several is spliced in
 place, so a list is as it is now however it is reached.
 
@@ -282,17 +284,51 @@ What a port of a Lua filter trips over:
   pandoc's JSON keys the reader's (Lua's `number_sections` is
   `"number-sections"`, `top_level_division` `"top-level-division"`,
   `number_offset` `"number-offset"`), with Lua's values
-  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). It is read
-  from `$PANDOC_WRITER_OPTIONS`, which nothing sets yet (proposed to
-  pandoc and libpandoc): pandoc 3.14 gives the writer's options to Lua
-  filters only, so a JSON filter under plain pandoc has none (`nothing`),
-  whatever `-N` or `--top-level-division` say. Where a host runs the
-  filter in process and knows the conversion (libpandoc),
-  `ctx.conversion.options` has them in defaults-file keys and values
-  (`"number-sections": true`, `"top-level-division": "chapter"`,
-  `"variables"`).
+  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). libpandoc
+  (1.10 and later) gives them to every filter it runs: in process, and as
+  `$PANDOC_WRITER_OPTIONS` to a JSON filter, whence `run_filter` reads
+  them. pandoc 3.14 gives the writer's options to Lua filters only, so a
+  JSON filter under plain pandoc has none (`nothing`), whatever `-N` or
+  `--top-level-division` say. Where a host runs the filter in process and
+  knows the conversion's options (LibPandoc.jl), `ctx.conversion.options`
+  has them in defaults-file keys and values (`"number-sections": true`,
+  `"top-level-division": "chapter"`, `"variables"`).
 - `pandoc.utils.to_roman_numeral(n)`: `to_roman_numeral(n)`, the same (1
   to 3999; `""` for 0, `"?"` for anything else; not an integer fails).
+- `tonumber(s)` on text (an attribute, a metadata value's `stringify`):
+  `lua_number(s)`, which reads as Lua does (blanks around, a sign, `"1."`,
+  `".5"`, `"1e3"`, `"0x1F"`; an `Int` or a `Float64`; `nothing` for
+  anything else, `"inf"` and `"1 2"` included), where `tryparse(Float64,
+  s)` reads other text (`"Inf"`, `"NaN"`) and `tryparse(Int, s)` fails on
+  some of Lua's (`"1."`, `"1e3"`).
+- `pandoc.path`: `path.join({a, b})` is `joinpath(a, b)` (an absolute `b`
+  wins, as in pandoc), `path.directory(p)` `dirname(p)` (empty for a bare
+  name, where pandoc's is `.`), `path.filename(p)` `basename(p)`,
+  `path.is_relative(p)` `!isabspath(p)`. `path.normalize(p)` drops `.`
+  and doubled slashes but keeps `..` (`a/b/../c`); `normpath` takes
+  `b/..` away too: the same file unless `b` is a symbolic link, and a
+  different string, where the original shows the path (a link's rewritten
+  target).
+- **A filter's globals live as long as the process running it.** pandoc
+  loads a Lua filter anew for each document, so its counters start at 0
+  each time. A JSON filter under pandoc is a process a document too; but
+  LibPandoc.jl (`pandocjl`, `LibPandoc.convert`) loads a script once per
+  process and keeps its module: its globals last from one document to the
+  next. A filter with state resets it at the start of each document: in a
+  first filter of the list (`run_filter([reset, numbering])`, its
+  `Pandoc` method), or in a `:topdown` filter's `Pandoc` method, which
+  runs before the rest.
+- `pandoc.read(text, format, reader_options)` is LibPandoc.jl's
+  `LibPandoc.read(text, ctx.conversion)`: the conversion's input format
+  and the options that affect reading, as the document was read. As
+  `pandoc.read` does, it keeps the text's tabs, where the `pandoc` command
+  expands them; and it is confined as `pandoc.read` inside a sandboxed
+  conversion is: in pandoc's sandbox (no files read: a LaTeX `\input`, an
+  RST or Org include) when the conversion is sandboxed or does not say
+  whether (`ctx.conversion.sandbox` is `true` or `nothing`). Many small
+  texts (a note each, a table's cells) are one
+  `LibPandoc.read_many(texts, ctx.conversion)`: 738 notes take 0.25 s one
+  by one, 0.015 s at once.
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, a method for `MetaValue` (or `MetaList`, ...) is
@@ -390,6 +426,7 @@ inlines_of(meta["tags"]), blocks_of(meta["name"])  # ([Str("a")], [Plain(Str("Ad
 to_roman_numeral(2026), to_roman_numeral(0), to_roman_numeral(4000)  # ("MMXXVI", "", "?")
 Conversion(; reader_options = Dict("track-changes" => "all-changes")).reader_options["track-changes"]  # "all-changes"
 Conversion(; writer_options = Dict("number-sections" => true)).writer_options["number-sections"]  # true
+lua_number(" 0x1F "), lua_number("1e3"), lua_number("1 2")  # (31, 1000.0, nothing)
 replace("width: SIZE", "SIZE" => "\\1 5%")  # "width: \\1 5%"
 length("«»"), ncodeunits("«»"), codeunit("«»", 1)  # (2, 4, 0xc2)
 ```
@@ -409,6 +446,10 @@ walk!(loud, Emph("a", Str("b")))  # Emph(Inline[Str("A"), Str("B")])
 ```
 
 A context's `path` is then from the fragment, and its `doc` is `nothing`.
+Its conversion is the one given (`walk!(f, el; format = conversion)`);
+none given inside a filter method, the conversion of the walk that
+method is in, as Lua's `FORMAT` and `PANDOC_READER_OPTIONS` are the same
+everywhere.
 
 ## Deep documents
 
@@ -452,6 +493,8 @@ which panir can't see.
 wrong (`ASTDecodeError`, text that isn't JSON too). `stringify` is pandoc's
 Lua `pandoc.utils.stringify`: a document's text is its inlines' (its
 metadata's too, but no `MetaString` or `MetaBool`), metadata's has its
-strings and booleans too.
+strings and booleans too; `to_roman_numeral` is its
+`pandoc.utils.to_roman_numeral`, and `lua_number` Lua's `tonumber` on
+text.
 
 Status: a prototype.

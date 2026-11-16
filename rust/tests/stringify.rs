@@ -142,3 +142,35 @@ fn as_pandoc() {
     }
     assert_eq!(differ, 0, "of {} documents", texts.len());
 }
+
+/// What Lua's tonumber gives (checked with pandoc 3.14's Lua), but for
+/// hexadecimal fractions, which lua_number doesn't read.
+#[test]
+fn lua_number() {
+    let numbers = [
+        ("10", 10.0),
+        (" 10 ", 10.0),
+        ("\t-3\n", -3.0),
+        ("+5", 5.0),
+        ("00012", 12.0),
+        ("\x0b7\x0c", 7.0),
+        ("1.5", 1.5),
+        ("1.", 1.0),
+        (".5", 0.5),
+        ("1e3", 1000.0),
+        ("1E-2", 0.01),
+        ("-.5e+1", -5.0),
+        ("0x1F", 31.0),
+        ("-0x10", -16.0),
+        ("0X1f", 31.0),
+    ];
+    for (text, n) in numbers {
+        assert_eq!(panir::lua_number(text), Some(n), "{text:?}");
+    }
+    for text in [
+        "0x", "inf", "nan", "1_000", "", " ", "1 2", "abc", "1e", "e1", "0x1G", "1.5.2", "--1",
+        "\u{661}", ".", "+", "-0x", "1e+", "infinity",
+    ] {
+        assert_eq!(panir::lua_number(text), None, "{text:?}");
+    }
+}

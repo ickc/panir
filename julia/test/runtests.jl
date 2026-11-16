@@ -104,6 +104,50 @@ doc() = Pandoc(
     # as proposed for pandoc and libpandoc: Lua's PANDOC_WRITER_OPTIONS, keyed as the reader's
     @test Conversion(String[], Dict("PANDOC_WRITER_OPTIONS" => "{\"number-sections\":true}")).writer_options ==
           Dict("number-sections" => true)
+    # libpandoc 1.13 tells a JSON filter whether pandoc's sandbox is on; pandoc doesn't: unknown
+    for (value, sandbox) in ("true" => true, "false" => false, "" => nothing, "yes" => nothing)
+        @test Conversion(["html"], Dict("PANDOC_SANDBOX" => value)).sandbox === sandbox
+    end
+    @test Conversion(["html"], Dict{String, String}()).sandbox === nothing
+end
+
+@testset "a walk inside a method knows the conversion of the walk it is in (gap 43)" begin
+    seen = []
+    inner(s::Str, ctx) = (push!(seen, (s.text, ctx.conversion.input_format, ctx.format)); nothing)
+    function outer(d::Div, ctx)
+        walk!(inner, d)  # a node's walk
+        walk!(inner, d.content)  # a list's
+        walk!(d; traverse = :bottomup) do x, c
+            x isa Para && push!(seen, ("walk", c.conversion.input_format, c.format))
+            nothing
+        end
+        walk!(inner, d; format = "latex")  # a format given: that alone
+        walk!(inner, d; format = Conversion(; format = "rst"))
+        nothing
+    end
+    walk!(outer, Pandoc(Div([Para(Str("a"))])); format = Conversion(; format = "html", input_format = "org"))
+    @test seen == [("a", "org", "html"), ("a", "org", "html"), ("walk", "org", "html"),
+                   ("a", nothing, "latex"), ("a", nothing, "rst")]
+    # outside any walk, a walk knows only what it is given
+    empty!(seen)
+    walk!(inner, Div([Para(Str("b"))]))
+    @test seen == [("b", nothing, nothing)]
+end
+
+@testset "the conversion from libpandoc's context" begin
+    context = JSON.parse("""{"format": "html5", "input-format": "commonmark_x-smart",
+        "output-format": "html5+smart", "reader-options": {"tab-stop": 3},
+        "writer-options": {"number-sections": true}, "sandbox": true}""")
+    options = Dict{String, Any}("to" => "html5", "sandbox" => true)
+    c = Conversion(context; options)
+    @test (c.format, c.input_format, c.output_format) == ("html5", "commonmark_x-smart", "html5+smart")
+    @test c.reader_options["tab-stop"] == 3 && c.writer_options["number-sections"] === true
+    @test c.options === options && c.sandbox === true
+    @test Conversion(Dict("sandbox" => false)).sandbox === false
+    # an older libpandoc's context: what it lacks is unknown
+    old = Conversion(Dict("format" => "latex", "input-format" => ""))
+    @test (old.format, old.input_format, old.writer_options, old.options, old.sandbox) ==
+          ("latex", nothing, nothing, nothing, nothing)
 end
 
 @testset "walk!" begin

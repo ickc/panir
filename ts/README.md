@@ -380,17 +380,54 @@ What a port of a Lua filter trips over:
   pandoc's JSON keys the reader's (Lua's `number_sections` is
   `"number-sections"`, `top_level_division` `"top-level-division"`,
   `number_offset` `"number-offset"`), with Lua's values
-  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). It is read
-  from `$PANDOC_WRITER_OPTIONS`, which nothing sets yet (proposed to
-  pandoc and libpandoc): pandoc 3.14 gives the writer's options to Lua
-  filters only, so a JSON filter under plain pandoc has none
-  (`undefined`), whatever `-N` or `--top-level-division` say. Where a host
-  runs the filter in process and knows the conversion (libpandoc),
-  `ctx.conversion.options` has them in defaults-file keys and values
-  (`"number-sections": true`, `"top-level-division": "chapter"`,
-  `"variables"`).
+  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). libpandoc
+  (1.10 and later) gives them to every filter it runs: in process (its
+  context's `"writer-options"`), and as `$PANDOC_WRITER_OPTIONS` to a
+  JSON filter, whence `runFilter` reads them. pandoc 3.14 gives the
+  writer's options to Lua filters only, so a JSON filter under plain
+  pandoc has none (`undefined`), whatever `-N` or `--top-level-division`
+  say. Where the conversion's options are known (given to
+  `libpandocFilter`), `ctx.conversion.options` has them in defaults-file
+  keys and values (`"number-sections": true`, `"top-level-division":
+  "chapter"`, `"variables"`).
 - `pandoc.utils.to_roman_numeral(n)`: `toRomanNumeral(n)`, the same (1
   to 3999; `""` for 0, `"?"` for anything else; not an integer fails).
+- `tonumber(s)` on text (an attribute, a metadata value's `stringify`):
+  `luaNumber(s)`, which reads as Lua does (blanks around, a sign, `"1."`,
+  `".5"`, `"1e3"`, `"0x1F"`; `undefined` for anything else, `"inf"` and
+  `"1 2"` included), where `Number(s)` reads other text (`""` is 0,
+  `"Infinity"`, `"0b1"`) and `parseInt` and `parseFloat` stop at the first
+  character they don't take (`"1 2"` is 1).
+- `pandoc.path`, with `node:path`: `path.join({a, b})` is
+  `isAbsolute(b) ? b : join(a, b)` (Node's `join` appends an absolute
+  `b`), `path.directory(p)` `dirname(p)`, `path.filename(p)`
+  `basename(p)`, `path.is_relative(p)` `!isAbsolute(p)`.
+  `path.normalize(p)` drops `.` and doubled slashes but keeps `..`
+  (`a/b/../c`); Node's `normalize` and `join` take `b/..` away too: the
+  same file unless `b` is a symbolic link, and a different string, where
+  the original shows the path (a link's rewritten target).
+- **A filter's globals live as long as the process running it.** pandoc
+  loads a Lua filter anew for each document, so its counters start at 0
+  each time. A JSON filter under pandoc is a process a document too; in
+  libpandoc's JavaScript host, a module is imported once, and its state,
+  a `libpandocFilter`'s too, lasts from one conversion to the next. A
+  filter with state resets it at the start of each document: in a first
+  filter of the list (`runFilter([reset, numbering])`, its `Pandoc`
+  function), or in a top-down filter's `Pandoc` function, which runs
+  before the rest.
+- `pandoc.read(text, format, reader_options)`: in libpandoc's JavaScript
+  host, `pandoc.read(text, ctx.conversion)`, the instance's (below): the
+  conversion's input format and the options that affect reading, as the
+  document was read. As `pandoc.read` does, it keeps the text's tabs,
+  where the `pandoc` command expands them; and it is confined as
+  `pandoc.read` inside a sandboxed conversion is: in pandoc's sandbox (no
+  files read: a LaTeX `\input`, an RST or Org include) when the
+  conversion is sandboxed or does not say whether
+  (`ctx.conversion.sandbox` is `true` or `undefined`). Many small texts
+  (a note each, a table's cells) are one `pandoc.readMany(texts,
+  ctx.conversion)`: 738 notes take 0.25 s one by one, 0.015 s at once.
+  Under plain pandoc (`runFilter`), a filter has only the `pandoc`
+  command, a process a call.
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `MetaValue` (or `MetaList`, ...) is called on each
@@ -543,10 +580,44 @@ A context's `path` is then from the fragment (`ctx.where` names it, as
 `Emph.content[0]`, or `inlines[0]` in a list), and its `doc` is
 `undefined`. An empty list is neither: no function is called.
 
+Its conversion is the one given (`applyFilter(el, f, conversion)`); none
+given inside a filter function, the conversion of the walk that function
+is in, as Lua's `FORMAT` and `PANDOC_READER_OPTIONS` are the same
+everywhere.
+
 `walk(target, action)` is the walk underneath: `action(node, ctx, type)`
 on every node, the target itself included (or each in a list), `type`
 being its type's name in the schema (`"Inline"`, `"Cell"`); it returns
 what a filter function may.
+
+### In libpandoc's JavaScript host
+
+libpandoc's JavaScript host (libpandoc.wasm in Node.js or a browser) runs
+JavaScript functions as filters inside a conversion,
+`pandoc.convertWithFilters(options, input, [fn])`, each called with the
+document, libpandoc's context and the instance. `libpandocFilter(filter,
+options)` is such a function, `runFilter`'s twin: it runs a panir filter
+(or a list of them, in turn) in the conversion the context describes
+(`Conversion.fromContext(context, options)`: the formats, the reader's
+and the writer's options, whether pandoc's sandbox is on, and `options`
+if given, the conversion's). A function of the instance returning the
+filters gets the instance, to read fragments as the conversion reads:
+
+```ts
+import { fromJSON, libpandocFilter } from "panir";
+
+/** What the filter uses of libpandoc's instance (its read takes panir's Conversion). */
+interface Libpandoc { read(text: string, conversion: object): unknown }
+
+// a code block of class "md" becomes its text, read as the document was
+const md = libpandocFilter((pandoc: Libpandoc) => [{
+  CodeBlock: (c, ctx) => (c.attr.classes.includes("md") ? fromJSON(pandoc.read(c.text, ctx.conversion)).blocks : undefined),
+}]);
+// pandoc.convertWithFilters({ from: "markdown", to: "html" }, input, [md]);
+```
+
+panir doesn't depend on libpandoc: the instance is whatever the host
+passes.
 
 ## Deep documents
 
@@ -574,7 +645,7 @@ AST, whatever the maps' prototypes.)
 
 `fromJSON`/`toJSON` for any type of the schema (`fromJSON(j, "Inline")`),
 `check`, `stringify` (as pandoc's `pandoc.utils.stringify`, metadata and
-all) and `toRomanNumeral`, `toPlain`/`fromPlain` for metadata, `copy`,
-`equal`.
+all) and `toRomanNumeral`, `luaNumber` (Lua's `tonumber` on text),
+`toPlain`/`fromPlain` for metadata, `copy`, `equal`.
 
 Status: a prototype.

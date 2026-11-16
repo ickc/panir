@@ -11,12 +11,13 @@ import pytest
 SRC = Path(__file__).resolve().parents[1] / "src"
 
 SAMPLE = textwrap.dedent("""
-    from panir import Header, Para, Str
+    from panir import Header, MetaList, Para, Str
 
     h = Header(1, Str("x"))
     h.level = "2"
     Para(Header(1))
     reveal_type(h.content)
+    MetaList(["a", "b"])
 """)
 
 
@@ -50,6 +51,12 @@ def test_pyright_sees_field_and_argument_types(tmp_path):
             'of type "Inline | str" in function "__init__"',
         ),
         (6, "information", 'Type of "h.content" is "NodeList[Inline, Inline | str]"'),
+        (
+            7,
+            "error",
+            'Argument of type "list[str]" cannot be assigned to parameter "content" '
+            'of type "_MetaItemIn" in function "__init__"',
+        ),
     ]
 
 

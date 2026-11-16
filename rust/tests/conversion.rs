@@ -55,6 +55,68 @@ fn from_the_environment() {
     assert_eq!(c.writer_options.unwrap()["number-sections"], true);
 }
 
+#[test]
+fn the_sandbox_from_the_environment() {
+    // libpandoc 1.13 tells a JSON filter whether pandoc's sandbox is on;
+    // pandoc doesn't: unknown
+    for (value, sandbox) in [
+        (Some("true"), Some(true)),
+        (Some("false"), Some(false)),
+        (Some(""), None),
+        (Some("yes"), None),
+        (None, None),
+    ] {
+        let c = Conversion::from_parts(None, |k| {
+            (k == "PANDOC_SANDBOX")
+                .then_some(value)
+                .flatten()
+                .map(str::to_owned)
+        });
+        assert_eq!(c.sandbox, sandbox, "{value:?}");
+    }
+}
+
+#[test]
+fn from_the_context() {
+    let context = serde_json::json!({
+        "format": "html5",
+        "input-format": "commonmark_x-smart",
+        "output-format": "html5+smart",
+        "reader-options": {"tab-stop": 3},
+        "writer-options": {"number-sections": true},
+        "sandbox": true,
+    });
+    let options = serde_json::json!({"to": "html5", "sandbox": true});
+    let c = Conversion::from_context(&context, Some(options.clone()));
+    assert_eq!(
+        c,
+        Conversion {
+            format: Some("html5".into()),
+            input_format: Some("commonmark_x-smart".into()),
+            output_format: Some("html5+smart".into()),
+            reader_options: Some(serde_json::json!({"tab-stop": 3})),
+            writer_options: Some(serde_json::json!({"number-sections": true})),
+            options: Some(options),
+            sandbox: Some(true),
+        }
+    );
+    let mut told = context.clone();
+    told["sandbox"] = false.into();
+    assert_eq!(Conversion::from_context(&told, None).sandbox, Some(false));
+    // an older libpandoc's context: what it lacks is unknown
+    let old = Conversion::from_context(
+        &serde_json::json!({"format": "latex", "input-format": ""}),
+        None,
+    );
+    assert_eq!(
+        old,
+        Conversion {
+            format: Some("latex".into()),
+            ..Conversion::default()
+        }
+    );
+}
+
 /// JSON after the document is an error, not a panic (found by fuzzing).
 #[test]
 fn trailing_characters() {
@@ -108,4 +170,60 @@ fn the_metadata_in_the_context() {
         apply(&mut d.blocks, &mut seen, None).unwrap();
         assert_eq!(seen.1, ["a:-", "b:-"]);
     }
+}
+
+/// Notes the conversion each `Str` is walked in.
+#[derive(Default)]
+struct Inner(Vec<(String, Option<String>, Option<String>)>);
+
+impl Filter for Inner {
+    fn inline(&mut self, x: &mut panir::Inline, ctx: &mut Ctx) -> Option<Vec<panir::Inline>> {
+        if let panir::Inline::Str(s) = x {
+            let c = ctx.conversion();
+            self.0
+                .push((s.to_string(), c.input_format.clone(), c.format.clone()));
+        }
+        None
+    }
+}
+
+/// A fragment's walk from a function, as Lua's `el:walk{...}`, whose
+/// functions see the same `FORMAT` and `PANDOC_READER_OPTIONS`: `ctx.apply`
+/// walks it in this walk's conversion (gap 43); `apply` and `apply_with`,
+/// in the one they are given.
+struct Outer(Inner);
+
+impl Filter for Outer {
+    fn block(&mut self, x: &mut Block, ctx: &mut Ctx) -> Option<Vec<Block>> {
+        if let Block::Div(div) = x {
+            ctx.apply(&mut div.content, &mut self.0)?;
+            ctx.apply(x, &mut self.0)?;
+            apply(x, &mut self.0, Some("latex")).ok()?;
+        }
+        None
+    }
+}
+
+#[test]
+fn a_walk_inside_a_function_knows_the_conversion() {
+    let c = Conversion {
+        format: Some("html".into()),
+        input_format: Some("org".into()),
+        ..Conversion::default()
+    };
+    let mut d = Pandoc::new(vec![Block::Div(Box::new(panir::Div {
+        attr: panir::Attr::default(),
+        content: vec![Block::Para(inlines("a"))],
+    }))]);
+    let mut outer = Outer(Inner::default());
+    apply_with(&mut d, &mut outer, &c).unwrap();
+    let org = |f: &str| ("a".to_owned(), Some("org".to_owned()), Some(f.to_owned()));
+    assert_eq!(
+        outer.0.0,
+        [
+            org("html"),
+            org("html"),
+            ("a".into(), None, Some("latex".into()))
+        ]
+    );
 }

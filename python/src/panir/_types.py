@@ -1086,7 +1086,7 @@ class MetaList(MetaValue):
     else:
         content: list[MetaValue]
 
-    def __init__(self, *content: _MetaValueIn) -> None:
+    def __init__(self, *content: _MetaItemIn) -> None:
         _init(self, (content,))
 
 
@@ -2538,6 +2538,10 @@ ColSpan: TypeAlias = int
 # What converts to metadata (a MetaValue, or a plain Python value: see
 # from_python), for constructors' parameters and fields' setters.
 _MetaValueIn: TypeAlias = "MetaValue | Inline | Block | str | bool | int | float | Mapping[str, _MetaValueIn] | Sequence[_MetaValueIn]"
+# An item of a list of metadata given as arguments: no list.
+_MetaItemIn: TypeAlias = (
+    "MetaValue | Inline | Block | str | bool | int | float | Mapping[str, _MetaValueIn]"
+)
 
 # How Filter.on types a filter's functions, for type checkers only: a
 # function for a class of node takes it (and optionally a Context) and

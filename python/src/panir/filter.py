@@ -40,7 +40,7 @@ from ._core import (
 )
 from ._types import Block, Inline, MetaValue, Pandoc
 from ._walk import Context, _nodes_spec, _walk_fields, _Walker
-from .conversion import Conversion
+from .conversion import Conversion, given, running
 
 if TYPE_CHECKING:
     from ._types import _MetaValueIn, _typed_on
@@ -216,11 +216,19 @@ class Filter:
         Unlike Lua, in place: returns the fragment.
 
         ``conversion`` describes the pandoc run (``ctx.conversion``); given
-        only ``format``, that is all it knows.
+        only ``format``, that is all it knows. Given neither inside a filter
+        function, it is the conversion of the walk that function is in.
         """
         if self.traverse not in _TRAVERSES:
             raise ValueError(f"traverse: expected one of {_TRAVERSES}, got {self.traverse!r}")
-        conv = conversion if conversion is not None else Conversion(format)
+        conv = given(conversion, format)
+        token = running.set(conv)
+        try:
+            return self._apply(doc, conv)
+        finally:
+            running.reset(token)
+
+    def _apply(self, doc: Any, conv: Conversion) -> Any:
         top_down = self.traverse == "topdown"
         whole = isinstance(doc, Pandoc)
         if whole:

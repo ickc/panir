@@ -48,3 +48,84 @@ def test_ctx_conversion_and_format():
     f(Pandoc(Para(Str("a"))), conversion=Conversion("html", output_format="html+smart"))
     f(Pandoc(Para(Str("a"))), "latex")
     assert seen == [("html", "html+smart"), ("latex", None)]
+
+
+def test_from_environment_with_the_sandbox(monkeypatch):
+    """libpandoc 1.13 tells a JSON filter whether pandoc's sandbox is on;
+    pandoc doesn't: unknown."""
+    for value, sandbox in (("true", True), ("false", False), ("", None), ("yes", None)):
+        monkeypatch.setenv("PANDOC_SANDBOX", value)
+        assert Conversion.from_environment(["html"]).sandbox is sandbox
+    monkeypatch.delenv("PANDOC_SANDBOX")
+    assert Conversion.from_environment(["html"]).sandbox is None
+
+
+def test_from_context():
+    """What libpandoc's context tells a filter in process, and the options
+    the host knows."""
+    context = {
+        "format": "html5",
+        "input-format": "commonmark_x-smart",
+        "output-format": "html5+smart",
+        "reader-options": {"tab-stop": 3},
+        "writer-options": {"number-sections": True},
+        "sandbox": True,
+    }
+    c = Conversion.from_context(context, {"to": "html5", "sandbox": True})
+    assert (c.format, c.input_format, c.output_format) == (
+        "html5",
+        "commonmark_x-smart",
+        "html5+smart",
+    )
+    assert c.reader_options == {"tab-stop": 3}
+    assert c.writer_options == {"number-sections": True}
+    assert c.options == {"to": "html5", "sandbox": True}
+    assert c.sandbox is True
+    assert Conversion.from_context({**context, "sandbox": False}).sandbox is False
+    # an older libpandoc's context: what it lacks is unknown
+    old = Conversion.from_context({"format": "latex", "input-format": ""})
+    assert (old.format, old.input_format, old.writer_options, old.sandbox) == (
+        "latex",
+        None,
+        None,
+        None,
+    )
+    assert old.options is None
+    assert repr(c) == (
+        "Conversion(format='html5', input_format='commonmark_x-smart', "
+        "output_format='html5+smart', sandbox=True)"
+    )
+
+
+def test_a_walk_inside_a_function_knows_the_conversion():
+    """A fragment's walk started from a filter function (Lua's el:walk{...},
+    whose functions see the same FORMAT and PANDOC_READER_OPTIONS) knows the
+    conversion of the walk it is in, unless given one (gap 43)."""
+    from panir import Div, walk
+
+    seen = []
+    inner = Filter()
+
+    @inner.on(Str)
+    def note(s, ctx):
+        seen.append((s.text, ctx.conversion.input_format, ctx.format))
+
+    outer = Filter()
+
+    @outer.on(Div)
+    def div(d, ctx):
+        d.walk(inner)  # a node's walk
+        inner(d.content)  # a list's
+        walk(d, lambda x, c: seen.append(("walk", c.conversion.input_format, c.format)) and None)
+        d.walk(inner, "latex")  # a format given: that alone
+        d.walk(inner, conversion=Conversion("rst"))
+
+    c = Conversion("html", input_format="org", reader_options={"tab-stop": 2})
+    outer(Pandoc(Div(Para(Str("a")))), conversion=c)
+    assert seen[:2] == [("a", "org", "html")] * 2
+    assert ("walk", "org", "html") in seen
+    assert seen[-2:] == [("a", None, "latex"), ("a", None, "rst")]
+    # outside any walk, a walk knows only what it is given
+    seen.clear()
+    Div(Para(Str("b"))).walk(inner)
+    assert seen == [("b", None, None)]

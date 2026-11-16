@@ -234,3 +234,19 @@ def test_inlines_splits_as_pandoc_types_text():
         Space(),
     ]
     assert A.inlines("") == []
+
+
+def test_metalist_takes_its_items_as_arguments():
+    """Lua's pandoc.MetaList{a, b} is MetaList(a, b): a list given is refused,
+    as a list where one node goes is anywhere (gap 44), not one item holding
+    a list; a MetaList as an item is one."""
+    from panir import ASTTypeError, MetaList, MetaString
+
+    for args in (([MetaString("a"), MetaString("b")],), (["a", "b"],), ("a", ("b",))):
+        with pytest.raises(ASTTypeError, match=r"MetaList\(\*items\) takes the items as arguments"):
+            MetaList(*args)  # pyright: ignore[reportArgumentType]
+    assert MetaList(*["a", "b"]) == MetaList(MetaString("a"), MetaString("b"))
+    nested = MetaList(MetaList("a"), "b")
+    assert nested.content[0] == MetaList(MetaString("a"))
+    # plain values still convert where a value goes, a list to a MetaList
+    assert Pandoc(meta={"x": [["a"], "b"]}).meta["x"] == nested

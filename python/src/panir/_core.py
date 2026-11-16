@@ -1322,12 +1322,19 @@ def _plan(cls: type[Node]) -> tuple:
         steps = []
         for f, setter in zip(cls._fields, cls._setters):
             spec = cls._specs[f]
-            textual = (
+            # True: the items may be one string (Para("a b")); None: none
+            # may be a list (MetaList(*items), whose items convert from
+            # plain values, a list to a MetaList)
+            textual: bool | None = False
+            if (
                 f == cls._variadic
                 and isinstance(spec, _ListSpec)
                 and isinstance(spec.item, _ClassSpec)
-                and _takes_text(spec.item.cls)
-            )
+            ):
+                if _takes_text(spec.item.cls):
+                    textual = True
+                elif getattr(spec.item.cls, "_convert", None) is not None:
+                    textual = None
             steps.append((setter, spec.coerce, textual, cls._defaults.get(f, _MISSING), spec))
         required = tuple(f for f in cls._fields if f not in cls._defaults)
         plan = (tuple(steps), required)
@@ -1347,18 +1354,37 @@ def init(self: Node, values: tuple) -> None:
     if len(steps) == 1:  # (the most made: Str, Emph, ...)
         set_, coerce, textual, default, spec = steps[0]
         v = values[0]
-        if textual and len(v) == 1 and isinstance(v[0], str):
+        if textual is True and len(v) == 1 and isinstance(v[0], str):
             v = v[0]
+        elif textual is None:
+            _no_lists(cls, spec, v)
         if v is None and default is not _MISSING:
             v = spec.decode(default)
         set_(self, coerce(v))
         return
     for (set_, coerce, textual, default, spec), v in zip(steps, values):
-        if textual and len(v) == 1 and isinstance(v[0], str):
+        if textual is True and len(v) == 1 and isinstance(v[0], str):
             v = v[0]  # Para("a b"): the whole list as one string, as in Lua
+        elif textual is None:
+            _no_lists(cls, spec, v)
         if v is None and default is not _MISSING:
             v = spec.decode(default)
         set_(self, coerce(v))
+
+
+def _no_lists(cls: type[Node], spec: _ListSpec, items: tuple) -> None:
+    """A list among the items a constructor takes as arguments, where a
+    plain list would convert to one item (``MetaList([a, b])``, Lua's
+    ``pandoc.MetaList{a, b}``): refused, as a list where one node goes is
+    anywhere else, rather than silently one item holding a list."""
+    for i, x in enumerate(items):
+        if isinstance(x, (list, tuple)):
+            spec.item.fail(
+                f"{cls.__name__}.{cls._variadic}",
+                i,
+                x,
+                f" (a list; {cls.__name__}(*items) takes the items as arguments)",
+            )
 
 
 def _takes_text(cls: type) -> bool:

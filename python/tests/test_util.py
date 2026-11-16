@@ -267,3 +267,24 @@ def test_to_roman_numeral_as_lua():
     for wrong in (2.5, "12", True):
         with pytest.raises(TypeError):
             panir.to_roman_numeral(wrong)  # type: ignore[arg-type]
+
+
+# What Lua's tonumber gives (checked with pandoc 3.14's Lua), but for
+# hexadecimal fractions, which lua_number doesn't read.
+LUA_NUMBERS = [
+    ("10", 10), (" 10 ", 10), ("\t-3\n", -3), ("+5", 5), ("00012", 12), ("\v7\f", 7),
+    ("1.5", 1.5), ("1.", 1.0), (".5", 0.5), ("1e3", 1000.0), ("1E-2", 0.01),
+    ("-.5e+1", -5.0), ("0x1F", 31), ("-0x10", -16), ("0X1f", 31),
+    ("9007199254740993", 9007199254740993),
+    ("0x", None), ("inf", None), ("nan", None), ("1_000", None), ("", None), (" ", None),
+    ("1 2", None), ("abc", None), ("1e", None), ("e1", None), ("0x1G", None),
+    ("1.5.2", None), ("--1", None), ("١", None),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("text", "number"), LUA_NUMBERS)
+def test_lua_number(text, number):
+    from panir import lua_number
+
+    n = lua_number(text)
+    assert n == number and type(n) is type(number)

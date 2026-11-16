@@ -33,7 +33,9 @@ the repository's settings, create the environments `pypi`, `npm` and
 
 ## Each release
 
-1. `python3 scripts/version.py 0.1.0-alpha.1`, commit, push; wait for CI.
+1. `python3 scripts/version.py 0.1.0-alpha.1`, its entry in
+   `CHANGELOG.md` (what dependants get, what breaks), commit, push; wait
+   for CI.
 2. `git tag v0.1.0-alpha.1 && git push origin v0.1.0-alpha.1`. The release
    workflow checks that the tag is the packages' version, publishes to
    PyPI, npm (a prerelease under the dist-tag `next`) and crates.io, then

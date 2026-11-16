@@ -211,6 +211,8 @@ class Gen:
             "\n# What converts to metadata (a MetaValue, or a plain Python value: see\n"
             "# from_python), for constructors' parameters and fields' setters.\n"
             f"_MetaValueIn: TypeAlias = {CONVERTED['MetaValue']!r}\n"
+            "# An item of a list of metadata given as arguments: no list.\n"
+            f"_MetaItemIn: TypeAlias = {META_ITEM!r}\n"
         )
 
     # -- declarations --------------------------------------------------------
@@ -433,7 +435,10 @@ class Gen:
         for n, f in params_order:
             ptype = self.set_type(f["type"])
             if f["name"] == star_field:
-                star = f"*{n}: {self.in_one(self.resolve(f['type'])['list'])}"
+                item = self.in_one(self.resolve(f["type"])["list"])
+                if item == "_MetaValueIn":
+                    item = "_MetaItemIn"  # (a list there is refused)
+                star = f"*{n}: {item}"
                 positional = False
                 continue
             if f.get("flatten"):
@@ -497,11 +502,13 @@ class Gen:
 # string is a Str where one inline goes; where one block goes, a string is
 # Plain text, an inline or a list of inlines a Plain of them; metadata
 # converts from plain Python values, inlines and blocks (``from_python``).
+# A metadata item given as an argument (``MetaList(*items)``) is all that
+# but a list, which ``_core`` refuses there (a list in a list, silently).
+META_ITEM = "MetaValue | Inline | Block | str | bool | int | float | Mapping[str, _MetaValueIn]"
 CONVERTED = {
     "Inline": "Inline | str",
     "Block": "Block | Inline | str | Sequence[Inline | str]",
-    "MetaValue": "MetaValue | Inline | Block | str | bool | int | float"
-    " | Mapping[str, _MetaValueIn] | Sequence[_MetaValueIn]",
+    "MetaValue": f"{META_ITEM} | Sequence[_MetaValueIn]",
 }
 
 # What filter functions for inlines and blocks may return (pandoc's Lua

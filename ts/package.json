@@ -1,6 +1,6 @@
 {
   "name": "panir",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "pandoc's document AST, generated from pandoc-types: types, pandoc's JSON, checks, filters",
   "license": "BSD-3-Clause",
   "repository": {

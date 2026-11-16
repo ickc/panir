@@ -322,17 +322,58 @@ What a port of a Lua filter trips over:
   pandoc's JSON keys the reader's (Lua's `number_sections` is
   `"number-sections"`, `top_level_division` `"top-level-division"`,
   `number_offset` `"number-offset"`), with Lua's values
-  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). It is read
-  from `$PANDOC_WRITER_OPTIONS`, which nothing sets yet (proposed to
-  pandoc and libpandoc): pandoc 3.14 gives the writer's options to Lua
-  filters only, so a JSON filter under plain pandoc has none (`None`),
-  whatever `-N` or `--top-level-division` say. Where a host runs the
-  filter in process and knows the conversion (libpandoc),
-  `ctx.conversion.options` has them in defaults-file keys and values
-  (`"number-sections": true`, `"top-level-division": "chapter"`,
-  `"variables"`).
+  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). libpandoc
+  (1.10 and later) gives them to every filter it runs: in process, and as
+  `$PANDOC_WRITER_OPTIONS` to a JSON filter, whence `from_environment`
+  reads them. pandoc 3.14 gives the writer's options to Lua filters only,
+  so a JSON filter under plain pandoc has none (`None`), whatever `-N` or
+  `--top-level-division` say. Where a host runs the filter in process and
+  knows the conversion's options (libpandoc), `ctx.conversion.options`
+  has them in defaults-file keys and values (`"number-sections": true`,
+  `"top-level-division": "chapter"`, `"variables"`).
 - `pandoc.utils.to_roman_numeral(n)`: `to_roman_numeral(n)`, the same (1
   to 3999; `""` for 0, `"?"` for anything else; not an integer fails).
+- `tonumber(s)` on text (an attribute, a metadata value's `stringify`):
+  `lua_number(s)`, which reads as Lua does (blanks around, a sign,
+  `"1."`, `".5"`, `"1e3"`, `"0x1F"`; `int` or `float`; `None` for
+  anything else, `"inf"` and `"1 2"` included), where `int(s)` and
+  `float(s)` read other text (`float("inf")`, `int("1_000")`) and fail on
+  some of Lua's (`int("1e3")`, `int("0x10")`).
+- `pandoc.path`: `path.join({a, b})` is `os.path.join(a, b)` (an absolute
+  `b` wins, as in pandoc), `path.directory(p)` `os.path.dirname(p) or
+  "."`, `path.filename(p)` `os.path.basename(p)`, `path.is_relative(p)`
+  `not os.path.isabs(p)`. `path.normalize(p)` drops `.` and doubled
+  slashes but keeps `..` (`a/b/../c`); `os.path.normpath` takes `a/b/..`
+  away too: the same file unless `b` is a symbolic link, and a different
+  string, where the original shows the path (a link's rewritten target).
+- A Lua constructor's table is the arguments here: `pandoc.MetaList{a,
+  b}` is `MetaList(a, b)` (or `MetaList(*items)`; a list given is an
+  error, not one item holding a list), `pandoc.Pandoc(blocks, meta)` is
+  `Pandoc(*blocks, meta=meta)`.
+- **A filter's globals live as long as the process running it.** pandoc
+  loads a Lua filter anew for each document, so its counters start at 0
+  each time. A JSON filter under pandoc is a process a document too; in a
+  host, a script's globals last as long as the host runs it: libpandoc's
+  Python host (`pandocpy -F x.py`, `libpandoc.convert(filters=["x.py"])`)
+  runs the script anew for each document, but a `Filter` passed in
+  (`filters=[f]`) keeps its module's state from one conversion to the
+  next. A filter with state resets it at the start of each document: in
+  a first filter of the list (`main([reset, numbering])`, its `Pandoc`
+  function), or in a top-down filter's `Pandoc` function, which runs
+  before the rest.
+- `pandoc.read(text, format, reader_options)` is libpandoc's
+  `read(text, ctx.conversion)`: the conversion's input format and the
+  options that affect reading, as the document was read (a `format`
+  given beside it wins). As `pandoc.read` does, it keeps the text's tabs,
+  where the `pandoc` command, and libpandoc's `read` given only a format,
+  expands them (`preserve_tabs=True` keeps them). And it is confined as
+  `pandoc.read` inside a sandboxed conversion is: in pandoc's sandbox
+  (no files read: a LaTeX `\input`, an RST or Org include) when the
+  conversion is sandboxed or does not say whether
+  (`ctx.conversion.sandbox` is `True` or `None`; `sandbox=False` given
+  beside it reads files, the filter's choice). Many small texts (a note
+  each, a table's cells) are one `read_many(texts, ctx.conversion)`:
+  738 notes take 0.25 s one by one, 0.015 s at once.
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `@f.on(MetaValue)` (or `MetaList`, ...) is called
@@ -446,6 +487,8 @@ MetaInlines(Str('Ada'), Space(), Str('L.'))
 'all-changes'
 >>> Conversion("latex", writer_options={"number-sections": True}).writer_options
 {'number-sections': True}
+>>> lua_number(" 12 "), lua_number("1e3"), lua_number("0x1F"), lua_number("1 2")
+(12, 1000.0, 31, None)
 >>> import re
 >>> re.sub("SIZE", lambda m: r"\1 5%", "width: SIZE")
 'width: \\1 5%'
@@ -472,8 +515,11 @@ Emph(Str('A'), Str('B'))
 ```
 
 A context's `path` is then from the fragment (`ctx.where` names it, as
-`Para.content[0]`), and its `doc` is `None`. `walk(node, action)` is the
-walk underneath: `action(node, ctx)` on every node, the node itself
+`Para.content[0]`), and its `doc` is `None`. Its conversion is the one
+given (`el.walk(f, conversion=...)`); none given inside a filter function,
+the conversion of the walk that function is in, as Lua's `FORMAT` and
+`PANDOC_READER_OPTIONS` are the same everywhere. `walk(node, action)` is
+the walk underneath: `action(node, ctx)` on every node, the node itself
 included (or each in a list).
 
 ### Calling pandoc from a filter
@@ -499,13 +545,19 @@ and that depends on who runs it:
 
 - **in process, with libpandoc** (`libpandoc.convert(..., filters=[f])`,
   `pandocpy -F`): the input format pandoc decided on (`input_format`, with
-  extensions), the output format and the conversion's `options`.
-- **as a JSON filter under libpandoc**: the same formats, from
-  `$PANDOC_INPUT_FORMAT` and `$PANDOC_OUTPUT_FORMAT`.
+  extensions), the output format, the reader's and the writer's options,
+  whether pandoc's sandbox is on (`sandbox`), from libpandoc's context
+  (`Conversion.from_context(context, options)`), and the conversion's
+  `options` where the host has them.
+- **as a JSON filter under libpandoc**: the same but the `options`, from
+  `$PANDOC_INPUT_FORMAT`, `$PANDOC_OUTPUT_FORMAT`,
+  `$PANDOC_WRITER_OPTIONS` and `$PANDOC_SANDBOX` (libpandoc 1.13).
 - **as a JSON filter under pandoc** (`pandoc --filter`): the output format's
   name and the reader's options. pandoc doesn't tell JSON filters the input
   format yet (proposed: jgm/pandoc#11016), so reading assumes markdown
-  unless given one: `libpandoc.read_many(texts, "rst")`.
+  unless given one: `libpandoc.read_many(texts, "rst")`; nor whether its
+  sandbox is on (`sandbox` is `None`), so libpandoc reads through the
+  conversion in pandoc's sandbox, failing closed.
 
 ## Deep documents
 
@@ -525,7 +577,8 @@ which function.
 ## Also
 
 `loads`/`dumps`/`load`/`dump` for pandoc's JSON, `stringify` (as pandoc's
-`pandoc.utils.stringify`, metadata and all), `to_python`/`from_python` for
+`pandoc.utils.stringify`, metadata and all) and `to_roman_numeral`,
+`lua_number` (Lua's `tonumber` on text), `to_python`/`from_python` for
 metadata. A string UTF-8 can't hold (a lone surrogate, `Str("\ud800")`) is
 an `ASTTypeError` that says where when `dump` or `f.main()` writes it
 (`dumps` gives a Python string, which can hold it). A node pickles as its

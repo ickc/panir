@@ -7,6 +7,7 @@
 - filters: ``Filter``, and ``walk`` underneath; ``Conversion``, the pandoc
   run a filter is part of, which parses fragments as the document was read;
 - ``stringify`` and ``to_roman_numeral``, as pandoc's Lua ``pandoc.utils``;
+  ``lua_number``, as Lua's ``tonumber`` reads text;
   metadata to and from Python (``to_python``, ``from_python``), and as Lua
   reads it (``lookup``, ``items``, ``inlines_of``, ``blocks_of``).
 """
@@ -41,12 +42,13 @@ from .util import (
     inlines_of,
     items,
     lookup,
+    lua_number,
     stringify,
     to_python,
     to_roman_numeral,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def loads(text: str | bytes) -> Pandoc:
@@ -103,6 +105,7 @@ __all__ = [
     "load",
     "loads",
     "lookup",
+    "lua_number",
     "main",
     "run",
     "stringify",

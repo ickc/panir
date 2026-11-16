@@ -5,7 +5,7 @@
 # pandoc-api (from pandoc-forge) pins the AST version: the generated types
 # are for exactly one, schema/pandoc-ast.json's "pandoc-api-version".
 context:
-  version: "0.1.0"
+  version: "0.2.0"
 
 package:
   name: panir

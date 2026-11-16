@@ -2,10 +2,10 @@
 
 A filter function that takes a ``Context`` finds it in ``ctx.conversion``:
 the output format, and, when known, the input and output formats with
-extensions, the reader's and the writer's options and the conversion's
-options. To parse a
-fragment (a table cell, an attribute) the way the document was read, pass
-it to libpandoc, whose realm calling pandoc is:
+extensions, the reader's and the writer's options, whether pandoc's sandbox
+is on, and the conversion's options. To parse a fragment (a table cell, an
+attribute) the way the document was read, pass it to libpandoc, whose realm
+calling pandoc is:
 
     import libpandoc
 
@@ -17,15 +17,21 @@ How much is known depends on who runs the filter:
 
 - **in process, with libpandoc** (``libpandoc.convert(..., filters=[f])``,
   ``pandocpy -F``): everything, including the input format pandoc decided
-  on and the conversion's options;
+  on and the conversion's options (``Conversion.from_context``);
 - **as a JSON filter** under libpandoc (``libpandoc.convert(filters=
-  ["f.py"])``): the formats too, from the environment
-  (``$PANDOC_INPUT_FORMAT``);
+  ["f.py"])``): the formats, the writer's options and the sandbox too, from
+  the environment (``$PANDOC_INPUT_FORMAT``, ``$PANDOC_WRITER_OPTIONS``,
+  ``$PANDOC_SANDBOX``);
 - **as a JSON filter** under pandoc (``pandoc --filter``): the output
   format's name and the reader's options only, until pandoc also sets
-  ``$PANDOC_INPUT_FORMAT`` (proposed: jgm/pandoc#11016), and
-  ``$PANDOC_WRITER_OPTIONS`` (proposed after it), which pandoc gives Lua
-  filters only.
+  ``$PANDOC_INPUT_FORMAT`` (proposed: jgm/pandoc#11016) and the rest, which
+  pandoc gives Lua filters only (``PANDOC_WRITER_OPTIONS``) or keeps to
+  itself (whether its sandbox is on).
+
+A walk started inside a filter function (``el.walk(g)``, ``g(el)``,
+``walk(el, action)``) without a conversion of its own knows the one of the
+walk it is in, as Lua's ``FORMAT`` and ``PANDOC_READER_OPTIONS`` are the same
+everywhere in a filter.
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from typing import Any
 
 __all__ = ["Conversion"]
@@ -53,6 +60,14 @@ class Conversion:
     (``"top-level-chapter"``), and ``options`` the conversion's options, in
     pandoc's defaults-file keys and values (``"top-level-division":
     "chapter"``), when known.
+
+    ``sandbox`` is whether pandoc's sandbox is on for the conversion (however
+    it was set: ``--sandbox``, the options, a defaults file), as libpandoc
+    (1.13 and later) tells the filters it runs: ``True``, ``False``, or
+    ``None`` where nothing said (plain pandoc tells its filters nothing of
+    it). A host reading fragments through the conversion (libpandoc's
+    ``read(text, ctx.conversion)``) reads them in pandoc's sandbox when it is
+    on, or when ``None``: what can't be told counts as sandboxed.
     """
 
     __slots__ = (
@@ -61,6 +76,7 @@ class Conversion:
         "options",
         "output_format",
         "reader_options",
+        "sandbox",
         "writer_options",
     )
 
@@ -73,6 +89,7 @@ class Conversion:
         reader_options: Mapping[str, Any] | None = None,
         writer_options: Mapping[str, Any] | None = None,
         options: Mapping[str, Any] | None = None,
+        sandbox: bool | None = None,
     ) -> None:
         self.format = format
         self.input_format = input_format
@@ -80,6 +97,7 @@ class Conversion:
         self.reader_options = reader_options
         self.writer_options = writer_options
         self.options = options
+        self.sandbox = sandbox
 
     @classmethod
     def from_environment(cls, argv: Sequence[str] | None = None) -> Conversion:
@@ -88,9 +106,10 @@ class Conversion:
         pandoc passes the output format as the first argument and the
         reader's options in ``$PANDOC_READER_OPTIONS``. libpandoc also passes
         the formats with extensions, ``$PANDOC_INPUT_FORMAT`` and
-        ``$PANDOC_OUTPUT_FORMAT`` (proposed to pandoc: jgm/pandoc#11016);
-        the writer's options are read from ``$PANDOC_WRITER_OPTIONS`` where
-        set (proposed to pandoc and to libpandoc; neither sets it yet).
+        ``$PANDOC_OUTPUT_FORMAT`` (proposed to pandoc: jgm/pandoc#11016), the
+        writer's options, ``$PANDOC_WRITER_OPTIONS`` (from libpandoc 1.10),
+        and whether pandoc's sandbox is on, ``$PANDOC_SANDBOX`` (``"true"``
+        or ``"false"``, from 1.13; anything else is ``None``).
         """
         argv = sys.argv[1:] if argv is None else argv
         reader = os.environ.get("PANDOC_READER_OPTIONS")
@@ -101,12 +120,59 @@ class Conversion:
             output_format=os.environ.get("PANDOC_OUTPUT_FORMAT") or None,
             reader_options=json.loads(reader) if reader else None,
             writer_options=json.loads(writer) if writer else None,
+            sandbox=_SANDBOX.get(os.environ.get("PANDOC_SANDBOX", "")),
+        )
+
+    @classmethod
+    def from_context(
+        cls, context: Mapping[str, Any], options: Mapping[str, Any] | None = None
+    ) -> Conversion:
+        """The conversion libpandoc describes to a filter it calls in process:
+        its context (parsed), ``"format"``, ``"input-format"``,
+        ``"output-format"``, ``"reader-options"``, ``"writer-options"``
+        (from libpandoc 1.10) and ``"sandbox"`` (1.13); and, if the host
+        knows them, the conversion's ``options`` (defaults-file keys), which
+        the context doesn't carry. What the context lacks is ``None``."""
+
+        def text(key: str) -> str | None:
+            v = context.get(key)
+            return v if isinstance(v, str) and v else None
+
+        sandbox = context.get("sandbox")
+        return cls(
+            text("format"),
+            input_format=text("input-format"),
+            output_format=text("output-format"),
+            reader_options=context.get("reader-options"),
+            writer_options=context.get("writer-options"),
+            options=options,
+            sandbox=sandbox if isinstance(sandbox, bool) else None,
         )
 
     def __repr__(self) -> str:
         known = {
             k: getattr(self, k)
-            for k in ("format", "input_format", "output_format")
+            for k in ("format", "input_format", "output_format", "sandbox")
             if getattr(self, k) is not None
         }
         return f"Conversion({', '.join(f'{k}={v!r}' for k, v in known.items())})"
+
+
+_SANDBOX = {"true": True, "false": False}
+
+# The conversion of the walk running now (in this thread or task), for a
+# walk started inside one of its functions without a conversion of its own.
+running: ContextVar[Conversion | None] = ContextVar("panir_conversion", default=None)
+
+
+def given(conversion: Conversion | None, format: str | None) -> Conversion:
+    """The conversion a walk is given: ``conversion``; else, without a
+    ``format`` either, the running walk's (inside a filter function); else
+    one knowing ``format`` only."""
+    if conversion is not None:
+        return conversion
+    if format is None:
+        outer = running.get()
+        if outer is not None:
+            return outer
+    return Conversion(format)

@@ -9,7 +9,7 @@ import {
   ASTTypeError, Attr, blocksOf, Citation, Code, copy, Div, Emph, equal, fromJSON, fromPlain, getAttribute, given,
   hasAttribute, inlinesOf, items, LineBreak, ListAttributes, lookup, removeAttribute, setAttribute,
   MetaBlocks, MetaBool, MetaInlines, MetaList, MetaMap, MetaString, Note, Pandoc, Para, parse, Plain, Quoted, RawInline,
-  serialize, Space, Str, stringify, toPlain, toRomanNumeral, truthy,
+  luaNumber, serialize, Space, Str, stringify, toPlain, toRomanNumeral, truthy,
 } from "../src/index.ts";
 import type { Pandoc as Doc, MetaString as MetaStringNode } from "../src/index.ts";
 import { pandoc } from "./pandoc.ts";
@@ -212,6 +212,19 @@ test("pandoc.utils.to_roman_numeral", () => {
   assert.deepEqual(got, ["I", "IV", "IX", "XIV", "XL", "XC", "CD", "MCMXCIV", "MMMCMXCIX"]);
   assert.deepEqual([0, 4000, 2 ** 53, -1].map(toRomanNumeral), ["", "?", "?", "?"]);
   for (const wrong of [2.5, NaN, Infinity]) assert.throws(() => toRomanNumeral(wrong), TypeError);
+});
+
+test("Lua's tonumber: luaNumber", () => {
+  // what Lua's tonumber gives (checked with pandoc 3.14's Lua), but for
+  // hexadecimal fractions, which luaNumber doesn't read
+  const numbers: [string, number][] = [
+    ["10", 10], [" 10 ", 10], ["\t-3\n", -3], ["+5", 5], ["00012", 12], ["\v7\f", 7], ["1.5", 1.5], ["1.", 1],
+    [".5", 0.5], ["1e3", 1000], ["1E-2", 0.01], ["-.5e+1", -5], ["0x1F", 31], ["-0x10", -16], ["0X1f", 31],
+  ];
+  for (const [text, n] of numbers) assert.equal(luaNumber(text), n, JSON.stringify(text));
+  const none = ["0x", "inf", "nan", "1_000", "", " ", "1 2", "abc", "1e", "e1", "0x1G", "1.5.2", "--1", "\u0661",
+                "Infinity", "0b1", "1n"];
+  for (const text of none) assert.equal(luaNumber(text), undefined, JSON.stringify(text));
 });
 
 test("attributes by key, as pandoc's Lua", () => {

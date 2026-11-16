@@ -161,3 +161,51 @@ pub fn to_roman_numeral(n: i64) -> String {
     }
     out
 }
+
+/// A number as Lua's `tonumber(text)` reads one: decimal (`"12"`, `"1.5"`,
+/// `".5"`, `"1e3"`) or a hexadecimal integer (`"0x1F"`), a sign before it,
+/// ASCII blanks around it; `None` for anything else (`""`, `"1 2"`,
+/// `"inf"`), where Lua's is `nil`. Not Lua's hexadecimal fractions and
+/// exponents (`0x1.8p1`). For ports reading a number from an attribute or
+/// the metadata as their Lua original did (`tonumber(el.attributes.n)`).
+///
+/// ```
+/// use panir::lua_number;
+///
+/// assert_eq!([lua_number(" 12 "), lua_number("1e3"), lua_number("-0x10")], [Some(12.0), Some(1000.0), Some(-16.0)]);
+/// assert_eq!([lua_number("1 2"), lua_number("inf"), lua_number("")], [None, None, None]);
+/// ```
+pub fn lua_number(text: &str) -> Option<f64> {
+    let t = text.trim_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']);
+    let (sign, digits) = match t.strip_prefix('-') {
+        Some(rest) => (-1.0, rest),
+        None => (1.0, t.strip_prefix('+').unwrap_or(t)),
+    };
+    let all_digits = |s: &str, radix| s.chars().all(|c| c.is_digit(radix));
+    if let Some(hex) = digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        if hex.is_empty() {
+            return None;
+        }
+        let n = hex
+            .chars()
+            .try_fold(0.0, |n, c| Some(n * 16.0 + f64::from(c.to_digit(16)?)))?;
+        return Some(sign * n);
+    }
+    // digits, a point, digits (one at least of the two), an exponent;
+    // checked first, as Rust reads more ("inf", "nan")
+    let (mantissa, exponent) = match digits.split_once(['e', 'E']) {
+        Some((m, e)) => (m, Some(e.strip_prefix(['+', '-']).unwrap_or(e))),
+        None => (digits, None),
+    };
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let decimal = !(whole.is_empty() && fraction.is_empty())
+        && all_digits(whole, 10)
+        && all_digits(fraction, 10)
+        && exponent.is_none_or(|e| !e.is_empty() && all_digits(e, 10));
+    decimal
+        .then(|| digits.parse::<f64>().ok().map(|n| sign * n))
+        .flatten()
+}

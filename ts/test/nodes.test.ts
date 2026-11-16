@@ -7,7 +7,7 @@ import { join } from "node:path";
 import {
   applyFilter, ASTTypeError, Attr, blocks, Conversion, BulletList, Cell, Cite, Code, DefinitionList, Div, Emph,
   Header, inlines, LineBlock, Link, Math, MetaBool, Note, OrderedList, Pandoc, Para, Plain, Quoted, SoftBreak,
-  Space, Str, Table, fromPlain, parse, serialize, stringify, toPlain,
+  Space, Str, Table, fromPlain, libpandocFilter, parse, serialize, stringify, toJSON, toPlain, walk,
 } from "../src/index.ts";
 import type { Filter, Inline } from "../src/index.ts";
 import { pandoc } from "./pandoc.ts";
@@ -165,6 +165,25 @@ test("the conversion", () => {
   // as proposed for pandoc and libpandoc: Lua's PANDOC_WRITER_OPTIONS, keyed as the reader's
   const writer = Conversion.fromEnvironment(["latex"], { PANDOC_WRITER_OPTIONS: '{"number-sections":true}' });
   assert.deepEqual(writer.writerOptions, { "number-sections": true });
+  // libpandoc 1.13 tells a JSON filter whether pandoc's sandbox is on; pandoc doesn't: unknown
+  for (const [value, sandbox] of [["true", true], ["false", false], ["", undefined], ["yes", undefined], [undefined, undefined]] as const) {
+    assert.equal(Conversion.fromEnvironment(["html"], { PANDOC_SANDBOX: value }).sandbox, sandbox, String(value));
+  }
+});
+
+test("the conversion from libpandoc's context", () => {
+  const context = {
+    format: "html5", "input-format": "commonmark_x-smart", "output-format": "html5+smart",
+    "reader-options": { "tab-stop": 3 }, "writer-options": { "number-sections": true }, sandbox: true,
+  };
+  const options = { to: "html5", sandbox: true };
+  assert.deepEqual(Conversion.fromContext(context, options), new Conversion({
+    format: "html5", inputFormat: "commonmark_x-smart", outputFormat: "html5+smart",
+    readerOptions: { "tab-stop": 3 }, writerOptions: { "number-sections": true }, options, sandbox: true,
+  }));
+  assert.equal(Conversion.fromContext({ ...context, sandbox: false }).sandbox, false);
+  // an older libpandoc's context: what it lacks is unknown
+  assert.deepEqual(Conversion.fromContext({ format: "latex", "input-format": "" }), new Conversion({ format: "latex" }));
 });
 
 test("runFilter tells the filter the conversion, under pandoc", (t) => {
@@ -232,4 +251,50 @@ test("structuredClone keeps documents intact (for workers)", () => {
   // (but for the metadata's missing prototype: a clone's maps are ordinary objects)
   assert.deepEqual({ ...clone, meta: null }, { ...d, meta: null });
   assert.equal(serialize(clone), serialize(d));
+});
+
+test("libpandocFilter: a panir filter as a filter function of libpandoc's JS host", () => {
+  const json = toJSON(Pandoc([Para([Str("a")])]));
+  const context = { format: "html5", "input-format": "org", "reader-options": { "tab-stop": 2 }, sandbox: false };
+  const seen: [string | undefined, string | undefined, boolean | undefined, unknown][] = [];
+  const upper: Filter = {
+    Str: (s, ctx) => {
+      seen.push([ctx.format, ctx.conversion.inputFormat, ctx.conversion.sandbox, ctx.conversion.options]);
+      return Str(s.text.toUpperCase());
+    },
+  };
+  // as the host calls it: the document and the context parsed, or (raw) their text
+  const fn = libpandocFilter(upper, { to: "html5" });
+  assert.deepEqual(fn(json, context, undefined), toJSON(Pandoc([Para([Str("A")])])));
+  assert.equal(fn(JSON.stringify(json), JSON.stringify(context), undefined), serialize(Pandoc([Para([Str("A")])])));
+  assert.deepEqual(seen, [["html5", "org", false, { to: "html5" }], ["html5", "org", false, { to: "html5" }]]);
+  // the instance, to a function returning the filter; a list of filters, in turn
+  const instance = { name: "pandoc" };
+  const made = libpandocFilter((pandoc: typeof instance) => [
+    { Str: (s) => Str(`${s.text}-${pandoc.name}`) },
+    { traverse: "topdown", Str: (s, ctx) => { ctx.skipChildren(); return Str(s.text.toUpperCase()); } },
+  ]);
+  assert.deepEqual(made(json, {}, instance), toJSON(Pandoc([Para([Str("A-PANDOC")])])));
+});
+
+test("a walk inside a function knows the conversion of the walk it is in (gap 43)", () => {
+  const seen: unknown[][] = [];
+  const inner: Filter = { Str: (s, ctx) => { seen.push([s.text, ctx.conversion.inputFormat, ctx.format]); } };
+  const outer: Filter = {
+    Div: (d) => {
+      applyFilter(d, inner); // a node's walk
+      applyFilter(d.content, inner); // a list's
+      walk(d, (_x, ctx) => { seen.push(["walk", ctx.conversion.inputFormat, ctx.format]); });
+      applyFilter(d, inner, "latex"); // a format given: that alone
+      applyFilter(d, inner, new Conversion({ format: "rst" }));
+    },
+  };
+  applyFilter(Pandoc([Div([Para([Str("a")])])]), outer, new Conversion({ format: "html", inputFormat: "org" }));
+  assert.deepEqual(seen.slice(0, 2), [["a", "org", "html"], ["a", "org", "html"]]);
+  assert.ok(seen.some((x) => JSON.stringify(x) === '["walk","org","html"]'));
+  assert.deepEqual(seen.slice(-2), [["a", undefined, "latex"], ["a", undefined, "rst"]]);
+  // outside any walk, a walk knows only what it is given
+  seen.length = 0;
+  applyFilter(Div([Para([Str("b")])]), inner);
+  assert.deepEqual(seen, [["b", undefined, undefined]]);
 });

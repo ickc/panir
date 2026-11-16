@@ -71,7 +71,8 @@ pub enum Order {
 /// The pandoc conversion a filter runs in, as panir's Python `Conversion`:
 /// the output format's name (what pandoc passes a JSON filter), and, when
 /// known, the input and output formats with extensions, the reader's and
-/// the writer's options and the conversion's options (defaults-file keys).
+/// the writer's options, whether pandoc's sandbox is on, and the
+/// conversion's options (defaults-file keys).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Conversion {
     /// The output format's name, e.g. `html5`.
@@ -87,14 +88,23 @@ pub struct Conversion {
     pub writer_options: Option<serde_json::Value>,
     /// The conversion's options, in defaults-file keys.
     pub options: Option<serde_json::Value>,
+    /// Whether pandoc's sandbox is on for the conversion (however it was
+    /// set: `--sandbox`, the options, a defaults file), as libpandoc (1.13
+    /// and later) tells the filters it runs; `None` where nothing said
+    /// (plain pandoc tells its filters nothing of it). A host reading
+    /// fragments through the conversion (libpandoc's `read_many_as`) reads
+    /// them in pandoc's sandbox when it is on, or when `None`: what can't be
+    /// told counts as sandboxed.
+    pub sandbox: Option<bool>,
 }
 
 impl Conversion {
     /// The conversion of a JSON filter pandoc runs: the output format is its
-    /// first argument, the rest in the environment (`PANDOC_READER_OPTIONS`,
-    /// and `PANDOC_INPUT_FORMAT` and `PANDOC_OUTPUT_FORMAT` where set, as
-    /// libpandoc does; proposed to pandoc in jgm/pandoc#11016; and
-    /// `PANDOC_WRITER_OPTIONS` where set, which neither sets yet).
+    /// first argument, the rest in the environment: `PANDOC_READER_OPTIONS`;
+    /// and where set, as libpandoc sets them, `PANDOC_INPUT_FORMAT` and
+    /// `PANDOC_OUTPUT_FORMAT` (proposed to pandoc in jgm/pandoc#11016),
+    /// `PANDOC_WRITER_OPTIONS` (from libpandoc 1.10) and `PANDOC_SANDBOX`
+    /// (`"true"` or `"false"`, from 1.13; anything else is `None`).
     pub fn from_env() -> Self {
         // (args() panics on an argument that isn't Unicode)
         let format = std::env::args_os()
@@ -115,6 +125,43 @@ impl Conversion {
             writer_options: get("PANDOC_WRITER_OPTIONS")
                 .and_then(|v| serde_json::from_str(&v).ok()),
             options: None,
+            sandbox: match get("PANDOC_SANDBOX").as_deref() {
+                Some("true") => Some(true),
+                Some("false") => Some(false),
+                _ => None,
+            },
+        }
+    }
+
+    /// The conversion libpandoc describes to a filter it calls in process:
+    /// its context (parsed), `"format"`, `"input-format"`,
+    /// `"output-format"`, `"reader-options"`, `"writer-options"` (from
+    /// libpandoc 1.10) and `"sandbox"` (1.13); and, if the host knows them,
+    /// the conversion's `options` (defaults-file keys), which the context
+    /// doesn't carry. What the context lacks is `None`.
+    ///
+    /// ```
+    /// let context = serde_json::json!({"format": "html5", "sandbox": true});
+    /// let c = panir::Conversion::from_context(&context, None);
+    /// assert_eq!((c.format.as_deref(), c.sandbox), (Some("html5"), Some(true)));
+    /// ```
+    pub fn from_context(context: &serde_json::Value, options: Option<serde_json::Value>) -> Self {
+        let text = |k: &str| {
+            context
+                .get(k)
+                .and_then(serde_json::Value::as_str)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+        };
+        let value = |k: &str| context.get(k).filter(|v| !v.is_null()).cloned();
+        Conversion {
+            format: text("format"),
+            input_format: text("input-format"),
+            output_format: text("output-format"),
+            reader_options: value("reader-options"),
+            writer_options: value("writer-options"),
+            options,
+            sandbox: context.get("sandbox").and_then(serde_json::Value::as_bool),
         }
     }
 }
@@ -1040,7 +1087,9 @@ fn walk_document<F: Filter + ?Sized>(
 
 /// Apply a filter to a document, as pandoc applies a Lua filter, in the
 /// filter's [`Order`], or to a fragment of one ([`Walkable`]). `format` is
-/// the output format ([`Ctx::format`]).
+/// the output format ([`Ctx::format`]), and all the walk knows of the
+/// conversion: inside a filter function, [`Ctx::apply`] walks a fragment in
+/// the conversion of the walk that function is in.
 ///
 /// A function that fails ([`Ctx::fail`]) stops the walk: the error is
 /// returned, with where it happened; the document is as the functions
