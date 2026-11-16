@@ -27,6 +27,11 @@ How much is known depends on who runs the filter:
   ``$PANDOC_INPUT_FORMAT`` (proposed: jgm/pandoc#11016) and the rest, which
   pandoc gives Lua filters only (``PANDOC_WRITER_OPTIONS``) or keeps to
   itself (whether its sandbox is on).
+
+A walk started inside a filter function (``el.walk(g)``, ``g(el)``,
+``walk(el, action)``) without a conversion of its own knows the one of the
+walk it is in, as Lua's ``FORMAT`` and ``PANDOC_READER_OPTIONS`` are the same
+everywhere in a filter.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from typing import Any
 
 __all__ = ["Conversion"]
@@ -153,3 +159,20 @@ class Conversion:
 
 
 _SANDBOX = {"true": True, "false": False}
+
+# The conversion of the walk running now (in this thread or task), for a
+# walk started inside one of its functions without a conversion of its own.
+running: ContextVar[Conversion | None] = ContextVar("panir_conversion", default=None)
+
+
+def given(conversion: Conversion | None, format: str | None) -> Conversion:
+    """The conversion a walk is given: ``conversion``; else, without a
+    ``format`` either, the running walk's (inside a filter function); else
+    one knowing ``format`` only."""
+    if conversion is not None:
+        return conversion
+    if format is None:
+        outer = running.get()
+        if outer is not None:
+            return outer
+    return Conversion(format)

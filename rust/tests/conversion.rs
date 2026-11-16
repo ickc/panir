@@ -171,3 +171,59 @@ fn the_metadata_in_the_context() {
         assert_eq!(seen.1, ["a:-", "b:-"]);
     }
 }
+
+/// Notes the conversion each `Str` is walked in.
+#[derive(Default)]
+struct Inner(Vec<(String, Option<String>, Option<String>)>);
+
+impl Filter for Inner {
+    fn inline(&mut self, x: &mut panir::Inline, ctx: &mut Ctx) -> Option<Vec<panir::Inline>> {
+        if let panir::Inline::Str(s) = x {
+            let c = ctx.conversion();
+            self.0
+                .push((s.to_string(), c.input_format.clone(), c.format.clone()));
+        }
+        None
+    }
+}
+
+/// A fragment's walk from a function, as Lua's `el:walk{...}`, whose
+/// functions see the same `FORMAT` and `PANDOC_READER_OPTIONS`: `ctx.apply`
+/// walks it in this walk's conversion (gap 43); `apply` and `apply_with`,
+/// in the one they are given.
+struct Outer(Inner);
+
+impl Filter for Outer {
+    fn block(&mut self, x: &mut Block, ctx: &mut Ctx) -> Option<Vec<Block>> {
+        if let Block::Div(div) = x {
+            ctx.apply(&mut div.content, &mut self.0)?;
+            ctx.apply(x, &mut self.0)?;
+            apply(x, &mut self.0, Some("latex")).ok()?;
+        }
+        None
+    }
+}
+
+#[test]
+fn a_walk_inside_a_function_knows_the_conversion() {
+    let c = Conversion {
+        format: Some("html".into()),
+        input_format: Some("org".into()),
+        ..Conversion::default()
+    };
+    let mut d = Pandoc::new(vec![Block::Div(Box::new(panir::Div {
+        attr: panir::Attr::default(),
+        content: vec![Block::Para(inlines("a"))],
+    }))]);
+    let mut outer = Outer(Inner::default());
+    apply_with(&mut d, &mut outer, &c).unwrap();
+    let org = |f: &str| ("a".to_owned(), Some("org".to_owned()), Some(f.to_owned()));
+    assert_eq!(
+        outer.0.0,
+        [
+            org("html"),
+            org("html"),
+            ("a".into(), None, Some("latex".into()))
+        ]
+    );
+}

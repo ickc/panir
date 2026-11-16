@@ -7,7 +7,7 @@ import { join } from "node:path";
 import {
   applyFilter, ASTTypeError, Attr, blocks, Conversion, BulletList, Cell, Cite, Code, DefinitionList, Div, Emph,
   Header, inlines, LineBlock, Link, Math, MetaBool, Note, OrderedList, Pandoc, Para, Plain, Quoted, SoftBreak,
-  Space, Str, Table, fromPlain, libpandocFilter, parse, serialize, stringify, toJSON, toPlain,
+  Space, Str, Table, fromPlain, libpandocFilter, parse, serialize, stringify, toJSON, toPlain, walk,
 } from "../src/index.ts";
 import type { Filter, Inline } from "../src/index.ts";
 import { pandoc } from "./pandoc.ts";
@@ -275,4 +275,26 @@ test("libpandocFilter: a panir filter as a filter function of libpandoc's JS hos
     { traverse: "topdown", Str: (s, ctx) => { ctx.skipChildren(); return Str(s.text.toUpperCase()); } },
   ]);
   assert.deepEqual(made(json, {}, instance), toJSON(Pandoc([Para([Str("A-PANDOC")])])));
+});
+
+test("a walk inside a function knows the conversion of the walk it is in (gap 43)", () => {
+  const seen: unknown[][] = [];
+  const inner: Filter = { Str: (s, ctx) => { seen.push([s.text, ctx.conversion.inputFormat, ctx.format]); } };
+  const outer: Filter = {
+    Div: (d) => {
+      applyFilter(d, inner); // a node's walk
+      applyFilter(d.content, inner); // a list's
+      walk(d, (_x, ctx) => { seen.push(["walk", ctx.conversion.inputFormat, ctx.format]); });
+      applyFilter(d, inner, "latex"); // a format given: that alone
+      applyFilter(d, inner, new Conversion({ format: "rst" }));
+    },
+  };
+  applyFilter(Pandoc([Div([Para([Str("a")])])]), outer, new Conversion({ format: "html", inputFormat: "org" }));
+  assert.deepEqual(seen.slice(0, 2), [["a", "org", "html"], ["a", "org", "html"]]);
+  assert.ok(seen.some((x) => JSON.stringify(x) === '["walk","org","html"]'));
+  assert.deepEqual(seen.slice(-2), [["a", undefined, "latex"], ["a", undefined, "rst"]]);
+  // outside any walk, a walk knows only what it is given
+  seen.length = 0;
+  applyFilter(Div([Para([Str("b")])]), inner);
+  assert.deepEqual(seen, [["b", undefined, undefined]]);
 });

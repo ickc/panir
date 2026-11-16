@@ -26,7 +26,7 @@ from ._core import (
     format_path,
     too_deep,
 )
-from .conversion import Conversion
+from .conversion import Conversion, given, running
 
 __all__ = ["Context", "walk"]
 
@@ -548,13 +548,29 @@ def walk(
     deletes it). Top-down, children are those of the replacement.
 
     ``conversion`` (or just its output ``format``) is what ``ctx.conversion``
-    tells the action.
+    tells the action; given neither inside a filter function, the
+    conversion of the walk that function is in.
 
     Returns ``node``, or what replaced it. ``node`` may also be a list of
     nodes (``para.content``): each is walked, and the list changed in place
     and returned.
     """
-    conv = conversion if conversion is not None else Conversion(format)
+    conv = given(conversion, format)
+    token = running.set(conv)
+    try:
+        return _walk(node, action, top_down, conv, doc, wants)
+    finally:
+        running.reset(token)
+
+
+def _walk(
+    node: Any,
+    action: Action,
+    top_down: bool,
+    conv: Conversion,
+    doc: Any,
+    wants: Callable[[type], bool] | None,
+) -> Any:
     handler = (action, True)
     find = (lambda cls: handler) if wants is None else (lambda cls: handler if wants(cls) else None)
     if isinstance(node, Node):

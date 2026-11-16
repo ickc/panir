@@ -1087,7 +1087,9 @@ fn walk_document<F: Filter + ?Sized>(
 
 /// Apply a filter to a document, as pandoc applies a Lua filter, in the
 /// filter's [`Order`], or to a fragment of one ([`Walkable`]). `format` is
-/// the output format ([`Ctx::format`]).
+/// the output format ([`Ctx::format`]), and all the walk knows of the
+/// conversion: inside a filter function, [`Ctx::apply`] walks a fragment in
+/// the conversion of the walk that function is in.
 ///
 /// A function that fails ([`Ctx::fail`]) stops the walk: the error is
 /// returned, with where it happened; the document is as the functions

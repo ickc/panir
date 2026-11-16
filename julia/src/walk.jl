@@ -536,7 +536,8 @@ node itself, a list's method also to the list itself, and the metadata and
   after its elements, the metadata after what is in it, `Pandoc` last.
 
 `format` is the output format's name, or the whole `Conversion` (then in
-`ctx.conversion`). Returns the document or its replacement, or the
+`ctx.conversion`); without it, in a filter method, the conversion of the
+walk that method is in. Returns the document or its replacement, or the
 fragment.
 
 ```julia
@@ -555,8 +556,11 @@ function walk!(@nospecialize(f), x::Union{Node, Vector{Inline}, Vector{Block}};
     # (a walk a method starts goes on from where the walk it is in is)
     outer = get(task_local_storage(), _WALKER, nothing)
     base = outer === nothing ? 0 : outer.base + length(outer.stack)
+    # (and knows its conversion, unless given one: as Lua's FORMAT and
+    # PANDOC_READER_OPTIONS, the same everywhere in a filter)
+    conversion = format === nothing && outer !== nothing ? outer.conversion : _conversion(format)
     task_local_storage(_WALKER, nothing) do
-        Base.invokelatest(_walk!, f, x, traverse, _conversion(format), base)
+        Base.invokelatest(_walk!, f, x, traverse, conversion, base)
     end
 end
 

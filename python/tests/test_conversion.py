@@ -95,3 +95,37 @@ def test_from_context():
         "Conversion(format='html5', input_format='commonmark_x-smart', "
         "output_format='html5+smart', sandbox=True)"
     )
+
+
+def test_a_walk_inside_a_function_knows_the_conversion():
+    """A fragment's walk started from a filter function (Lua's el:walk{...},
+    whose functions see the same FORMAT and PANDOC_READER_OPTIONS) knows the
+    conversion of the walk it is in, unless given one (gap 43)."""
+    from panir import Div, walk
+
+    seen = []
+    inner = Filter()
+
+    @inner.on(Str)
+    def note(s, ctx):
+        seen.append((s.text, ctx.conversion.input_format, ctx.format))
+
+    outer = Filter()
+
+    @outer.on(Div)
+    def div(d, ctx):
+        d.walk(inner)  # a node's walk
+        inner(d.content)  # a list's
+        walk(d, lambda x, c: seen.append(("walk", c.conversion.input_format, c.format)) and None)
+        d.walk(inner, "latex")  # a format given: that alone
+        d.walk(inner, conversion=Conversion("rst"))
+
+    c = Conversion("html", input_format="org", reader_options={"tab-stop": 2})
+    outer(Pandoc(Div(Para(Str("a")))), conversion=c)
+    assert seen[:2] == [("a", "org", "html")] * 2
+    assert ("walk", "org", "html") in seen
+    assert seen[-2:] == [("a", None, "latex"), ("a", None, "rst")]
+    # outside any walk, a walk knows only what it is given
+    seen.clear()
+    Div(Para(Str("b"))).walk(inner)
+    assert seen == [("b", None, None)]
