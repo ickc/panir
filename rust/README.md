@@ -25,9 +25,11 @@ fn main() {
 ```
 
 `panir::filter_with` and `panir::apply_with` pass the whole `Conversion`
-instead of the format: the formats with extensions and the reader's options
-where pandoc (or libpandoc) tells them, as in Python. A function finds it in
-`ctx.conversion()`.
+instead of the format: the formats with extensions, the reader's and the
+writer's options, and whether pandoc's sandbox is on, where pandoc (or
+libpandoc) tells them, as in Python. A function finds it in
+`ctx.conversion()`. A host calling filters in process makes it from
+libpandoc's context: `Conversion::from_context(&context, options)`.
 
 ## Filters
 
@@ -81,7 +83,8 @@ impl Filter for NoNotes {
 the functions apply to what is in a node, not to the node itself; a list's
 function also to the list itself; `meta` and `pandoc` only to a document.
 From inside a function, `ctx.apply(x, &mut filter)` walks a fragment with
-the walk's conversion, as deep as the walk already is, and, if a function
+the walk's conversion (where `apply` would know only the format it is
+given), as deep as the walk already is, and, if a function
 of that filter fails, fails with its error (where it was in the fragment:
 `inlines[2]`, as the other languages say) and returns `None`, for `?`:
 
@@ -347,6 +350,7 @@ What a port of a Lua filter trips over:
       (k == "PANDOC_WRITER_OPTIONS").then(|| r#"{"number-sections": true}"#.into())
   });
   assert_eq!(writer.writer_options.map(|o| o["number-sections"] == true), Some(true));
+  assert_eq!(panir::lua_number(" 0x1F "), Some(31.0));
   let s = "«»";
   assert_eq!((s.chars().count(), s.len()), (2, 4));
   assert_eq!(String::from_utf8_lossy(&s.as_bytes()[0..1]), "\u{fffd}");
@@ -355,17 +359,46 @@ What a port of a Lua filter trips over:
   pandoc's JSON keys the reader's (Lua's `number_sections` is
   `"number-sections"`, `top_level_division` `"top-level-division"`,
   `number_offset` `"number-offset"`), with Lua's values
-  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). It is read
-  from `$PANDOC_WRITER_OPTIONS`, which nothing sets yet (proposed to
-  pandoc and libpandoc): pandoc 3.14 gives the writer's options to Lua
-  filters only, so a JSON filter under plain pandoc has none (`None`),
-  whatever `-N` or `--top-level-division` say. Where a host runs the
-  filter in process and knows the conversion (libpandoc),
-  `ctx.conversion().options` has them in defaults-file keys and values
-  (`"number-sections": true`, `"top-level-division": "chapter"`,
-  `"variables"`).
+  (`"top-level-chapter"`, `[4, 2]`, `variables` a map of text). libpandoc
+  (1.10 and later) gives them to every filter it runs: in process, and as
+  `$PANDOC_WRITER_OPTIONS` to a JSON filter, whence `filter_with` reads
+  them. pandoc 3.14 gives the writer's options to Lua filters only, so a
+  JSON filter under plain pandoc has none (`None`), whatever `-N` or
+  `--top-level-division` say. Where a host runs the filter in process and
+  knows the conversion's options (libpandoc-rs), `ctx.conversion().options`
+  has them in defaults-file keys and values (`"number-sections": true`,
+  `"top-level-division": "chapter"`, `"variables"`).
 - `pandoc.utils.to_roman_numeral(n)`: `to_roman_numeral(n)`, the same (1
   to 3999; `""` for 0, `"?"` for anything else).
+- `tonumber(s)` on text (an attribute, a metadata value's `stringify`):
+  `lua_number(s)`, which reads as Lua does (blanks around, a sign, `"1."`,
+  `".5"`, `"1e3"`, `"0x1F"`; an `f64`; `None` for anything else, `"inf"`
+  and `"1 2"` included), where `s.parse::<f64>()` reads other text
+  (`"inf"`, `"NaN"`) and fails on some of Lua's (`" 1"`, `"0x10"`).
+- `pandoc.path`, with `std::path::Path`: `path.join({a, b})` is
+  `Path::new(a).join(b)` (an absolute `b` wins, as in pandoc),
+  `path.directory(p)` `p.parent()` (empty for a bare name, where pandoc's
+  is `.`), `path.filename(p)` `p.file_name()`, `path.is_relative(p)`
+  `p.is_relative()`. `path.normalize(p)` drops `.` and doubled slashes but
+  keeps `..` (`a/b/../c`), as `p.components().collect::<PathBuf>()`
+  nearly does (it keeps a leading `./` and drops a trailing slash).
+- **A filter's state lives as long as the value holding it.** pandoc loads
+  a Lua filter anew for each document, so its counters start at 0 each
+  time. A Rust filter run by pandoc is a process a document; a filter value
+  kept by a host's callback (libpandoc-rs's `convert_with`) keeps its
+  fields from one conversion to the next: make it anew for each document
+  (`apply_with(doc, &mut Numbering::default(), conversion)`).
+- `pandoc.read(text, format, reader_options)`: libpandoc-rs's
+  `read_as(text, ctx.conversion())`: the conversion's input format and the
+  options that affect reading, as the document was read. As
+  `pandoc.read` does, it keeps the text's tabs, where the `pandoc` command
+  expands them; and it is confined as `pandoc.read` inside a sandboxed
+  conversion is: in pandoc's sandbox (no files read: a LaTeX `\input`, an
+  RST or Org include) when the conversion is sandboxed or does not say
+  whether (`ctx.conversion().sandbox` is `Some(true)` or `None`). Many
+  small texts (a note each, a table's cells) are one
+  `read_many_as(&texts, ctx.conversion())`: 738 notes take 0.25 s one by
+  one, 0.015 s at once.
 - pandoc's Lua has no function for a metadata value (its values are
   plain Lua values, reached through the `Meta` function or `doc.meta`);
   here, as in panflute, `meta_value` is called on each one.

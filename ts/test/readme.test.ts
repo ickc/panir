@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { Div, Emph, Header, MetaInlines, MetaString, Pandoc, Para, Space, Str, Strong } from "../src/index.ts";
+import { CodeBlock, Div, Emph, Header, MetaInlines, MetaString, Pandoc, Para, Space, Str, Strong, toJSON } from "../src/index.ts";
 import type { Filter } from "../src/index.ts";
 
 const json = readFileSync(new URL("../../corpus/pandoc.jsonl", import.meta.url), "utf8").split("\n")[0]!;
@@ -135,6 +135,19 @@ const loud: Filter = { Str: (s) => s.text.toUpperCase() };
 assert.deepEqual(applyFilter(Emph(["a", Str("b")]), loud), Emph([Str("A"), Str("B")]));
 // #endregion
 
+// #region README
+import { fromJSON, libpandocFilter } from "../src/index.ts";
+
+/** What the filter uses of libpandoc's instance (its read takes panir's Conversion). */
+interface Libpandoc { read(text: string, conversion: object): unknown }
+
+// a code block of class "md" becomes its text, read as the document was
+const md = libpandocFilter((pandoc: Libpandoc) => [{
+  CodeBlock: (c, ctx) => (c.attr.classes.includes("md") ? fromJSON(pandoc.read(c.text, ctx.conversion)).blocks : undefined),
+}]);
+// pandoc.convertWithFilters({ from: "markdown", to: "html" }, input, [md]);
+// #endregion
+
 const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
 test("the README's examples are this file's", () => {
@@ -157,6 +170,18 @@ test("the README's examples ran", () => {
   assert.deepEqual(d.blocks, [Para([Strong("A"), Strong("B")])]);
   const n = Pandoc(Para(pandoc.Note(Para("x"))));
   applyFilter(n, skipNotes);
+  // as libpandoc's host calls it, with an instance reading every text as one Para
+  const read: [string, string | undefined][] = [];
+  const instance: Libpandoc = {
+    read: (text, conversion) => {
+      read.push([text, (conversion as Conversion).inputFormat]);
+      return toJSON(Pandoc(Para(text)));
+    },
+  };
+  const input = toJSON(Pandoc([CodeBlock("*x*", { classes: ["md"] }), CodeBlock("y")]));
+  const out = md(input, { format: "html", "input-format": "markdown+smart" }, instance);
+  assert.deepEqual(fromJSON(out).blocks, [Para("*x*"), CodeBlock("y")]);
+  assert.deepEqual(read, [["*x*", "markdown+smart"]]);
   assert.deepEqual(applyFilter(Pandoc(Para("todo TODO")), {
     Str: (s) => (s.text === "TODO" ? "DONE" : undefined),
   }).blocks, [Para("todo DONE")]);
