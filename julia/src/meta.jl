@@ -134,3 +134,27 @@ function to_roman_numeral(n::Union{Signed, Unsigned})
     end
     String(take!(out))
 end
+
+"""
+    lua_number(text) -> Union{Int, Float64, Nothing}
+
+A number as Lua's `tonumber(text)` reads one: decimal (`"12"`, `"1.5"`,
+`".5"`, `"1e3"`) or a hexadecimal integer (`"0x1F"`), a sign before it,
+ASCII blanks around it; an `Int` where Lua's is an integer, else a
+`Float64`; `nothing` for anything else (`""`, `"1 2"`, `"inf"`), where
+Lua's is `nil`. Not Lua's hexadecimal fractions and exponents
+(`0x1.8p1`), nor its wrapping of a hexadecimal integer beyond 64 bits. For
+ports reading a number from an attribute or the metadata as their Lua
+original did (`tonumber(el.attributes.n)`).
+"""
+function lua_number(text::AbstractString)
+    t = strip(text, (' ', '\t', '\n', '\v', '\f', '\r'))
+    if occursin(r"^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$", t)
+        n = occursin(r"^[+-]?[0-9]+$", t) ? tryparse(Int, t) : nothing
+        return n === nothing ? Base.parse(Float64, t) : n
+    end
+    m = match(r"^([+-]?)0[xX]([0-9a-fA-F]+)$", t)
+    m === nothing && return nothing
+    n = something(tryparse(Int, m[2]; base = 16), Float64(Base.parse(BigInt, m[2]; base = 16)))
+    m[1] == "-" ? -n : n
+end

@@ -491,6 +491,20 @@ end
     @test_throws MethodError to_roman_numeral(true)
 end
 
+@testset "Lua's tonumber: lua_number" begin
+    # what Lua's tonumber gives (checked with pandoc 3.14's Lua), but for
+    # hexadecimal fractions, which lua_number doesn't read
+    numbers = Pair{String, Any}["10" => 10, " 10 " => 10, "\t-3\n" => -3, "+5" => 5, "00012" => 12, "\v7\f" => 7,
+               "1.5" => 1.5, "1." => 1.0, ".5" => 0.5, "1e3" => 1000.0, "1E-2" => 0.01, "-.5e+1" => -5.0,
+               "0x1F" => 31, "-0x10" => -16, "0X1f" => 31, "9007199254740993" => 9007199254740993]
+    for (text, n) in numbers
+        @test lua_number(text) === n
+    end
+    for text in ["0x", "inf", "nan", "1_000", "", " ", "1 2", "abc", "1e", "e1", "0x1G", "1.5.2", "--1", "\u661"]
+        @test lua_number(text) === nothing
+    end
+end
+
 @testset "one value or a list of them, as a list" begin
     meta = Pandoc(; meta = Dict("one" => "a", "l" => ["a", "b"], "e" => [], "off" => false)).meta
     @test items(meta["one"]) == [MetaString("a")]

@@ -350,6 +350,21 @@ export function toRomanNumeral(n: number): string {
 }
 
 /**
+ * A number as Lua's `tonumber(text)` reads one: decimal (`"12"`, `"1.5"`,
+ * `".5"`, `"1e3"`) or a hexadecimal integer (`"0x1F"`), a sign before it,
+ * ASCII blanks around it; `undefined` for anything else (`""`, `"1 2"`,
+ * `"inf"`), where Lua's is `nil`. Not Lua's hexadecimal fractions and
+ * exponents (`0x1.8p1`). For ports reading a number from an attribute or the
+ * metadata as their Lua original did (`tonumber(el.attributes.n)`).
+ */
+export function luaNumber(text: string): number | undefined {
+  const t = text.replace(/^[ \t\n\v\f\r]+|[ \t\n\v\f\r]+$/g, "");
+  if (/^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/.test(t)) return Number(t);
+  const hex = /^([+-]?)0[xX]([0-9a-fA-F]+)$/.exec(t);
+  return hex ? (hex[1] === "-" ? -1 : 1) * parseInt(hex[2]!, 16) : undefined;
+}
+
+/**
  * Metadata as plain values, as pandoc's Lua gives them to a filter: a
  * `MetaString` a string, a `MetaBool` a boolean, a `MetaList` an array, a
  * `MetaMap` (or the metadata) an object, `MetaInlines` and `MetaBlocks` an
