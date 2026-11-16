@@ -48,7 +48,7 @@ from .util import (
     to_roman_numeral,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def loads(text: str | bytes) -> Pandoc:

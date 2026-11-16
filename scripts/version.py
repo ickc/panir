@@ -35,6 +35,7 @@ PLACES = [
     ("python/recipe/recipe.yaml", r'^  version: "([^"]+)"', True),
     ("rust/Cargo.toml", r'^version = "([^"]+)"', False),
     ("rust/Cargo.lock", r'name = "panir"\nversion = "([^"]+)"', False),
+    ("fuzz/rust/Cargo.lock", r'name = "panir"\nversion = "([^"]+)"', False),
     ("ts/package.json", r'^  "version": "([^"]+)"', False),
     ("julia/Project.toml", r'^version = "([^"]+)"', False),
 ]

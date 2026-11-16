@@ -1,7 +1,7 @@
 name = "Panir"
 uuid = "5b2d8b07-d308-4414-b8d3-1709445610f6"
 authors = ["Kolen Cheung"]
-version = "0.1.0"
+version = "0.2.0"
 
 [deps]
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
