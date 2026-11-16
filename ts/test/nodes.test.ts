@@ -7,7 +7,7 @@ import { join } from "node:path";
 import {
   applyFilter, ASTTypeError, Attr, blocks, Conversion, BulletList, Cell, Cite, Code, DefinitionList, Div, Emph,
   Header, inlines, LineBlock, Link, Math, MetaBool, Note, OrderedList, Pandoc, Para, Plain, Quoted, SoftBreak,
-  Space, Str, Table, fromPlain, parse, serialize, stringify, toPlain,
+  Space, Str, Table, fromPlain, libpandocFilter, parse, serialize, stringify, toJSON, toPlain,
 } from "../src/index.ts";
 import type { Filter, Inline } from "../src/index.ts";
 import { pandoc } from "./pandoc.ts";
@@ -251,4 +251,28 @@ test("structuredClone keeps documents intact (for workers)", () => {
   // (but for the metadata's missing prototype: a clone's maps are ordinary objects)
   assert.deepEqual({ ...clone, meta: null }, { ...d, meta: null });
   assert.equal(serialize(clone), serialize(d));
+});
+
+test("libpandocFilter: a panir filter as a filter function of libpandoc's JS host", () => {
+  const json = toJSON(Pandoc([Para([Str("a")])]));
+  const context = { format: "html5", "input-format": "org", "reader-options": { "tab-stop": 2 }, sandbox: false };
+  const seen: [string | undefined, string | undefined, boolean | undefined, unknown][] = [];
+  const upper: Filter = {
+    Str: (s, ctx) => {
+      seen.push([ctx.format, ctx.conversion.inputFormat, ctx.conversion.sandbox, ctx.conversion.options]);
+      return Str(s.text.toUpperCase());
+    },
+  };
+  // as the host calls it: the document and the context parsed, or (raw) their text
+  const fn = libpandocFilter(upper, { to: "html5" });
+  assert.deepEqual(fn(json, context, undefined), toJSON(Pandoc([Para([Str("A")])])));
+  assert.equal(fn(JSON.stringify(json), JSON.stringify(context), undefined), serialize(Pandoc([Para([Str("A")])])));
+  assert.deepEqual(seen, [["html5", "org", false, { to: "html5" }], ["html5", "org", false, { to: "html5" }]]);
+  // the instance, to a function returning the filter; a list of filters, in turn
+  const instance = { name: "pandoc" };
+  const made = libpandocFilter((pandoc: typeof instance) => [
+    { Str: (s) => Str(`${s.text}-${pandoc.name}`) },
+    { traverse: "topdown", Str: (s, ctx) => { ctx.skipChildren(); return Str(s.text.toUpperCase()); } },
+  ]);
+  assert.deepEqual(made(json, {}, instance), toJSON(Pandoc([Para([Str("A-PANDOC")])])));
 });
