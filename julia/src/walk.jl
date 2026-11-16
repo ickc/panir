@@ -1,7 +1,9 @@
 # Walking a document, and filters as functions with a method per node type.
 
 """
-    Conversion(; format, input_format, output_format, reader_options, writer_options, options)
+    Conversion(; format, input_format, output_format, reader_options, writer_options, options, sandbox)
+    Conversion(args, env)
+    Conversion(context; options = nothing)
 
 The pandoc conversion a filter runs in, as panir's Python `Conversion`: the
 output format's name (`format`, what pandoc passes a JSON filter), and,
@@ -10,11 +12,28 @@ options, the writer's (Lua's `PANDOC_WRITER_OPTIONS`, keyed as pandoc's
 JSON keys the reader's: Lua's `number_sections` is `"number-sections"`,
 with Lua's values, `"top-level-chapter"`) and the conversion's options
 (defaults-file keys). A filter method finds it in `ctx.conversion`.
+
+`sandbox` is whether pandoc's sandbox is on for the conversion (however it
+was set: `--sandbox`, the options, a defaults file), as libpandoc (1.13
+and later) tells the filters it runs: `true`, `false`, or `nothing` where
+nothing said (plain pandoc tells its filters nothing of it). A host reading
+fragments through the conversion (LibPandoc.jl's `read(text,
+ctx.conversion)`) reads them in pandoc's sandbox when it is on, or when
+`nothing`: what can't be told counts as sandboxed.
+
 `Conversion(args, env)` reads it as a JSON filter under pandoc gets it:
-the output format as the first argument, `\$PANDOC_READER_OPTIONS`, and
-`\$PANDOC_INPUT_FORMAT` and `\$PANDOC_OUTPUT_FORMAT` where set (libpandoc
-sets them; proposed to pandoc in jgm/pandoc#11016), and
-`\$PANDOC_WRITER_OPTIONS` where set (which neither sets yet).
+the output format as the first argument, `\$PANDOC_READER_OPTIONS`; and
+where set, as libpandoc sets them, `\$PANDOC_INPUT_FORMAT` and
+`\$PANDOC_OUTPUT_FORMAT` (proposed to pandoc in jgm/pandoc#11016),
+`\$PANDOC_WRITER_OPTIONS` (from libpandoc 1.10) and `\$PANDOC_SANDBOX`
+(`"true"` or `"false"`, from 1.13; anything else is `nothing`).
+
+`Conversion(context; options)` is the conversion libpandoc describes to a
+filter it calls in process: its context (parsed), `"format"`,
+`"input-format"`, `"output-format"`, `"reader-options"`,
+`"writer-options"` (from libpandoc 1.10) and `"sandbox"` (1.13); and, if
+the host knows them, the conversion's `options` (defaults-file keys),
+which the context doesn't carry. What the context lacks is `nothing`.
 """
 Base.@kwdef struct Conversion
     format::Union{Nothing, String} = nothing
@@ -23,6 +42,7 @@ Base.@kwdef struct Conversion
     reader_options::Union{Nothing, AbstractDict} = nothing
     writer_options::Union{Nothing, AbstractDict} = nothing
     options::Union{Nothing, AbstractDict} = nothing
+    sandbox::Union{Nothing, Bool} = nothing
 end
 
 function Conversion(args::AbstractVector{<:AbstractString}, env::AbstractDict)
@@ -32,7 +52,20 @@ function Conversion(args::AbstractVector{<:AbstractString}, env::AbstractDict)
                input_format = nonempty("PANDOC_INPUT_FORMAT"),
                output_format = nonempty("PANDOC_OUTPUT_FORMAT"),
                reader_options = json("PANDOC_READER_OPTIONS"),
-               writer_options = json("PANDOC_WRITER_OPTIONS"))
+               writer_options = json("PANDOC_WRITER_OPTIONS"),
+               sandbox = get(_SANDBOX, get(env, "PANDOC_SANDBOX", ""), nothing))
+end
+
+const _SANDBOX = Dict("true" => true, "false" => false)
+
+function Conversion(context::AbstractDict; options::Union{Nothing, AbstractDict} = nothing)
+    text(k) = (v = get(context, k, nothing); v isa AbstractString && !isempty(v) ? String(v) : nothing)
+    dict(k) = (v = get(context, k, nothing); v isa AbstractDict ? v : nothing)
+    sandbox = get(context, "sandbox", nothing)
+    Conversion(; format = text("format"), input_format = text("input-format"),
+               output_format = text("output-format"), reader_options = dict("reader-options"),
+               writer_options = dict("writer-options"), options,
+               sandbox = sandbox isa Bool ? sandbox : nothing)
 end
 
 _conversion(c::Conversion) = c

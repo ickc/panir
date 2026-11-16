@@ -48,3 +48,50 @@ def test_ctx_conversion_and_format():
     f(Pandoc(Para(Str("a"))), conversion=Conversion("html", output_format="html+smart"))
     f(Pandoc(Para(Str("a"))), "latex")
     assert seen == [("html", "html+smart"), ("latex", None)]
+
+
+def test_from_environment_with_the_sandbox(monkeypatch):
+    """libpandoc 1.13 tells a JSON filter whether pandoc's sandbox is on;
+    pandoc doesn't: unknown."""
+    for value, sandbox in (("true", True), ("false", False), ("", None), ("yes", None)):
+        monkeypatch.setenv("PANDOC_SANDBOX", value)
+        assert Conversion.from_environment(["html"]).sandbox is sandbox
+    monkeypatch.delenv("PANDOC_SANDBOX")
+    assert Conversion.from_environment(["html"]).sandbox is None
+
+
+def test_from_context():
+    """What libpandoc's context tells a filter in process, and the options
+    the host knows."""
+    context = {
+        "format": "html5",
+        "input-format": "commonmark_x-smart",
+        "output-format": "html5+smart",
+        "reader-options": {"tab-stop": 3},
+        "writer-options": {"number-sections": True},
+        "sandbox": True,
+    }
+    c = Conversion.from_context(context, {"to": "html5", "sandbox": True})
+    assert (c.format, c.input_format, c.output_format) == (
+        "html5",
+        "commonmark_x-smart",
+        "html5+smart",
+    )
+    assert c.reader_options == {"tab-stop": 3}
+    assert c.writer_options == {"number-sections": True}
+    assert c.options == {"to": "html5", "sandbox": True}
+    assert c.sandbox is True
+    assert Conversion.from_context({**context, "sandbox": False}).sandbox is False
+    # an older libpandoc's context: what it lacks is unknown
+    old = Conversion.from_context({"format": "latex", "input-format": ""})
+    assert (old.format, old.input_format, old.writer_options, old.sandbox) == (
+        "latex",
+        None,
+        None,
+        None,
+    )
+    assert old.options is None
+    assert repr(c) == (
+        "Conversion(format='html5', input_format='commonmark_x-smart', "
+        "output_format='html5+smart', sandbox=True)"
+    )

@@ -104,6 +104,27 @@ doc() = Pandoc(
     # as proposed for pandoc and libpandoc: Lua's PANDOC_WRITER_OPTIONS, keyed as the reader's
     @test Conversion(String[], Dict("PANDOC_WRITER_OPTIONS" => "{\"number-sections\":true}")).writer_options ==
           Dict("number-sections" => true)
+    # libpandoc 1.13 tells a JSON filter whether pandoc's sandbox is on; pandoc doesn't: unknown
+    for (value, sandbox) in ("true" => true, "false" => false, "" => nothing, "yes" => nothing)
+        @test Conversion(["html"], Dict("PANDOC_SANDBOX" => value)).sandbox === sandbox
+    end
+    @test Conversion(["html"], Dict{String, String}()).sandbox === nothing
+end
+
+@testset "the conversion from libpandoc's context" begin
+    context = JSON.parse("""{"format": "html5", "input-format": "commonmark_x-smart",
+        "output-format": "html5+smart", "reader-options": {"tab-stop": 3},
+        "writer-options": {"number-sections": true}, "sandbox": true}""")
+    options = Dict{String, Any}("to" => "html5", "sandbox" => true)
+    c = Conversion(context; options)
+    @test (c.format, c.input_format, c.output_format) == ("html5", "commonmark_x-smart", "html5+smart")
+    @test c.reader_options["tab-stop"] == 3 && c.writer_options["number-sections"] === true
+    @test c.options === options && c.sandbox === true
+    @test Conversion(Dict("sandbox" => false)).sandbox === false
+    # an older libpandoc's context: what it lacks is unknown
+    old = Conversion(Dict("format" => "latex", "input-format" => ""))
+    @test (old.format, old.input_format, old.writer_options, old.options, old.sandbox) ==
+          ("latex", nothing, nothing, nothing, nothing)
 end
 
 @testset "walk!" begin

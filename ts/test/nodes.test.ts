@@ -165,6 +165,25 @@ test("the conversion", () => {
   // as proposed for pandoc and libpandoc: Lua's PANDOC_WRITER_OPTIONS, keyed as the reader's
   const writer = Conversion.fromEnvironment(["latex"], { PANDOC_WRITER_OPTIONS: '{"number-sections":true}' });
   assert.deepEqual(writer.writerOptions, { "number-sections": true });
+  // libpandoc 1.13 tells a JSON filter whether pandoc's sandbox is on; pandoc doesn't: unknown
+  for (const [value, sandbox] of [["true", true], ["false", false], ["", undefined], ["yes", undefined], [undefined, undefined]] as const) {
+    assert.equal(Conversion.fromEnvironment(["html"], { PANDOC_SANDBOX: value }).sandbox, sandbox, String(value));
+  }
+});
+
+test("the conversion from libpandoc's context", () => {
+  const context = {
+    format: "html5", "input-format": "commonmark_x-smart", "output-format": "html5+smart",
+    "reader-options": { "tab-stop": 3 }, "writer-options": { "number-sections": true }, sandbox: true,
+  };
+  const options = { to: "html5", sandbox: true };
+  assert.deepEqual(Conversion.fromContext(context, options), new Conversion({
+    format: "html5", inputFormat: "commonmark_x-smart", outputFormat: "html5+smart",
+    readerOptions: { "tab-stop": 3 }, writerOptions: { "number-sections": true }, options, sandbox: true,
+  }));
+  assert.equal(Conversion.fromContext({ ...context, sandbox: false }).sandbox, false);
+  // an older libpandoc's context: what it lacks is unknown
+  assert.deepEqual(Conversion.fromContext({ format: "latex", "input-format": "" }), new Conversion({ format: "latex" }));
 });
 
 test("runFilter tells the filter the conversion, under pandoc", (t) => {

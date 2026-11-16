@@ -55,6 +55,68 @@ fn from_the_environment() {
     assert_eq!(c.writer_options.unwrap()["number-sections"], true);
 }
 
+#[test]
+fn the_sandbox_from_the_environment() {
+    // libpandoc 1.13 tells a JSON filter whether pandoc's sandbox is on;
+    // pandoc doesn't: unknown
+    for (value, sandbox) in [
+        (Some("true"), Some(true)),
+        (Some("false"), Some(false)),
+        (Some(""), None),
+        (Some("yes"), None),
+        (None, None),
+    ] {
+        let c = Conversion::from_parts(None, |k| {
+            (k == "PANDOC_SANDBOX")
+                .then_some(value)
+                .flatten()
+                .map(str::to_owned)
+        });
+        assert_eq!(c.sandbox, sandbox, "{value:?}");
+    }
+}
+
+#[test]
+fn from_the_context() {
+    let context = serde_json::json!({
+        "format": "html5",
+        "input-format": "commonmark_x-smart",
+        "output-format": "html5+smart",
+        "reader-options": {"tab-stop": 3},
+        "writer-options": {"number-sections": true},
+        "sandbox": true,
+    });
+    let options = serde_json::json!({"to": "html5", "sandbox": true});
+    let c = Conversion::from_context(&context, Some(options.clone()));
+    assert_eq!(
+        c,
+        Conversion {
+            format: Some("html5".into()),
+            input_format: Some("commonmark_x-smart".into()),
+            output_format: Some("html5+smart".into()),
+            reader_options: Some(serde_json::json!({"tab-stop": 3})),
+            writer_options: Some(serde_json::json!({"number-sections": true})),
+            options: Some(options),
+            sandbox: Some(true),
+        }
+    );
+    let mut told = context.clone();
+    told["sandbox"] = false.into();
+    assert_eq!(Conversion::from_context(&told, None).sandbox, Some(false));
+    // an older libpandoc's context: what it lacks is unknown
+    let old = Conversion::from_context(
+        &serde_json::json!({"format": "latex", "input-format": ""}),
+        None,
+    );
+    assert_eq!(
+        old,
+        Conversion {
+            format: Some("latex".into()),
+            ..Conversion::default()
+        }
+    );
+}
+
 /// JSON after the document is an error, not a panic (found by fuzzing).
 #[test]
 fn trailing_characters() {
