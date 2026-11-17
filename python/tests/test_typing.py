@@ -21,9 +21,27 @@ SAMPLE = textwrap.dedent("""
 """)
 
 
-@pytest.mark.skipif(shutil.which("pyright") is None, reason="needs pyright")
-def test_pyright_sees_field_and_argument_types(tmp_path):
-    (tmp_path / "sample.py").write_text(SAMPLE)
+# A filter's metadata function, annotated with the public name: plain values
+# convert on assignment (as doc.meta's do), anything else is refused.
+META = textwrap.dedent("""
+    from panir import Filter, Meta, MetaString, Pandoc
+
+    f = Filter()
+
+    @f.on_meta
+    def read(meta: Meta) -> None:
+        meta["draft"] = True
+        meta["tags"] = ["a", MetaString("b")]
+        meta["author"] = [{"name": "Ada"}]
+        meta["bad"] = object()
+
+    held: Meta = Pandoc().meta
+""")
+
+
+def pyright(tmp_path, sample):
+    """pyright's findings on a sample: (line, severity, the message's first line)."""
+    (tmp_path / "sample.py").write_text(sample)
     (tmp_path / "pyrightconfig.json").write_text(
         json.dumps({"extraPaths": [str(SRC)], "pythonVersion": "3.11"})
     )
@@ -38,10 +56,20 @@ def test_pyright_sees_field_and_argument_types(tmp_path):
         capture_output=True,
         text=True,
     ).stdout
-    found = [
+    return [
         (d["range"]["start"]["line"], d["severity"], d["message"].splitlines()[0])
         for d in json.loads(out)["generalDiagnostics"]
     ]
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="needs pyright")
+def test_pyright_takes_plain_values_into_annotated_metadata(tmp_path):
+    assert [(line, severity) for line, severity, _ in pyright(tmp_path, META)] == [(10, "error")]
+
+
+@pytest.mark.skipif(shutil.which("pyright") is None, reason="needs pyright")
+def test_pyright_sees_field_and_argument_types(tmp_path):
+    found = pyright(tmp_path, SAMPLE)
     assert found == [
         (4, "error", 'Cannot assign to attribute "level" for class "Header"'),
         (

@@ -65,7 +65,9 @@ Intro
 - Enum-like types (`MathType`, `Alignment`, ...) are enums; their names are
   accepted too: `Math("InlineMath", "x")`.
 - Metadata converts from plain values (`doc.meta["draft"] = True`,
-  `Pandoc(meta={"draft": True})`): see `from_python`.
+  `Pandoc(meta={"draft": True})`): see `from_python`. `Meta` names that
+  map for annotations (`def read(meta: Meta)`), so a type checker accepts
+  the same assignments there.
 
 ## Checked where you make the mistake
 

@@ -2528,7 +2528,10 @@ class Cell(Node):
 
 
 # pandoc-types' newtypes and type synonyms
-Meta: TypeAlias = dict[str, MetaValue]
+if TYPE_CHECKING:
+    Meta: TypeAlias = "NodeDict[MetaValue, _MetaValueIn]"
+else:
+    Meta = dict[str, MetaValue]
 Format: TypeAlias = str
 ShortCaption: TypeAlias = list[Inline]
 RowHeadColumns: TypeAlias = int
