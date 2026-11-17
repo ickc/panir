@@ -248,7 +248,17 @@ class Gen:
         out.append("# pandoc-types' newtypes and type synonyms\n")
         for t in types:
             if t["kind"] == "alias":
-                out.append(f"{t['name']}: TypeAlias = {self.field_type(t['type'])}\n")
+                alias = f"{t['name']}: TypeAlias = {self.field_type(t['type'])}\n"
+                if t["name"] == "Meta":
+                    # the name a filter's metadata function is annotated with:
+                    # to a type checker what it is given (and doc.meta is), a
+                    # map that converts plain values put into it
+                    alias = (
+                        "if TYPE_CHECKING:\n"
+                        '    Meta: TypeAlias = "NodeDict[MetaValue, _MetaValueIn]"\n'
+                        f"else:\n    {t['name']} = {self.field_type(t['type'])}\n"
+                    )
+                out.append(alias)
                 names.append(t["name"])
         out.append(self.in_aliases())
         out.append(self.typed_on())

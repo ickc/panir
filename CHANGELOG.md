@@ -68,6 +68,14 @@ since, the review (ickc/panir#3 to #5) and the filter collection's gaps
 
 ### Changed, breaking
 
+- Python: to a type checker `Meta` is the map a filter's metadata function
+  is given and `doc.meta` is (`NodeDict[MetaValue, ...]`), which converts
+  plain values put into it, no longer `dict[str, MetaValue]`: in a function
+  annotated `meta: Meta`, `meta["draft"] = True` checks, as it always ran
+  (found by panir-filters' ports, whose type check had run on no file). A
+  plain dict annotated `Meta` no longer checks: annotate it `dict[str,
+  MetaValue]`, or give it to `Pandoc(meta=...)` as it is. Nothing changes
+  when running.
 - Rust: `Conversion` has the public fields `writer_options` and `sandbox`:
   a struct literal without `..Conversion::default()` doesn't compile
   (make it with `Conversion::from_context`, `from_parts`, or with
