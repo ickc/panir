@@ -175,12 +175,20 @@ jobs:
         with:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v3
-      - uses: julia-actions/julia-runtest@v1
-        with:
-          project: julia
       - uses: prefix-dev/setup-pixi@v0.11.3
         with:
           cache: true
+      # the tests that ask pandoc (stringify, yaml_filter) find it by $PANDOC;
+      # without it they are skipped with a note
+      - name: pandoc for the tests
+        shell: bash
+        run: echo "PANDOC=$(pixi run python -c 'import shutil; print(shutil.which("pandoc"))')" >> "$GITHUB_ENV"
+      - uses: julia-actions/julia-runtest@v1
+        with:
+          project: julia
+      - name: The tests asked pandoc
+        shell: bash
+        run: test -n "$PANDOC" && "$PANDOC" --version | head -n 1
       - name: The example runs as a pandoc filter
         if: runner.os != 'Windows'
         run: |
