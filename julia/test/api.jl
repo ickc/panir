@@ -360,12 +360,13 @@ end
     Core.eval(m, :(using Panir))
     for name in (:Str, :Para, :Inline, :MetaValue, :InlineMath, :DoubleQuote, :AlignLeft, :LowerRoman, :OneParen,
                  :NormalCitation, :ASTTypeError, :ASTDepthError, :walk!, :stringify, :check_unique, :truthy, :lookup,
-                 :items)
+                 :items, :Options, :to_data, :yaml_block, :yaml_filter)
         @test isdefined(m, name)
     end
     # the common words, the aliases and the enums' types: as Panir.X
     for name in (:Example, :Decimal, :Period, :Meta, :Format, :RowSpan, :ColSpan, :ShortCaption, :RowHeadColumns,
-                 :Alignment, :MathType, :QuoteType, :CitationMode, :ListNumberStyle, :ListNumberDelim)
+                 :Alignment, :MathType, :QuoteType, :CitationMode, :ListNumberStyle, :ListNumberDelim,
+                 :text, :boolean, :number, :list, :dict)
         @test !(name in names(Panir)) && isdefined(Panir, name)
     end
 end
