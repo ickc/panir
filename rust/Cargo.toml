@@ -10,7 +10,7 @@ repository = "https://github.com/ickc/panir"
 keywords = ["pandoc", "ast", "markdown", "filter"]
 categories = ["text-processing", "parser-implementations"]
 # the tests that read the repository's corpus (../corpus) aren't packaged
-exclude = ["tests/corpus.rs", "tests/filters.rs", "tests/stringify.rs", "tests/package.rs"]
+exclude = ["tests/corpus.rs", "tests/filters.rs", "tests/options.rs", "tests/stringify.rs", "tests/package.rs"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

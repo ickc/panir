@@ -520,6 +520,95 @@ doc.meta.insert("tags".into(), header.into());
 assert_eq!(items(doc.meta.get("tags")).len(), 2);
 ```
 
+### Options in a code block
+
+A code block may start with a YAML header, its options, before its data
+(panflute's `yaml_filter`; pantable's tables):
+
+````markdown
+```{.table include="sales.csv"}
+---
+caption: "*Sales* by region"
+alignment: RC
+---
+```
+````
+
+panir reads no YAML: pandoc does, the header read as a document's
+metadata block, so a block's options and the document's metadata are the
+same type, and one helper takes both: a filter's defaults are the
+document's metadata under the filter's name (`pantable:`), a block's
+header replaces a key's whole value (as pandoc merges metadata blocks).
+
+- `yaml_block(text)` splits a text by pandoc's rule for a YAML metadata
+  block, where one starts the text: `(Some(header), data)`, the header
+  the lines between `---` and `---` or `...` (each perhaps followed by
+  spaces or tabs; not indented, not four of them; the line after the
+  opening not blank), `(None, text)` if there is none. A `---` line later
+  opens nothing: text appended to the block (an include) is never read as
+  options. `corpus/yaml-blocks.jsonl` has the cases, with pandoc's
+  verdict on each.
+- `Options::of(&meta, name, Some(&header))`: the options, a `Meta` (it
+  derefs to one), read raw (`options.get("caption")`, whose inlines a
+  caption wants) or converted: `text`, `boolean`, `number` (text read as
+  `lua_number` reads it), `list`, `map` (as `serde_json` values), each
+  `None` for a missing key or a value of another shape.
+- `to_data(&v)`: metadata (a value, a `Meta`, `Options`) as a
+  `serde_json::Value`, a `MetaInlines` or `MetaBlocks` its text
+  (`stringify`); text stays text.
+- `yaml_filter(doc, classes, name, read, function)` does it all: each
+  code block with one of the classes is replaced by what
+  `function(&options, data, &block)` returns (`Ok(None)` keeps it,
+  `Ok(Some(blocks))` is spliced in its place). `read` (texts of markdown
+  in, documents out: libpandoc's `read_many` in a host, the `pandoc`
+  command natively) is called once, with every header; not at all if no
+  block has one. A header pandoc reads no metadata from (a YAML scalar or
+  list) is no header: the whole text is data, as pandoc would read it.
+  An error of `read` is returned as it is, one of `function` as a
+  `FilterError`, saying where the block is.
+
+```rust
+use panir::{Block, CodeBlock, MetaValue, Options, Pandoc, yaml_block, yaml_filter};
+
+assert_eq!(
+    yaml_block("---\ncaption: Sales\n---\nregion,sales\n"),
+    (Some("caption: Sales\n"), "region,sales\n")
+);
+assert_eq!(yaml_block("region,sales\n---\ncaption: Sales\n---\n").0, None);
+
+/// As pandoc reads `---\ncaption: Sales\n---\n` (libpandoc's `read_many`,
+/// or the `pandoc` command, in a filter).
+fn read(texts: &[String]) -> Result<Vec<Pandoc>, String> {
+    let mut doc = Pandoc::new(vec![]);
+    doc.meta.insert("caption".into(), panir::inlines("Sales").into());
+    Ok(texts.iter().map(|_| doc.clone()).collect())
+}
+
+fn table(options: &Options, data: &str, _: &CodeBlock) -> Result<Option<Vec<Block>>, String> {
+    let caption = options.text("caption").ok_or("no caption")?;
+    Ok(Some(vec![Block::from(caption.as_str()), Block::from(data)]))
+}
+
+let code = |text: &str| Block::CodeBlock(Box::new(CodeBlock {
+    attr: panir::Attr::new("", &["table"], &[]),
+    text: text.into(),
+}));
+let mut doc = Pandoc::new(vec![code("---\ncaption: Sales\n---\na,b"), code("c,d")]);
+let defaults: MetaValue = [("caption", "Tables")].into_iter().collect();
+doc.meta.insert("pantable".into(), defaults);
+yaml_filter(&mut doc, &["table"], "pantable", read, table).unwrap();
+assert_eq!(doc.blocks, ["Sales", "a,b", "Tables", "c,d"].map(Block::from));
+```
+
+What pandoc makes of a header (checked with pandoc 3.14): `true` and
+`True` are booleans (`yes` is text); numbers are text, as pandoc writes
+them (`010` is `"10"`, `1e3` `"1000"`, `0.4` `"0.4"`); `null` and `~`
+are empty text; text is read as markdown, so a caption arrives as
+inlines, but a text of only a tab is lost, `'` is a curly quote and
+`...` an ellipsis (`-f markdown-smart` keeps them), and escapes,
+entities and raw HTML are read as markdown reads them; a `|` scalar is
+blocks. YAML pandoc can't read fails the read, as it fails the document.
+
 ## Types and `VisitMut`
 
 - A sum type is an enum: a constructor without fields is a unit variant

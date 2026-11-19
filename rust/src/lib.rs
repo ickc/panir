@@ -22,6 +22,7 @@ mod attr;
 mod filter;
 mod generated;
 mod meta;
+mod options;
 mod path;
 mod stringify;
 mod text;
@@ -34,6 +35,7 @@ struct Readme;
 pub use filter::{Conversion, Ctx, Filter, FilterError, Order, Walkable, apply, apply_with};
 pub use generated::*;
 pub use meta::{blocks_of, given, inlines_of, into_items, items, lookup, truthy};
+pub use options::{Options, ToData, to_data, yaml_block, yaml_filter};
 pub use stringify::{Stringify, lua_number, stringify, to_roman_numeral};
 pub use text::Text;
 
