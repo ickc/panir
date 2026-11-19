@@ -1,0 +1,42 @@
+{"name": "block", "text": "---\nopt: 1\n---\nx\n", "header": "opt: 1\n", "data": "x\n", "pandoc": "block"}
+{"name": "dots", "text": "---\nopt: 1\n...\nx\n", "header": "opt: 1\n", "data": "x\n", "pandoc": "block"}
+{"name": "blanks after the lines", "text": "--- \t\nopt: 1\n... \t\nx\n", "header": "opt: 1\n", "data": "x\n", "pandoc": "block"}
+{"name": "empty", "text": "---\n---\nx\n", "header": "", "data": "x\n", "pandoc": "block"}
+{"name": "empty, dots", "text": "---\n...\nx\n", "header": "", "data": "x\n", "pandoc": "block"}
+{"name": "empty, the whole text", "text": "---\n---", "header": "", "data": "", "pandoc": "block"}
+{"name": "closed at the end", "text": "---\nopt: 1\n---", "header": "opt: 1\n", "data": "", "pandoc": "block"}
+{"name": "dots at the end", "text": "---\nopt: 1\n...", "header": "opt: 1\n", "data": "", "pandoc": "block"}
+{"name": "data without a newline", "text": "---\nopt: 1\n---\nx", "header": "opt: 1\n", "data": "x", "pandoc": "block"}
+{"name": "a blank line before the data", "text": "---\nopt: 1\n---\n\nx\n", "header": "opt: 1\n", "data": "\nx\n", "pandoc": "block"}
+{"name": "a blank line inside", "text": "---\nopt: 1\n\nb: 2\n---\nx\n", "header": "opt: 1\n\nb: 2\n", "data": "x\n", "pandoc": "block"}
+{"name": "blanks inside", "text": "---\nopt: 1\n \t\n---\nx\n", "header": "opt: 1\n \t\n", "data": "x\n", "pandoc": "block"}
+{"name": "a tab before a key", "text": "---\n\topt: 1\n---\nx\n", "header": "\topt: 1\n", "data": "x\n", "pandoc": "block"}
+{"name": "dashes in a literal", "text": "---\nopt: |\n  a\n  ---\n---\nx\n", "header": "opt: |\n  a\n  ---\n", "data": "x\n", "pandoc": "block"}
+{"name": "a comment only", "text": "---\n# a comment\n---\nx\n", "header": "# a comment\n", "data": "x\n", "pandoc": "block"}
+{"name": "the first closing line", "text": "---\nopt: 1\n...\n...\nx\n", "header": "opt: 1\n", "data": "...\nx\n", "pandoc": "block"}
+{"name": "a header after it is data", "text": "---\nopt: 1\n---\n---\nlater: 2\n---\n", "header": "opt: 1\n", "data": "---\nlater: 2\n---\n", "pandoc": "block"}
+{"name": "a later block is data", "text": "---\nopt: 1\n---\nx\n\n---\nlater: 2\n---\n", "header": "opt: 1\n", "data": "x\n\n---\nlater: 2\n---\n", "pandoc": "block", "note": "pandoc reads the later block as metadata too; the split never does"}
+{"name": "four hyphens open nothing", "text": "----\nopt: 1\n---\nx\n", "header": null, "data": "----\nopt: 1\n---\nx\n", "pandoc": "none"}
+{"name": "four hyphens close nothing", "text": "---\nopt: 1\n----\nx\n", "header": null, "data": "---\nopt: 1\n----\nx\n", "pandoc": "none"}
+{"name": "four dots close nothing", "text": "---\nopt: 1\n....\nx\n", "header": null, "data": "---\nopt: 1\n....\nx\n", "pandoc": "none"}
+{"name": "an indented opening line", "text": " ---\nopt: 1\n---\nx\n", "header": null, "data": " ---\nopt: 1\n---\nx\n", "pandoc": "none"}
+{"name": "an indented closing line", "text": "---\nopt: 1\n ---\nx\n", "header": null, "data": "---\nopt: 1\n ---\nx\n", "pandoc": "none"}
+{"name": "indented dots", "text": "---\nopt: 1\n ...\nx\n", "header": null, "data": "---\nopt: 1\n ...\nx\n", "pandoc": "none"}
+{"name": "a blank line after the opening", "text": "---\n\nopt: 1\n---\nx\n", "header": null, "data": "---\n\nopt: 1\n---\nx\n", "pandoc": "none"}
+{"name": "blanks after the opening", "text": "---\n \t\nopt: 1\n---\nx\n", "header": null, "data": "---\n \t\nopt: 1\n---\nx\n", "pandoc": "none"}
+{"name": "no closing line", "text": "---\nopt: 1\nx\n", "header": null, "data": "---\nopt: 1\nx\n", "pandoc": "none"}
+{"name": "the opening line only", "text": "---", "header": null, "data": "---", "pandoc": "none"}
+{"name": "the opening line and a newline", "text": "---\n", "header": null, "data": "---\n", "pandoc": "none"}
+{"name": "text after the opening", "text": "---x\nopt: 1\n---\nx\n", "header": null, "data": "---x\nopt: 1\n---\nx\n", "pandoc": "none"}
+{"name": "a comment after the opening", "text": "--- # c\nopt: 1\n---\nx\n", "header": null, "data": "--- # c\nopt: 1\n---\nx\n", "pandoc": "none"}
+{"name": "text after the closing", "text": "---\nopt: 1\n---x\nx\n", "header": null, "data": "---\nopt: 1\n---x\nx\n", "pandoc": "none"}
+{"name": "a no-break space after the opening", "text": "--- \nopt: 1\n---\nx\n", "header": null, "data": "--- \nopt: 1\n---\nx\n", "pandoc": "none"}
+{"name": "a vertical tab after the opening", "text": "---\u000b\nopt: 1\n---\nx\n", "header": null, "data": "---\u000b\nopt: 1\n---\nx\n", "pandoc": "none"}
+{"name": "a no-break space after the closing", "text": "---\nopt: 1\n--- \nx\n", "header": null, "data": "---\nopt: 1\n--- \nx\n", "pandoc": "none"}
+{"name": "data first", "text": "a,b\n---\nopt: 1\n---\n", "header": null, "data": "a,b\n---\nopt: 1\n---\n", "pandoc": "none"}
+{"name": "a blank line first", "text": "\n---\nopt: 1\n---\nx\n", "header": null, "data": "\n---\nopt: 1\n---\nx\n", "pandoc": "block", "note": "pandoc reads a metadata block after a blank line anywhere; the split takes only one that starts the text"}
+{"name": "a scalar", "text": "---\nopt\n---\nx\n", "header": "opt\n", "data": "x\n", "pandoc": "none", "note": "the YAML is not a map: pandoc reads no metadata block, which the split can't tell without reading YAML; yaml_filter sees it in what the reader returns (blocks, no metadata) and takes the whole text as data"}
+{"name": "a list", "text": "---\n- opt\n---\nx\n", "header": "- opt\n", "data": "x\n", "pandoc": "none", "note": "the YAML is not a map: pandoc reads no metadata block, which the split can't tell without reading YAML; yaml_filter sees it in what the reader returns (blocks, no metadata) and takes the whole text as data"}
+{"name": "an empty string", "text": "---\n''\n---\nx\n", "header": "''\n", "data": "x\n", "pandoc": "none", "note": "the YAML is not a map: pandoc reads no metadata block, which the split can't tell without reading YAML; yaml_filter sees it in what the reader returns (blocks, no metadata) and takes the whole text as data"}
+{"name": "YAML pandoc can't read", "text": "---\nopt: [1,\n---\nx\n", "header": "opt: [1,\n", "data": "x\n", "pandoc": "error", "note": "pandoc fails on the document; the reader yaml_filter is given fails too"}
+{"name": "four hyphens inside", "text": "---\nopt: 1\n----\n---\nx\n", "header": "opt: 1\n----\n", "data": "x\n", "pandoc": "error", "note": "pandoc fails on the document; the reader yaml_filter is given fails too"}

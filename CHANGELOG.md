@@ -13,6 +13,31 @@ since, the review (ickc/panir#3 to #5) and the filter collection's gaps
 
 ### Added
 
+- **A filter's options from a code block's YAML header** (panflute's
+  `yaml_filter`), without a YAML library: pandoc reads the header, as a
+  document's metadata block.
+  - `yaml_block` (TypeScript `yamlBlock`): a text's header and data, by
+    pandoc's rule for a YAML metadata block where one starts the text
+    (`---`, not followed by a blank line; `---` or `...`; spaces or tabs
+    after either); a later `---` line opens nothing, so text an include
+    appends is never options. `corpus/yaml-blocks.jsonl` holds the cases,
+    each with pandoc 3.14's verdict (`scripts/yaml-blocks-corpus.py`).
+  - `to_data` (TypeScript `toData`): metadata as plain data, inlines and
+    blocks as their text, text left as text (Rust: a
+    `serde_json::Value`).
+  - `Options`: the document's metadata under the filter's name, each key
+    replaced whole by a block header's; read raw or as text, boolean,
+    number (as `lua_number`), list or map (Python `Options.of(meta, name,
+    header)` and methods `text`, `boolean`, `number`, `list`, `map`;
+    TypeScript the same; Rust `Options::of`, the same methods; Julia
+    `Options(meta, name, header)`, an `AbstractDict`, and `Panir.text`,
+    `Panir.boolean`, `Panir.number`, `Panir.list`, `Panir.dict`).
+  - `yaml_filter` (TypeScript `yamlFilter`; Julia `yaml_filter(f, doc,
+    ...)`, for a `do` block): every code block of the given classes
+    replaced by the author's function of its options, its data and the
+    block, the headers read in one call of a reader the filter gives (its
+    host's `read_many`, or the `pandoc` command); a header pandoc reads
+    no metadata from (a YAML scalar or list) is no header.
 - **The conversion a filter runs in** (`ctx.conversion`):
   - `writer_options` (TypeScript `writerOptions`): the writer's options,
     keyed as pandoc's JSON keys the reader's, with Lua's values, read from

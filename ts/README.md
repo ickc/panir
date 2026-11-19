@@ -619,6 +619,76 @@ const md = libpandocFilter((pandoc: Libpandoc) => [{
 panir doesn't depend on libpandoc: the instance is whatever the host
 passes.
 
+### Options in a code block
+
+A code block may start with a YAML header, its options, before its data
+(panflute's `yaml_filter`; pantable's tables):
+
+````markdown
+```{.table include="sales.csv"}
+---
+caption: "*Sales* by region"
+alignment: RC
+---
+```
+````
+
+panir reads no YAML: pandoc does, the header read as a document's
+metadata block, so a block's options and the document's metadata are the
+same type, and one helper takes both: a filter's defaults are the
+document's metadata under the filter's name (`pantable:`), a block's
+header replaces a key's whole value (as pandoc merges metadata blocks).
+
+- `yamlBlock(text)` splits a text by pandoc's rule for a YAML metadata
+  block, where one starts the text: `[header, data]`, the header the
+  lines between `---` and `---` or `...` (each perhaps followed by spaces
+  or tabs; not indented, not four of them; the line after the opening not
+  blank), `[undefined, text]` if there is none. A `---` line later opens
+  nothing: text appended to the block (an include) is never read as
+  options. `corpus/yaml-blocks.jsonl` has the cases, with pandoc's
+  verdict on each.
+- `Options.of(meta, name, header)`: the options (`values`, a map of
+  metadata values), read raw (`options.get("caption")`, whose inlines a
+  caption wants) or converted: `text`, `boolean`, `number` (text read as
+  `luaNumber` reads it), `list`, `map` (as plain data), each `undefined`
+  for a missing key or a value of another shape.
+- `toData(v)`: metadata (a value, the metadata, `Options`) as plain data
+  (`DataValue`), a `MetaInlines` or `MetaBlocks` its text (`stringify`);
+  text stays text. (`toPlain` keeps inlines and blocks as nodes.)
+- `yamlFilter(doc, classes, name, read, fn)` does it all: each code block
+  with one of the classes is replaced by what `fn(options, data, block)`
+  returns, as a filter function's. `read` (texts of markdown in, documents
+  out: the host's `readMany`, its results through `fromJSON`, or the
+  `pandoc` command) is called once, with every header; not at all if no
+  block has one. A header pandoc reads no metadata from (a YAML scalar or
+  list) is no header: the whole text is data, as pandoc would read it.
+
+```ts
+import { yamlBlock, yamlFilter } from "panir";
+import type { Options } from "panir";
+
+assert.deepEqual(yamlBlock("---\ncaption: Sales\n---\nregion,sales\n"), ["caption: Sales\n", "region,sales\n"]);
+assert.equal(yamlBlock("region,sales\n---\ncaption: Sales\n---\n")[0], undefined);
+
+// as pandoc reads `---\ncaption: Sales\n---\n` (the host's readMany through fromJSON, or the pandoc command)
+const readHeaders = (texts: string[]) => texts.map(() => Pandoc([], { meta: { caption: MetaInlines("Sales") } }));
+const table = (options: Options, data: string) => [Para(options.text("caption") ?? ""), CodeBlock(data)];
+const tables = Pandoc([CodeBlock("---\ncaption: Sales\n---\na,b", { classes: ["table"] }), CodeBlock("c,d", { classes: ["table"] })],
+                      { meta: { pantable: { caption: "Tables" } } });
+yamlFilter(tables, "table", "pantable", readHeaders, table);
+assert.deepEqual(tables.blocks, [Para("Sales"), CodeBlock("a,b"), Para("Tables"), CodeBlock("c,d")]);
+// in a filter: { Pandoc: (doc, ctx) => yamlFilter(doc, "table", "pantable", (texts) => read(texts, ctx.conversion), table) }
+```
+
+What pandoc makes of a header (checked with pandoc 3.14): `true` and
+`True` are booleans (`yes` is text); numbers are text, as pandoc writes
+them (`010` is `"10"`, `1e3` `"1000"`, `0.4` `"0.4"`); `null` and `~`
+are empty text; text is read as markdown, so a caption arrives as
+inlines, but a text of only a tab is lost, `'` is a curly quote and
+`...` an ellipsis (`-f markdown-smart` keeps them), and escapes,
+entities and raw HTML are read as markdown reads them; a `|` scalar is
+blocks. YAML pandoc can't read fails the read, as it fails the document.
+
 ## Deep documents
 
 Reading, writing, walking, copying, comparing and `stringify` recurse, a

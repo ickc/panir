@@ -9,7 +9,9 @@
 - ``stringify`` and ``to_roman_numeral``, as pandoc's Lua ``pandoc.utils``;
   ``lua_number``, as Lua's ``tonumber`` reads text;
   metadata to and from Python (``to_python``, ``from_python``), and as Lua
-  reads it (``lookup``, ``items``, ``inlines_of``, ``blocks_of``).
+  reads it (``lookup``, ``items``, ``inlines_of``, ``blocks_of``);
+- a filter's options from a code block's YAML header and the document's
+  metadata (``yaml_block``, ``Options``, ``yaml_filter``, ``to_data``).
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from ._types import Pandoc
 from ._walk import Context, walk
 from .conversion import Conversion
 from .filter import Filter, main, run
+from .options import Options, yaml_block, yaml_filter
 from .util import (
     blocks,
     blocks_of,
@@ -44,6 +47,7 @@ from .util import (
     lookup,
     lua_number,
     stringify,
+    to_data,
     to_python,
     to_roman_numeral,
 )
@@ -93,6 +97,7 @@ __all__ = [
     "Node",
     "NodeDict",
     "NodeList",
+    "Options",
     "blocks",
     "blocks_of",
     "check_unique",
@@ -109,8 +114,11 @@ __all__ = [
     "main",
     "run",
     "stringify",
+    "to_data",
     "to_python",
     "to_roman_numeral",
     "walk",
+    "yaml_block",
+    "yaml_filter",
 ]
 __all__ += _types.__all__

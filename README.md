@@ -62,6 +62,11 @@ schema/pandoc-ast.json ──(tools/gen_<language>.py)──> each language's de
   own filter, which must make exactly the same document. Scenarios marked
   stateless must also make it bottom-up, an order pandoc's Lua lacks. So
   far: TypeScript, Python, Julia and Rust.
+- **A code block's YAML header** (`yaml_block`, for a filter's options):
+  `yaml-blocks.jsonl` holds texts, the header and data every language
+  must split them into, and pandoc's verdict on each read as a document
+  (`scripts/yaml-blocks-corpus.py`, which fails if pandoc's verdict is not
+  the one the case expects).
 - **Fuzzing against pandoc** ([`fuzz/`](fuzz/)): random documents, with the
   strings and numbers a binding is likely to get wrong, and random filters,
   through every language. pandoc must read each language's output as the

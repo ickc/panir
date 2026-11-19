@@ -209,3 +209,4 @@ end
 include("filters.jl")
 include("edges.jl")
 include("api.jl")
+include("options.jl")
