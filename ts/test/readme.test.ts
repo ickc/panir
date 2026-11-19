@@ -148,6 +148,23 @@ const md = libpandocFilter((pandoc: Libpandoc) => [{
 // pandoc.convertWithFilters({ from: "markdown", to: "html" }, input, [md]);
 // #endregion
 
+// #region README
+import { yamlBlock, yamlFilter } from "../src/index.ts";
+import type { Options } from "../src/index.ts";
+
+assert.deepEqual(yamlBlock("---\ncaption: Sales\n---\nregion,sales\n"), ["caption: Sales\n", "region,sales\n"]);
+assert.equal(yamlBlock("region,sales\n---\ncaption: Sales\n---\n")[0], undefined);
+
+// as pandoc reads `---\ncaption: Sales\n---\n` (the host's readMany through fromJSON, or the pandoc command)
+const readHeaders = (texts: string[]) => texts.map(() => Pandoc([], { meta: { caption: MetaInlines("Sales") } }));
+const table = (options: Options, data: string) => [Para(options.text("caption") ?? ""), CodeBlock(data)];
+const tables = Pandoc([CodeBlock("---\ncaption: Sales\n---\na,b", { classes: ["table"] }), CodeBlock("c,d", { classes: ["table"] })],
+                      { meta: { pantable: { caption: "Tables" } } });
+yamlFilter(tables, "table", "pantable", readHeaders, table);
+assert.deepEqual(tables.blocks, [Para("Sales"), CodeBlock("a,b"), Para("Tables"), CodeBlock("c,d")]);
+// in a filter: { Pandoc: (doc, ctx) => yamlFilter(doc, "table", "pantable", (texts) => read(texts, ctx.conversion), table) }
+// #endregion
+
 const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
 
 test("the README's examples are this file's", () => {

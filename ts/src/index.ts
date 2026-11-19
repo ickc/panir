@@ -29,6 +29,8 @@ export {
   given, items, lookup, truthy, inlinesOf, blocksOf, toRomanNumeral, luaNumber,
 } from "./util.ts";
 export type { PlainValue } from "./util.ts";
+export { Options, toData, yamlBlock, yamlFilter } from "./options.ts";
+export type { DataValue } from "./options.ts";
 
 /** A document from pandoc's JSON text, checked (`ASTDecodeError`; a `SyntaxError` if it isn't JSON). */
 export function parse(text: string): Pandoc {
