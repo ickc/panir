@@ -46,6 +46,7 @@ __all__ = [
     "lookup",
     "lua_number",
     "stringify",
+    "to_data",
     "to_python",
     "to_roman_numeral",
 ]
@@ -308,6 +309,34 @@ def _to_python(value: Any) -> Any:
         return value.text
     if isinstance(value, (MetaInlines, MetaBlocks)):
         return copy.deepcopy(list(value.content))
+    raise TypeError(f"not metadata: {value!r}")
+
+
+@too_deep("to_data")
+def to_data(value: MetaValue | Mapping[str, MetaValue]) -> Any:
+    """Metadata as plain data, as a filter reads its options: a ``MetaBool``
+    a bool, a ``MetaString`` a str, ``MetaInlines`` and ``MetaBlocks`` their
+    text (``stringify``), a ``MetaList`` a list, a ``MetaMap`` (or the
+    metadata) a dict (panflute's ``get_metadata(builtin=True)``). Nothing is
+    guessed: text stays text, ``"10"`` too (``lua_number`` reads a number).
+    ``to_python`` keeps inlines and blocks as nodes instead.
+    """
+    return _to_data(value)
+
+
+def _to_data(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {k: _to_data(v) for k, v in value.items()}
+    if isinstance(value, MetaMap):
+        return {k: _to_data(v) for k, v in value.content.items()}
+    if isinstance(value, MetaList):
+        return [_to_data(v) for v in value.content]
+    if isinstance(value, MetaBool):
+        return value.value
+    if isinstance(value, MetaString):
+        return value.text
+    if isinstance(value, (MetaInlines, MetaBlocks)):
+        return _stringify(value)
     raise TypeError(f"not metadata: {value!r}")
 
 

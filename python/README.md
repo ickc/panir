@@ -561,6 +561,87 @@ and that depends on who runs it:
   sandbox is on (`sandbox` is `None`), so libpandoc reads through the
   conversion in pandoc's sandbox, failing closed.
 
+### Options in a code block
+
+A code block may start with a YAML header, its options, before its data
+(panflute's `yaml_filter`; pantable's tables):
+
+````markdown
+```{.table include="sales.csv"}
+---
+caption: "*Sales* by region"
+alignment: RC
+---
+```
+````
+
+panir reads no YAML: pandoc does, the header read as a document's
+metadata block, so a block's options and the document's metadata are the
+same type, and one helper takes both: a filter's defaults are the
+document's metadata under the filter's name (`pantable:`), a block's
+header replaces a key's whole value (as pandoc merges metadata blocks).
+
+- `yaml_block(text)` splits a text by pandoc's rule for a YAML metadata
+  block, where one starts the text: `(header, data)`, the header the lines
+  between `---` and `---` or `...` (each perhaps followed by spaces or
+  tabs; not indented, not four of them; the line after the opening not
+  blank), `(None, text)` if there is none. A `---` line later opens
+  nothing: text appended to the block (an include) is never read as
+  options. `corpus/yaml-blocks.jsonl` has the cases, with pandoc's
+  verdict on each.
+- `Options.of(meta, name, header)`: the options, a dict of metadata
+  values, read raw (`options["caption"]`, whose inlines a caption wants)
+  or converted: `text`, `boolean`, `number` (text read as `lua_number`
+  reads it), `list`, `map` (as plain data), each `None` for a missing
+  key or a value of another shape.
+- `to_data(v)`: metadata as plain data, a `MetaInlines` or `MetaBlocks`
+  its text (`stringify`); text stays text.
+- `yaml_filter(doc, classes, name, read, function)` does it all: each code
+  block of one of the classes is replaced by what `function(options,
+  data, block)` returns, as a filter function's. `read` (texts of markdown
+  in, documents out) is called once, with every header; not at all if no
+  block has one. A header pandoc reads no metadata from (a YAML scalar or
+  list) is no header: the whole text is data, as pandoc would read it.
+
+```python
+>>> yaml_block("---\ncaption: Sales\n---\nregion,sales\n")
+('caption: Sales\n', 'region,sales\n')
+>>> yaml_block("region,sales\n---\ncaption: Sales\n---\n")
+(None, 'region,sales\n---\ncaption: Sales\n---\n')
+>>> doc = Pandoc(meta={"pantable": {"caption": "Tables", "width": "0.4"}})
+>>> header = Pandoc(meta={"caption": [Emph("Sales")]}).meta  # as pandoc reads it
+>>> options = Options.of(doc.meta, "pantable", header)
+>>> options["caption"], options.text("caption"), options.number("width"), options.boolean("width")
+(MetaInlines(Emph(Str('Sales'))), 'Sales', 0.4, None)
+```
+
+```python
+import libpandoc
+
+tables = Filter()
+
+
+def table(options: Options, data: str, block: CodeBlock) -> list:
+    return [Para(options.text("caption") or ""), CodeBlock(data)]
+
+
+@tables.on(Pandoc)
+def all_tables(doc, ctx):
+    read = lambda texts: libpandoc.read_many(texts, ctx.conversion, {"from": "markdown"})
+    yaml_filter(doc, "table", "pantable", read, table)
+```
+
+Under plain pandoc, without libpandoc, `read` may run the `pandoc`
+command (`pandoc -f markdown -t json`) on each text. What pandoc makes of
+a header (checked with pandoc 3.14): `true` and `True` are booleans
+(`yes` is text); numbers are text, as pandoc writes them (`010` is
+`"10"`, `1e3` `"1000"`, `0.4` `"0.4"`); `null` and `~` are empty text;
+text is read as markdown, so a caption arrives as inlines, but a text of
+only a tab is lost, `'` is a curly quote and `...` an ellipsis (`-f
+markdown-smart` keeps them), and escapes, entities and raw HTML are read
+as markdown reads them; a `|` scalar is blocks. YAML pandoc can't read
+fails the read, as it fails the document.
+
 ## Deep documents
 
 Reading, writing, walking, copying and pickling recurse, as deep as
