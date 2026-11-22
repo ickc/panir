@@ -6,7 +6,7 @@ version is PEP 440's; the others write it as below.
 ## 0.2.0 (unreleased)
 
 0.1.0 was the version in the repository from the start, never published;
-its dependants (libpandoc's bindings, panmark, panir-filters) followed
+its dependants (libpandoc's bindings, pandadown, panir-filters) followed
 `main`. 0.2.0 is what they can require by version instead: everything
 since, the review (ickc/panir#3 to #5) and the filter collection's gaps
 (#14 to #18, and this release's) included. What they rely on:
